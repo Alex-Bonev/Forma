@@ -34,3 +34,12 @@ Textures live in `RoomVibe/Resources/DemoData/Finishes/finish_<polyhaven_id>.jpg
 - Build passes.
 - A Simulator screenshot of the demo room shows each new wall and floor finish applied at least once. To do that without UI taps, temporarily set `wallFinish`/`floorFinish` in the simulator app's `Library/Application Support/library.json` and relaunch with `-demo`. Check that tiling scale looks right: bricks about 6 cm tall, tiles believable.
 - Record the list of added ids in this spec's "As built" section.
+
+## As built
+
+New JPGs total about 3.1 MB (1k Diffuse, `sips` quality 75). `tile` comes from Poly Haven `dimensions` (mm) and was checked in the Simulator: whitewashed brick rows are about 7 cm, terracotta tiles about 26 cm, ceramic diagonals about 45 cm.
+
+- **Walls:** `stucco` (white_stucco, 2), `panelling` (white_planks_clean, 1.8), `white-tile` (long_white_tiles, 1.27; a vertical finger tile, since Poly Haven has no true subway tile), `whitewashed-brick` (whitewashed_brick, 2), `concrete-wall` (concrete_wall_004, 2), `stone` (rustic_stone_wall, 1.52).
+- **Paints:** `warm-white`, `dusty-blue`, `terracotta`, `charcoal`.
+- **Floors:** `herringbone` (herringbone_parquet, 3.4), `carpet` (poly_wool_herringbone, 0.6; a wool weave used as a carpet), `ceramic` (interior_tiles, 1.9), `terracotta-tile` (terracotta_floor_tiles, 2.08), `dark-wood` (dark_wooden_planks, 2).
+- Both lists are reordered from common to bold. Existing ids are unchanged, and `walls[0]`/`floors[0]` are still the defaults.

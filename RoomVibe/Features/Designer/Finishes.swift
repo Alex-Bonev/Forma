@@ -14,19 +14,34 @@ struct Finish: Identifiable, Hashable {
 
     static let walls: [Finish] = [
         .init(id: "white", name: "White", color: .init(white: 0.97, alpha: 1)),
+        .init(id: "warm-white", name: "Warm White", color: .init(red: 0.96, green: 0.93, blue: 0.87, alpha: 1)),
         .init(id: "plaster", name: "Warm Plaster", texture: "finish_painted_plaster_wall", tile: 2),
+        .init(id: "stucco", name: "Stucco", texture: "finish_white_stucco", tile: 2),
         .init(id: "beige", name: "Beige", texture: "finish_beige_wall_001", tile: 1.5),
+        .init(id: "panelling", name: "Panelling", texture: "finish_white_planks_clean", tile: 1.8, roughness: 0.7),
+        .init(id: "white-tile", name: "White Tile", texture: "finish_long_white_tiles", tile: 1.27, roughness: 0.25),
+        .init(id: "whitewashed-brick", name: "Whitewashed Brick", texture: "finish_whitewashed_brick", tile: 2),
         .init(id: "brick", name: "Brick", texture: "finish_red_brick_03", tile: 1.6),
+        .init(id: "concrete-wall", name: "Concrete", texture: "finish_concrete_wall_004", tile: 2),
+        .init(id: "stone", name: "Stone", texture: "finish_rustic_stone_wall", tile: 1.52),
         .init(id: "sage", name: "Sage", color: .init(red: 0.66, green: 0.74, blue: 0.65, alpha: 1)),
+        .init(id: "dusty-blue", name: "Dusty Blue", color: .init(red: 0.55, green: 0.64, blue: 0.72, alpha: 1)),
+        .init(id: "terracotta", name: "Terracotta", color: .init(red: 0.74, green: 0.43, blue: 0.32, alpha: 1)),
         .init(id: "navy", name: "Navy", color: .init(red: 0.2, green: 0.27, blue: 0.4, alpha: 1)),
+        .init(id: "charcoal", name: "Charcoal", color: .init(red: 0.22, green: 0.23, blue: 0.24, alpha: 1)),
     ]
 
     static let floors: [Finish] = [
         .init(id: "light", name: "Light", color: .init(white: 0.93, alpha: 1), roughness: 0.9),
         .init(id: "oak", name: "Oak", texture: "finish_wood_floor", tile: 2, roughness: 0.6),
         .init(id: "planks", name: "Planks", texture: "finish_plank_flooring_04", tile: 2, roughness: 0.65),
+        .init(id: "herringbone", name: "Herringbone", texture: "finish_herringbone_parquet", tile: 3.4, roughness: 0.55),
+        .init(id: "carpet", name: "Carpet", texture: "finish_poly_wool_herringbone", tile: 0.6, roughness: 1),
+        .init(id: "ceramic", name: "Ceramic Tile", texture: "finish_interior_tiles", tile: 1.9, roughness: 0.35),
         .init(id: "marble", name: "Marble", texture: "finish_marble_01", tile: 1.2, roughness: 0.3),
         .init(id: "concrete", name: "Concrete", texture: "finish_concrete_floor_02", tile: 2.5),
+        .init(id: "terracotta-tile", name: "Terracotta Tile", texture: "finish_terracotta_floor_tiles", tile: 2.08, roughness: 0.7),
+        .init(id: "dark-wood", name: "Dark Wood", texture: "finish_dark_wooden_planks", tile: 2, roughness: 0.6),
     ]
 
     static func wall(_ id: String?) -> Finish {
