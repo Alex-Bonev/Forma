@@ -69,6 +69,14 @@ struct RoomScanView: View {
                     if scanner.result == nil { dismiss() } else { confirmDiscard = true }
                 }
                 Spacer()
+                if scanner.phase == .scanning, !scanner.photos.shots.isEmpty {
+                    Label("\(scanner.photos.shots.count) photo\(scanner.photos.shots.count == 1 ? "" : "s")", systemImage: "camera")
+                        .font(.caption.weight(.medium))
+                        .monospacedDigit()
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.ultraThinMaterial, in: Capsule())
+                    Spacer()
+                }
                 if scanner.phase == .scanning {
                     ScanChromeButton(title: "Done", prominent: true) { scanner.stop() }
                 }
@@ -113,6 +121,10 @@ struct RoomScanView: View {
         guard let room = scanner?.result else { return }
         var model = RoomModel(room)
         model.objects += RoomModel.markedItems(scanner?.markers ?? [], walls: model.walls)
+        // Photos are in the raw ARSession world frame, so match against walls before axisAligned().
+        // VERIFY on device: CapturedRoom transforms share the ARSession world frame (no re-anchoring after processing).
+        let photos = scanner?.photos
+        let paint = photos.flatMap { RoomPhotos.wallColor(walls: model.walls, photos: $0.shots) }
         model = model.axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.
         guard !model.walls.isEmpty else {
@@ -121,11 +133,16 @@ struct RoomScanView: View {
         }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let project = try store.addRoom(name: trimmed.isEmpty ? "Room" : trimmed, model: model) { dir in
+            var project = try store.addRoom(name: trimmed.isEmpty ? "Room" : trimmed, model: model) { dir in
                 // Raw RoomPlan output kept for later (model substitution, sharing, QuickLook).
                 // Note: these are in RoomPlan's original frame; room.json is rotated by axisAligned().
                 try JSONEncoder().encode(room).write(to: dir.appending(path: "captured.json"))
                 try? room.export(to: dir.appending(path: "room.usdz"))
+                try? photos?.write(to: dir)   // nice-to-have: never fail the scan over photos
+            }
+            if let paint {
+                project.wallFinish = Finish.paintID(paint)
+                store.update(project)
             }
             dismiss()
             onSaved(project)
@@ -176,6 +193,7 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     private(set) var result: CapturedRoom?
     private(set) var error: String?
     private var cancelled = false
+    let photos = RoomPhotos()
 
     override init() {
         super.init()
@@ -186,10 +204,14 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     required init?(coder: NSCoder) { nil }
     func encode(with coder: NSCoder) {}
 
-    func start() { view.captureSession.run(configuration: RoomCaptureSession.Configuration()) }
+    func start() {
+        view.captureSession.run(configuration: RoomCaptureSession.Configuration())
+        photos.start(view.captureSession.arSession)
+    }
 
     func stop() {
         phase = .processing
+        photos.stop()
         view.captureSession.stop()
     }
 
@@ -216,6 +238,7 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     /// Stop without processing: the scan is being thrown away.
     func cancel() {
         cancelled = true
+        photos.stop()
         if phase == .scanning { view.captureSession.stop() }
     }
 
