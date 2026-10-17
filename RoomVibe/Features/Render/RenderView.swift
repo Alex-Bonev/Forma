@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// "Make it real": sends a Designer snapshot to /render and shows a before/after slider.
-/// B presents this from the Designer: `RenderView(snapshot: captureDesignerSnapshot()!, projectID: project.id)`.
+/// B presents this from the Designer: on tap, `captureDesignerSnapshot()`, then a sheet with
+/// `RenderView(snapshot:projectID:)`.
 /// Vibe mode reuses it with a style prompt and the inspiration image.
 struct RenderView: View {
     @State private var model: RenderModel

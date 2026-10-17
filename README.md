@@ -79,7 +79,17 @@ MOCK=1 .venv/bin/fastapi dev main.py     # local server on :8000
 
 Deploy: `vercel` from `backend/` (preview), `vercel --prod` (live). Set env vars from `.env.example`.
 Vercel caps request and response bodies at 4.5 MB: send JPEG snapshots, never USDZ files.
-The AI provider is not picked yet; non-mock endpoints return 501 until one is wired in.
+Providers: OpenAI Image API edits (`/render`), Claude (`/vibe/analyze`), SerpAPI Google Shopping (`/vibe/products`).
+With `MOCK=0`, an endpoint whose key is missing returns 501. Keys live only in Vercel env vars, never in the app.
+
+App side: without config the app calls `http://127.0.0.1:8000` (works from the Simulator against a local backend).
+To use the deployed backend, create the gitignored `RoomVibe/Core/Networking/APIConfig.json`:
+
+```json
+{"baseURL": "https://<project>.vercel.app", "secret": "<APP_SHARED_SECRET>"}
+```
+
+Before going on stage: open `https://<project>.vercel.app/health` once to wake the function.
 
 ## Work split
 
@@ -92,4 +102,6 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
 - Scanning only runs on a LiDAR device; verify on the demo phone early.
 - Custom orbit camera: drag empty space to orbit, drag an object to move it, pinch to zoom, twist to rotate the selection.
 - Placements clamp to the room's bounding rectangle, not the exact wall outline.
-- Not built yet: app-side API client, photoreal render, vibe mode, AR view, generic furniture USDZ swap.
+- Make it real (`Features/Render/`) and vibe mode (`Features/Vibe/`) are built and tested in Simulator against `MOCK=1`.
+  The Designer button is B's: on tap, call `captureDesignerSnapshot()`, then show `RenderView(snapshot:projectID:)` in a sheet.
+- Not built yet: AR view, generic furniture USDZ swap.
