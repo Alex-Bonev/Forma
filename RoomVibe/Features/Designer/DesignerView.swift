@@ -19,6 +19,7 @@ struct DesignerView: View {
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
     @State private var highlighted: Entity?
     @State private var showCatalog = false
+    @AppStorage(RoomBuilder.realisticKey) private var realisticFurniture = true
     @State private var moving: (id: UUID, offset: SIMD3<Float>)?
     @State private var viewSize: CGSize = .zero
     @State private var lowWalls = false
@@ -40,6 +41,7 @@ struct DesignerView: View {
                 .navigationTitle(project.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .onChange(of: lowWalls) { rebuildRoom(room) }
+                .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
                     if new != nil { selectedRoomObject = nil }
                     highlight(new.flatMap { placed[$0] })
@@ -125,6 +127,7 @@ struct DesignerView: View {
                 ForEach(Finish.floors) { Text($0.name).tag($0.id) }
             }
             .pickerStyle(.inline)
+            Toggle("Realistic Models", systemImage: "sparkles", isOn: $realisticFurniture)
         } label: {
             Image(systemName: "paintbrush").font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44)
         }
@@ -556,10 +559,18 @@ final class WallCutaway {
         let cam = SIMD2(c.x, c.z)
         for s in surfaces {
             let outside = simd_dot(cam - s.center, s.outward) > 0.05
-            let goal: Float = outside ? 0.07 : 1
-            let now = s.entity.components[OpacityComponent.self]?.opacity ?? 1
+            let goal: Float = outside ? 0 : 1
+            var now = s.entity.components[OpacityComponent.self]?.opacity ?? 1
+            if !s.entity.isEnabled {
+                guard !outside else { continue }
+                s.entity.isEnabled = true   // camera came back around: fade in from nothing
+                now = 0
+            }
             guard abs(now - goal) > 0.005 else { continue }
-            s.entity.components.set(OpacityComponent(opacity: now + (goal - now) * 0.2))
+            now += (goal - now) * 0.2
+            s.entity.components.set(OpacityComponent(opacity: now))
+            // Fully hidden, not ghosted: even a faint textured wall (brick) reads as a pattern on furniture behind it.
+            if outside && now < 0.02 { s.entity.isEnabled = false }
         }
     }
 }
