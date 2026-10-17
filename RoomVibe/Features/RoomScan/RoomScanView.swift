@@ -1,46 +1,107 @@
 import SwiftUI
 import RoomPlan
 
-/// Full-screen RoomPlan capture. Done -> Apple's processing preview -> name -> saved.
+/// Full-screen RoomPlan capture: scan -> Done -> Apple's processed preview -> Save + name -> Designer.
 struct RoomScanView: View {
     var onSaved: (Project) -> Void
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
-    @State private var scanner = RoomScanner()
+    // Created once on appear: a @State default would build a new RoomCaptureView on every parent re-render.
+    @State private var scanner: RoomScanner?
+    @State private var naming = false
     @State private var name = ""
     @State private var error: String?
 
     var body: some View {
-        RoomCaptureRepresentable(view: scanner.view)
-            .ignoresSafeArea()
-            .onAppear { scanner.start() }
-            .overlay(alignment: .top) {
-                HStack {
-                    Button("Cancel") { scanner.stop(); dismiss() }
-                    Spacer()
-                    if !scanner.stopped {
-                        Button("Done") { scanner.stop() }.bold()
-                    }
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let scanner {
+                RoomCaptureRepresentable(view: scanner.view).ignoresSafeArea()
+                controls(scanner)
+            }
+        }
+        .onAppear {
+            guard scanner == nil else { return }
+            let s = RoomScanner()
+            scanner = s
+            s.start()
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .onDisappear {
+            scanner?.cancel()
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: scanner?.error) { _, new in error = new }
+        .alert("Name this room", isPresented: $naming) {
+            TextField("Living Room", text: $name)
+            Button("Save") { save() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Couldn't save the scan", isPresented: .constant(error != nil)) {
+            Button("OK") { dismiss() }
+        } message: { Text(error ?? "") }
+    }
+
+    @ViewBuilder private func controls(_ scanner: RoomScanner) -> some View {
+        VStack {
+            HStack {
+                Button(scanner.result == nil ? "Cancel" : "Discard") { dismiss() }
+                Spacer()
+                if scanner.phase == .scanning {
+                    Button("Done") { scanner.stop() }.bold()
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(.white)
+            .padding()
+
+            Spacer()
+
+            switch scanner.phase {
+            case .scanning:
+                hint("Move slowly around the room. Point at every wall and piece of furniture.")
+            case .processing:
+                HStack(spacing: 10) {
+                    ProgressView().tint(.white)
+                    Text("Building your room…")
+                }
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(.bottom, 40)
+            case .review:
+                Button { naming = true } label: {
+                    Label("Save Room", systemImage: "checkmark").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.black.opacity(0.5))
-                .padding()
+                .controlSize(.large)
+                .padding(.horizontal, 24).padding(.bottom, 24)
+                .sensoryFeedback(.success, trigger: scanner.phase)
             }
-            .alert("Name this room", isPresented: .constant(scanner.result != nil && error == nil)) {
-                TextField("Living Room", text: $name)
-                Button("Save") { save() }
-                Button("Discard", role: .destructive) { dismiss() }
-            }
-            .alert("Scan failed", isPresented: .constant(error != nil)) {
-                Button("OK") { dismiss() }
-            } message: { Text(error ?? "") }
-            .onChange(of: scanner.error) { error = scanner.error }
+        }
+        .animation(.spring(duration: 0.3, bounce: 0), value: scanner.phase)
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote.weight(.medium))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.horizontal, 24).padding(.bottom, 40)
     }
 
     private func save() {
-        guard let room = scanner.result else { return }
+        guard let room = scanner?.result else { return }
+        let model = RoomModel(room)
+        // RoomBuilder needs walls to find the floor and room bounds.
+        guard !model.walls.isEmpty else {
+            error = "No walls were detected. Try scanning again and point at every wall."
+            return
+        }
         do {
-            let project = try store.addRoom(name: name.isEmpty ? "Room" : name, model: RoomModel(room)) { dir in
+            let project = try store.addRoom(name: name.trimmingCharacters(in: .whitespaces).isEmpty ? "Room" : name,
+                                            model: model) { dir in
                 // Raw RoomPlan output kept for later (model substitution, sharing, QuickLook).
                 try JSONEncoder().encode(room).write(to: dir.appending(path: "captured.json"))
                 try? room.export(to: dir.appending(path: "room.usdz"))
@@ -55,10 +116,12 @@ struct RoomScanView: View {
 
 @Observable
 final class RoomScanner: NSObject, RoomCaptureViewDelegate {
+    enum Phase { case scanning, processing, review }
+
     let view = RoomCaptureView(frame: .zero)
-    var result: CapturedRoom?
-    var error: String?
-    var stopped = false
+    private(set) var phase = Phase.scanning
+    private(set) var result: CapturedRoom?
+    private(set) var error: String?
 
     override init() {
         super.init()
@@ -70,12 +133,28 @@ final class RoomScanner: NSObject, RoomCaptureViewDelegate {
     func encode(with coder: NSCoder) {}
 
     func start() { view.captureSession.run(configuration: RoomCaptureSession.Configuration()) }
-    func stop() { stopped = true; view.captureSession.stop() }
 
-    func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: (any Error)?) -> Bool { true }
+    func stop() {
+        phase = .processing
+        view.captureSession.stop()
+    }
+
+    func cancel() {
+        if phase == .scanning { view.captureSession.stop() }
+    }
+
+    func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: (any Error)?) -> Bool {
+        if let error { self.error = error.localizedDescription; return false }
+        return true
+    }
 
     func captureView(didPresent processedResult: CapturedRoom, error: (any Error)?) {
-        if let error { self.error = error.localizedDescription } else { result = processedResult }
+        if let error {
+            self.error = error.localizedDescription
+        } else {
+            result = processedResult
+            phase = .review
+        }
     }
 }
 

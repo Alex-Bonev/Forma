@@ -138,6 +138,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = RoomVibe;
 				INFOPLIST_KEY_NSCameraUsageDescription = "RoomVibe uses the camera and LiDAR to scan rooms and objects.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "RoomVibe saves renders of your room to Photos.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
@@ -163,6 +164,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = RoomVibe;
 				INFOPLIST_KEY_NSCameraUsageDescription = "RoomVibe uses the camera and LiDAR to scan rooms and objects.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "RoomVibe saves renders of your room to Photos.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
