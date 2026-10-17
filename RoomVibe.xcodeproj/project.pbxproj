@@ -6,9 +6,25 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A47EBFA8A7B1A35C4890420D /* DesignerGestureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BCA5F142DB9EC38C3551254C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 486C65216C8B0AF9DC8A6C67 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C7DEDAA71B71AB290B7C3EC8;
+			remoteInfo = RoomVibe;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignerGestureTests.swift; sourceTree = "<group>"; };
 		8B48A8288098F4BFBCFF9E53 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		944CEFEF2389ED2B0780AD34 /* RoomVibe.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RoomVibe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AAFE176ACCDF943F97D493CF /* RoomVibeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RoomVibeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,10 +48,19 @@
 			path = Config;
 			sourceTree = "<group>";
 		};
+		80253D7EF28BD41D4F77A272 /* RoomVibeUITests */ = {
+			isa = PBXGroup;
+			children = (
+				1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */,
+			);
+			path = RoomVibeUITests;
+			sourceTree = "<group>";
+		};
 		D5DA06BE99405477C128C976 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				944CEFEF2389ED2B0780AD34 /* RoomVibe.app */,
+				AAFE176ACCDF943F97D493CF /* RoomVibeUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -45,6 +70,7 @@
 			children = (
 				1803D70D13B0B007EF0D0A2C /* Config */,
 				363F7AB0FB19849D85E8350E /* RoomVibe */,
+				80253D7EF28BD41D4F77A272 /* RoomVibeUITests */,
 				D5DA06BE99405477C128C976 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -52,6 +78,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		46AA85825E86D9C819D76FA6 /* RoomVibeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1E34EFDEF11FC6EF7661C36C /* Build configuration list for PBXNativeTarget "RoomVibeUITests" */;
+			buildPhases = (
+				DC1ABD44614256D3BBD63895 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ABFEFED613B845A750B4A6CF /* PBXTargetDependency */,
+			);
+			name = RoomVibeUITests;
+			packageProductDependencies = (
+			);
+			productName = RoomVibeUITests;
+			productReference = AAFE176ACCDF943F97D493CF /* RoomVibeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		C7DEDAA71B71AB290B7C3EC8 /* RoomVibe */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 00C429EFD8D6206375B43E37 /* Build configuration list for PBXNativeTarget "RoomVibe" */;
@@ -82,6 +126,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					46AA85825E86D9C819D76FA6 = {
+						DevelopmentTeam = "";
+						TestTargetID = C7DEDAA71B71AB290B7C3EC8;
+					};
 					C7DEDAA71B71AB290B7C3EC8 = {
 						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
@@ -103,6 +151,7 @@
 			projectRoot = "";
 			targets = (
 				C7DEDAA71B71AB290B7C3EC8 /* RoomVibe */,
+				46AA85825E86D9C819D76FA6 /* RoomVibeUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -125,9 +174,43 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DC1ABD44614256D3BBD63895 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A47EBFA8A7B1A35C4890420D /* DesignerGestureTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		ABFEFED613B845A750B4A6CF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C7DEDAA71B71AB290B7C3EC8 /* RoomVibe */;
+			targetProxy = BCA5F142DB9EC38C3551254C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		2DBB0348ABBB493D62CCC210 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RV_BUNDLE_PREFIX).roomvibe.uitests";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = RoomVibe;
+			};
+			name = Release;
+		};
 		4280D4DA2CE65F27AB312E4C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -138,6 +221,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = RoomVibe;
 				INFOPLIST_KEY_NSCameraUsageDescription = "RoomVibe uses the camera and LiDAR to scan rooms and objects.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "RoomVibe saves renders of your room to Photos.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
@@ -163,6 +247,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = RoomVibe;
 				INFOPLIST_KEY_NSCameraUsageDescription = "RoomVibe uses the camera and LiDAR to scan rooms and objects.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "RoomVibe saves renders of your room to Photos.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
@@ -177,6 +262,24 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		788EE292BDB9FDFB956EE794 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RV_BUNDLE_PREFIX).roomvibe.uitests";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = RoomVibe;
+			};
+			name = Debug;
 		};
 		B13179764B990330A65CB121 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -307,6 +410,15 @@
 			buildConfigurations = (
 				4280D4DA2CE65F27AB312E4C /* Debug */,
 				718115238F9BEB74CF38E6FA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1E34EFDEF11FC6EF7661C36C /* Build configuration list for PBXNativeTarget "RoomVibeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				788EE292BDB9FDFB956EE794 /* Debug */,
+				2DBB0348ABBB493D62CCC210 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

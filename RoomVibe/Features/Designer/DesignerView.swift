@@ -1,25 +1,34 @@
 import SwiftUI
 import RealityKit
+import os
+
+private let log = Logger(subsystem: "RoomVibe", category: "Designer")
 
 /// Core demo screen: orbit the dollhouse, drop library objects in, drag/rotate/delete them.
+///
+/// Touch model (all on `TouchSurface`):
+/// - one finger on an object: slide it on the floor · one finger elsewhere: orbit (flick for momentum)
+/// - two fingers: pan · pinch: zoom · twist: rotate the selected object (or the view if none)
+/// - tap: select / deselect
 struct DesignerView: View {
     let projectID: UUID
     @Environment(ProjectStore.self) private var store
     @State private var scene = Entity()
+    @State private var camera = OrbitCamera()
+    @State private var walls = WallCutaway()
     @State private var roomEntity: Entity?
     @State private var roomSize: SIMD2<Float> = .zero
     @State private var placed: [UUID: Entity] = [:]   // placement id -> entity
     @State private var selected: UUID?
-    @State private var camera = PerspectiveCamera()
-    @State private var orbit = Orbit()
+    @State private var moving: (id: UUID, offset: SIMD3<Float>)?
     @State private var viewSize: CGSize = .zero
-    @State private var dragMode: DragMode?
-    @State private var zoomStart: Float?
-    @State private var twistStart: simd_quatf?
     @State private var lowWalls = false
-
-    struct Orbit { var azimuth: Float = 0.55; var elevation: Float = 0.85; var distance: Float = 8 }
-    enum DragMode { case orbit(Orbit), move(UUID, SIMD3<Float>) }
+    @State private var topView = false
+    @State private var showHint = true
+    @State private var adding: String?
+    // Kept for picking: RealityKit's own ray(through:) matches its real render surface, which is taller than the
+    // SwiftUI frame (it extends under the bottom panel), so hand-rolled projection from the frame missed objects.
+    @State private var content: RealityViewCameraContent?
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
 
@@ -28,14 +37,8 @@ struct DesignerView: View {
             realityView(project: project, room: room)
                 .navigationTitle(project.name)
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Toggle(isOn: $lowWalls) { Image(systemName: "square.split.bottomrightquarter") }
-                            .toggleStyle(.button)
-                            .accessibilityLabel("Cutaway walls")
-                    }
-                }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
+                .onChange(of: selected) { old, new in highlight(old: old, new: new) }
                 .safeAreaInset(edge: .bottom) { bottomPanel(project) }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
@@ -46,20 +49,30 @@ struct DesignerView: View {
     private func realityView(project: Project, room: RoomModel) -> some View {
         RealityView { content in
             content.camera = .virtual
+            self.content = content
             let sun = DirectionalLight()
             sun.light.intensity = 3000
             sun.shadow = DirectionalLightComponent.Shadow()
             sun.look(at: .zero, from: [2, 5, 3], relativeTo: nil)
             scene.addChild(sun)
-            scene.addChild(camera)
+            scene.addChild(camera.entity)
             content.add(scene)
             rebuildRoom(room)
-            orbit.distance = zoomRange.lowerBound * 1.8
-            updateCamera()
+            let w = walls
+            camera.onFrame = { w.update(cameraPosition: $0) }
+            camera.configure(roomSize: roomSize)
+            let cam = camera
+            camera.updates = content.subscribe(to: SceneEvents.Update.self) { e in
+                MainActor.assumeIsolated { cam.update(dt: Float(e.deltaTime)) }
+            }
             for p in project.placements { await spawn(p) }
         }
         .ignoresSafeArea(edges: .bottom)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
+        .overlay {
+            TouchSurface(handlers: touchHandlers, accessibilityValue: selectionDescription(project))
+                .ignoresSafeArea(edges: .bottom)
+        }
         .overlay(alignment: .topLeading) {
             Text(String(format: "%.1f × %.1f m", roomSize.x, roomSize.y))
                 .font(.footnote.weight(.semibold)).monospacedDigit()
@@ -67,106 +80,119 @@ struct DesignerView: View {
                 .background(.regularMaterial, in: Capsule())
                 .padding()
         }
-        .gesture(dragGesture)
-        .simultaneousGesture(pinchGesture)
-        .simultaneousGesture(twistGesture)
-        .simultaneousGesture(SpatialTapGesture().onEnded { v in selected = hitPlacement(at: v.location) })
+        .overlay(alignment: .topTrailing) { viewControls.padding() }
+        .overlay(alignment: .top) {
+            if showHint {
+                Text("Drag to look around · Two fingers to pan · Pinch to zoom")
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 56)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeOut(duration: 0.3), value: showHint)
     }
 
-    // MARK: Gestures
-    // Own orbit camera instead of .realityViewCameraControls: the built-in controls swallow every
-    // touch (objects could not be dragged) and let you zoom through the walls.
+    /// Maps-style floating controls.
+    private var viewControls: some View {
+        VStack(spacing: 0) {
+            controlButton("scope", label: "Reset view") { camera.reset(); topView = false }
+            Divider().frame(width: 28)
+            controlButton(topView ? "view.3d" : "square.grid.3x3.topleft.filled", label: topView ? "3D view" : "Top view") {
+                camera.toggleTopView(); topView = camera.isTopView
+            }
+            Divider().frame(width: 28)
+            controlButton(lowWalls ? "square.split.bottomrightquarter.fill" : "square.split.bottomrightquarter",
+                          label: lowWalls ? "Full walls" : "Cutaway walls") { lowWalls.toggle() }
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
 
-    /// One finger: starts on an object -> slide it on the floor (keeping the grab offset); else orbit.
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 2)
-            .onChanged { v in
-                if dragMode == nil {
-                    if let id = hitPlacement(at: v.startLocation), let e = placed[id],
-                       let start = floorPoint(at: v.startLocation) {
-                        dragMode = .move(id, e.position - start)
-                        selected = id
-                    } else {
-                        dragMode = .orbit(orbit)
-                    }
+    private func controlButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44)
+        }
+        .accessibilityLabel(label)
+    }
+
+    /// VoiceOver (and UI tests) read the selected object's saved position.
+    private func selectionDescription(_ project: Project) -> String? {
+        guard let selected, let p = project.placements.first(where: { $0.id == selected }),
+              let name = store.objects.first(where: { $0.id == p.objectID })?.name else { return nil }
+        return String(format: "%@ at %.2f, %.2f m", name, p.position.x, p.position.z)
+    }
+
+    // MARK: Touch
+
+    private var touchHandlers: TouchSurface.Handlers {
+        var h = TouchSurface.Handlers()
+        h.touchDown = {
+            camera.stopMomentum()
+            if showHint { showHint = false }
+        }
+        h.oneFinger = { phase, location, delta, velocity in
+            switch phase {
+            case .began:
+                if let id = hitPlacement(at: location), let e = placed[id],
+                   let start = floorPoint(at: location) {
+                    moving = (id, e.position - start)
+                    selected = id
+                    e.scale = [1.04, 1.04, 1.04]   // lifted while dragged
                 }
-                switch dragMode {
-                case .move(let id, let offset):
-                    if let p = floorPoint(at: v.location) { placed[id]?.position = clamp(p + offset) }
-                case .orbit(let start):
-                    orbit.azimuth = start.azimuth - Float(v.translation.width) * 0.008
-                    orbit.elevation = min(max(start.elevation + Float(v.translation.height) * 0.005, 0.25), 1.5)
-                    updateCamera()
-                case nil: break
+            case .changed:
+                if let moving, let e = placed[moving.id] {
+                    if let p = floorPoint(at: location) { e.position = clamp(p + moving.offset, keeping: e) }
+                } else {
+                    camera.orbit(by: delta)
+                    if topView { topView = camera.isTopView }
+                }
+            case .ended:
+                if let moving {
+                    placed[moving.id]?.scale = .one
+                    self.moving = nil
+                    commit()
+                } else {
+                    camera.endOrbit(velocity: velocity)
                 }
             }
-            .onEnded { _ in
-                if case .move = dragMode { commit() }
-                dragMode = nil
+        }
+        h.twoFingerPan = { delta in
+            if moving == nil { camera.pan(by: delta, viewHeight: viewSize.height) }
+        }
+        h.pinch = { phase, scale in
+            switch phase {
+            case .began: camera.beginZoom()
+            case .changed: camera.zoom(scale: scale)
+            case .ended: break
             }
-    }
-
-    private var pinchGesture: some Gesture {
-        MagnifyGesture()
-            .onChanged { v in
-                if zoomStart == nil { zoomStart = orbit.distance }
-                let d = zoomStart! / Float(v.magnification)
-                orbit.distance = min(max(d, zoomRange.lowerBound), zoomRange.upperBound)
-                updateCamera()
+        }
+        h.twist = { phase, delta in
+            if let selected, let e = placed[selected] {
+                if phase == .ended { commit() }
+                else { e.orientation = simd_quatf(angle: -Float(delta), axis: [0, 1, 0]) * e.orientation }
+            } else if phase != .ended {
+                camera.twist(by: delta)
             }
-            .onEnded { _ in zoomStart = nil }
-    }
-
-    /// Two-finger twist rotates the selected object around Y.
-    private var twistGesture: some Gesture {
-        RotateGesture()
-            .onChanged { v in
-                guard let selected, let e = placed[selected] else { return }
-                if twistStart == nil { twistStart = e.orientation }
-                e.orientation = simd_quatf(angle: -Float(v.rotation.radians), axis: [0, 1, 0]) * twistStart!
-            }
-            .onEnded { _ in
-                if twistStart != nil { commit() }
-                twistStart = nil
-            }
-    }
-
-    // MARK: Camera math
-
-    /// Never closer than the room needs to stay in view, never so far it becomes a speck.
-    private var zoomRange: ClosedRange<Float> {
-        let size = max(roomSize.x, roomSize.y, 2)
-        return (size * 0.6 + 1)...(size * 3 + 3)
-    }
-
-    private func updateCamera() {
-        let o = orbit
-        let dir = SIMD3(cos(o.elevation) * sin(o.azimuth), sin(o.elevation), cos(o.elevation) * cos(o.azimuth))
-        camera.look(at: .zero, from: dir * o.distance, relativeTo: nil)
-    }
-
-    /// World-space ray through a view point, from the camera's pose and vertical field of view.
-    private func ray(at point: CGPoint) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
-        let w = Float(viewSize.width), h = Float(max(viewSize.height, 1))
-        let t = tan(camera.camera.fieldOfViewInDegrees * .pi / 360)
-        let local = normalize(SIMD3((2 * Float(point.x) / w - 1) * t * w / h, (1 - 2 * Float(point.y) / h) * t, -1))
-        return (camera.position(relativeTo: nil), camera.orientation(relativeTo: nil).act(local))
+        }
+        h.tap = { location in selected = hitPlacement(at: location) }
+        return h
     }
 
     private func floorPoint(at point: CGPoint) -> SIMD3<Float>? {
-        let (o, d) = ray(at: point)
-        guard d.y < -0.01 else { return nil }
+        guard let (o, d) = content?.ray(through: point, in: .local, to: .scene), d.y < -0.01 else { return nil }
         let p = o + d * (-o.y / d.y)
         return [p.x, 0, p.z]
     }
 
     /// Nearest placed object whose (padded) bounding box the ray passes through.
     private func hitPlacement(at point: CGPoint) -> UUID? {
-        let (o, d) = ray(at: point)
+        guard let (o, d) = content?.ray(through: point, in: .local, to: .scene) else { return nil }
         var best: (id: UUID, t: Float)?
         for (id, e) in placed {
             let b = e.visualBounds(relativeTo: e)
-            let lo = b.min - 0.1, hi = b.max + 0.1   // fat-finger padding
+            let lo = b.min - 0.12, hi = b.max + 0.12   // fat-finger padding
             let ro = e.convert(position: o, from: nil), rd = e.convert(direction: d, from: nil)
             var tmin: Float = 0, tmax = Float.greatestFiniteMagnitude
             for i in 0..<3 {
@@ -178,6 +204,8 @@ struct DesignerView: View {
         }
         return best?.id
     }
+
+    // MARK: Panel
 
     @ViewBuilder private func bottomPanel(_ project: Project) -> some View {
         VStack(spacing: 12) {
@@ -203,9 +231,14 @@ struct DesignerView: View {
                     }
                     ForEach(store.objects) { object in
                         Button { Task { await add(object) } } label: {
-                            Label(object.name, systemImage: "plus.circle.fill")
+                            if adding == object.name {
+                                HStack(spacing: 6) { ProgressView().controlSize(.small); Text(object.name) }
+                            } else {
+                                Label(object.name, systemImage: "plus.circle.fill")
+                            }
                         }
                         .buttonStyle(.bordered)
+                        .disabled(adding != nil)
                     }
                 }
                 .padding(.horizontal)
@@ -225,11 +258,16 @@ struct DesignerView: View {
         scene.addChild(built.entity)
         roomEntity = built.entity
         roomSize = built.size
+        walls.collect(from: built.entity)
     }
 
     private func spawn(_ p: Placement) async {
-        guard let object = store.objects.first(where: { $0.id == p.objectID }) else { return }
+        guard let object = store.objects.first(where: { $0.id == p.objectID }) else {
+            log.error("placement \(p.id) references missing object \(p.objectID)")
+            return
+        }
         let e = await RoomBuilder.placedEntity(for: object, url: store.modelURL(for: object))
+        log.info("spawned \(object.name, privacy: .public) extents \(e.visualBounds(relativeTo: e).extents, privacy: .public)")
         e.name = p.id.uuidString
         e.position = p.position
         e.orientation = simd_quatf(angle: p.yRotation, axis: [0, 1, 0])
@@ -237,12 +275,16 @@ struct DesignerView: View {
         placed[p.id] = e
     }
 
+    /// Drops the object where the user is looking (the camera's floor target), then selects it.
     private func add(_ object: ScannedObject) async {
         guard var project else { return }
-        let p = Placement(id: UUID(), objectID: object.id, position: .zero, yRotation: 0)
+        adding = object.name
+        defer { adding = nil }
+        let p = Placement(id: UUID(), objectID: object.id, position: clamp(camera.goal.target), yRotation: 0)
         project.placements.append(p)
         store.update(project)
         await spawn(p)
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
         selected = p.id
     }
 
@@ -261,6 +303,20 @@ struct DesignerView: View {
         selected = nil
     }
 
+    /// Soft disc on the floor under the selected object.
+    private func highlight(old: UUID?, new: UUID?) {
+        if let old { placed[old]?.findEntity(named: "selection")?.removeFromParent() }
+        guard let new, let e = placed[new] else { return }
+        let b = e.visualBounds(relativeTo: e)
+        let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
+        var m = UnlitMaterial(color: .systemBlue)
+        m.blending = .transparent(opacity: 0.4)
+        let disc = ModelEntity(mesh: .generateCylinder(height: 0.004, radius: radius), materials: [m])
+        disc.name = "selection"
+        disc.position.y = 0.003
+        e.addChild(disc)
+    }
+
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.
     private func commit(rotation: (Entity, simd_quatf)? = nil) {
         guard var project else { return }
@@ -274,8 +330,47 @@ struct DesignerView: View {
     }
 
     // ponytail: clamps to the room's bounding rectangle, not the actual wall polygon (L-shaped rooms leak).
-    private func clamp(_ p: SIMD3<Float>) -> SIMD3<Float> {
-        let h = roomSize / 2
+    /// Keeps `entity`'s footprint (not just its center) inside the walls.
+    private func clamp(_ p: SIMD3<Float>, keeping entity: Entity? = nil) -> SIMD3<Float> {
+        var r: Float = 0
+        if let entity {
+            let b = entity.visualBounds(relativeTo: entity.parent)
+            r = max(b.extents.x, b.extents.z) / 2
+        }
+        let h = simd_max(roomSize / 2 - r - RoomBuilder.wallThickness / 2, .zero)
         return [min(max(p.x, -h.x), h.x), 0, min(max(p.z, -h.y), h.y)]
+    }
+}
+
+/// Dollhouse cutaway: walls (and their doors/windows) between the camera and the room fade out, so the
+/// interior is always visible from any orbit angle. Plain class: runs every frame.
+@MainActor
+final class WallCutaway {
+    private var surfaces: [(entity: Entity, center: SIMD2<Float>, outward: SIMD2<Float>)] = []
+
+    func collect(from room: Entity) {
+        surfaces = []
+        func visit(_ e: Entity) {
+            if e.name == RoomBuilder.surfaceName {
+                let p = e.position(relativeTo: nil)
+                let z = e.orientation(relativeTo: nil).act([0, 0, 1])
+                var n = simd_normalize(SIMD2(z.x, z.z))
+                if simd_dot(n, SIMD2(p.x, p.z)) < 0 { n = -n }   // room is centered on the origin
+                surfaces.append((e, SIMD2(p.x, p.z), n))
+            }
+            e.children.forEach(visit)
+        }
+        visit(room)
+    }
+
+    func update(cameraPosition c: SIMD3<Float>) {
+        let cam = SIMD2(c.x, c.z)
+        for s in surfaces {
+            let outside = simd_dot(cam - s.center, s.outward) > 0.05
+            let goal: Float = outside ? 0.07 : 1
+            let now = s.entity.components[OpacityComponent.self]?.opacity ?? 1
+            guard abs(now - goal) > 0.005 else { continue }
+            s.entity.components.set(OpacityComponent(opacity: now + (goal - now) * 0.2))
+        }
     }
 }

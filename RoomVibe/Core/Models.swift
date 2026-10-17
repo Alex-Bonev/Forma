@@ -38,6 +38,8 @@ struct RoomModel: Codable {
     var windows: [Box] = []
     var openings: [Box] = []
     var objects: [Box] = []
+    /// Floor polygon in world space (y = floor height), from RoomPlan's floor surface. nil for older saves / demo JSON.
+    var floorOutline: [SIMD3<Float>]? = nil
 }
 
 extension RoomModel.Box {
