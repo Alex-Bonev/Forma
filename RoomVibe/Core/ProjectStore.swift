@@ -80,6 +80,12 @@ final class ProjectStore {
         try? persist()
     }
 
+    func rename(_ object: ScannedObject, to name: String) {
+        guard let i = objects.firstIndex(where: { $0.id == object.id }) else { return }
+        objects[i].name = name
+        try? persist()
+    }
+
     func delete(_ project: Project) {
         projects.removeAll { $0.id == project.id }
         try? FileManager.default.removeItem(at: Self.projectDir(project.id))
@@ -98,9 +104,14 @@ final class ProjectStore {
         guard let url = Bundle.main.url(forResource: "sample_room", withExtension: "json") else { return }
         let model = try JSONDecoder().decode(RoomModel.self, from: Data(contentsOf: url))
         try addRoom(name: "Demo Living Room", model: model)
-        guard !objects.contains(where: { $0.name == "Demo Chair" }) else { return }
+        let bundled = Bundle.main.url(forResource: "sample_chair", withExtension: "usdz")
+        if let old = objects.first(where: { $0.name == "Demo Chair" }) {
+            // Keep it, unless it's the procedural stand-in and a real scan is now bundled.
+            guard old.modelFile == nil, bundled != nil else { return }
+            delete(old)
+        }
         var chair = ScannedObject(id: UUID(), name: "Demo Chair", modelFile: nil, boundingBox: [0.5, 0.9, 0.5])
-        if let usdz = Bundle.main.url(forResource: "sample_chair", withExtension: "usdz") {
+        if let usdz = bundled {
             let dir = Self.objectDir(chair.id)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: usdz, to: dir.appending(path: "model.usdz"))

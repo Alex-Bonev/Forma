@@ -105,7 +105,10 @@ enum RoomBuilder {
     /// Placed object: model sits on y = 0, centered. Hit testing is done by DesignerView's own ray math.
     static func placedEntity(for object: ScannedObject, url: URL?) async -> Entity {
         var model: Entity = demoChair()
-        if let url, let loaded = try? await Entity(contentsOf: url) { model = loaded }
+        if let url {
+            do { model = try await Entity(contentsOf: url) }
+            catch { print("RoomVibe: failed to load \(url.lastPathComponent): \(error)") }   // falls back to the demo chair
+        }
         let b = model.visualBounds(relativeTo: nil)
         model.position -= [b.center.x, b.min.y, b.center.z]
         let container = Entity()

@@ -27,17 +27,56 @@ final class DesignerGestureTests: XCTestCase {
         sleep(1)
         let after = canvas.value as? String
         XCTAssertNotNil(before)
-        XCTAssertNotEqual(before, after, "dragging the chair should move and save it (\(before ?? "-") -> \(after ?? "-"))")
+        XCTAssertTrue(app.buttons["Remove"].exists, "chair should stay selected after the drag")
+        XCTAssertGreaterThan(x(after), x(before) + 0.3, "dragging right should move the chair +x (\(before ?? "-") -> \(after ?? "-"))")
         XCUIScreen.main.screenshot().attach(named: "after-drag", to: self)
 
         // Empty area near the top: orbit, then zoom. (The lower canvas sits under the bottom panel.)
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.2))
             .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.25)))
+        XCTAssertEqual(canvas.value as? String, after, "orbiting must not move or deselect the chair")
         app.buttons["Done"].tap()
         canvas.pinch(withScale: 1.6, velocity: 2)
         sleep(1)
         XCUIScreen.main.screenshot().attach(named: "after-orbit-zoom", to: self)
     }
+
+    func testRenameObject() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo"]
+        app.launch()
+        app.navigationBars.buttons.firstMatch.tap()   // back to Home
+        let chair = app.staticTexts["Demo Chair"].firstMatch
+        XCTAssertTrue(chair.waitForExistence(timeout: 5))
+        chair.press(forDuration: 1.0)
+        app.buttons["Rename"].tap()
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 2))
+        field.clearAndType("Store chair")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Store chair"].waitForExistence(timeout: 2))
+        // Undo, so the other test still finds "Demo Chair".
+        app.staticTexts["Store chair"].press(forDuration: 1.0)
+        app.buttons["Rename"].tap()
+        app.textFields.firstMatch.clearAndType("Demo Chair")
+        app.buttons["Save"].tap()
+    }
+}
+
+private extension XCUIElement {
+    func clearAndType(_ text: String) {
+        tap()
+        if let current = value as? String, !current.isEmpty {
+            typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+        typeText(text)
+    }
+}
+
+/// x from "Demo Chair at 1.23, 0.45 m".
+private func x(_ value: String?) -> Double {
+    guard let v = value, let at = v.range(of: " at ") else { return .nan }
+    return Double(v[at.upperBound...].split(separator: ",").first ?? "") ?? .nan
 }
 
 private extension XCUIScreenshot {

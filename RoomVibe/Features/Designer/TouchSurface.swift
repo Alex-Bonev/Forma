@@ -9,6 +9,7 @@ struct TouchSurface: UIViewRepresentable {
 
     struct Handlers {
         var touchDown: () -> Void = {}
+        var touchUp: () -> Void = {}
         /// One finger: location, movement since last call, release velocity (on `.ended`).
         var oneFinger: (Phase, CGPoint, _ delta: CGSize, _ velocity: CGPoint) -> Void = { _, _, _, _ in }
         var twoFingerPan: (CGSize) -> Void = { _ in }
@@ -28,6 +29,7 @@ struct TouchSurface: UIViewRepresentable {
         view.accessibilityIdentifier = "designer-canvas"
         view.accessibilityLabel = "Room 3D view"
         view.onTouchDown = { context.coordinator.handlers.touchDown() }
+        view.onTouchUp = { context.coordinator.handlers.touchUp() }
         let c = context.coordinator
         let pan = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.pan(_:)))
         pan.maximumNumberOfTouches = 2
@@ -51,6 +53,7 @@ struct TouchSurface: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var handlers: Handlers
         private var touches = 0
+        private var wasMultiTouch = false   // after two fingers, a lifted finger shouldn't start orbiting
 
         init(handlers: Handlers) { self.handlers = handlers }
 
@@ -60,6 +63,7 @@ struct TouchSurface: UIViewRepresentable {
             switch r.state {
             case .began:
                 touches = n
+                wasMultiTouch = n > 1
                 // Pan only begins after ~10 pt of movement: hit-test where the finger first landed instead.
                 let start = (view as? TouchView)?.downLocation ?? r.location(in: view)
                 if n == 1 { handlers.oneFinger(.began, start, .zero, .zero) }
@@ -68,17 +72,19 @@ struct TouchSurface: UIViewRepresentable {
                 if n != touches {
                     if touches == 1 { handlers.oneFinger(.ended, r.location(in: view), .zero, .zero) }
                     touches = n
+                    wasMultiTouch = wasMultiTouch || n > 1
                     r.setTranslation(.zero, in: view)
                     return
                 }
                 let t = r.translation(in: view)
                 r.setTranslation(.zero, in: view)
                 let delta = CGSize(width: t.x, height: t.y)
-                if n == 1 { handlers.oneFinger(.changed, r.location(in: view), delta, .zero) }
-                else { handlers.twoFingerPan(delta) }
+                if n > 1 { handlers.twoFingerPan(delta) }
+                else if !wasMultiTouch { handlers.oneFinger(.changed, r.location(in: view), delta, .zero) }
             case .ended, .cancelled, .failed:
-                if touches == 1 { handlers.oneFinger(.ended, r.location(in: view), .zero, r.velocity(in: view)) }
+                if touches == 1 && !wasMultiTouch { handlers.oneFinger(.ended, r.location(in: view), .zero, r.velocity(in: view)) }
                 touches = 0
+                wasMultiTouch = false
             default: break
             }
         }
@@ -107,26 +113,39 @@ struct TouchSurface: UIViewRepresentable {
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             !(g is UITapGestureRecognizer || other is UITapGestureRecognizer)
         }
+
+        /// iOS 26 swipe-back works from anywhere in the content and turned rightward orbits into "go back".
+        /// Make it wait for our pan to fail (it never does on a drag); the edge swipe and Back button still work.
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            guard #available(iOS 26, *), g is UIPanGestureRecognizer else { return false }
+            var r: UIResponder? = g.view
+            while let cur = r, !(cur is UINavigationController) { r = cur.next }
+            return other === (r as? UINavigationController)?.interactiveContentPopGestureRecognizer
+        }
     }
 
     /// Reports the first finger down instantly (stops momentum on touch, before any recognizer fires).
     private final class TouchView: UIView {
         var onTouchDown: () -> Void = {}
+        var onTouchUp: () -> Void = {}
         private(set) var downLocation: CGPoint?
-        /// iOS 26 swipe-back works from anywhere in the content, which turned every rightward orbit into
-        /// "go back". Disable it while the Designer is on screen; the edge swipe and Back button still work.
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            guard #available(iOS 26, *) else { return }
-            var r: UIResponder? = self
-            while let next = r?.next, !(next is UINavigationController) { r = next }
-            (r?.next as? UINavigationController)?.interactiveContentPopGestureRecognizer?.isEnabled = window == nil
-        }
-
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            if event?.allTouches?.count == touches.count { downLocation = touches.first?.location(in: self) }
+            // First finger on this view (fingers resting elsewhere, e.g. on the panel, don't count).
+            if event?.touches(for: self)?.count == touches.count { downLocation = touches.first?.location(in: self) }
             onTouchDown()
             super.touchesBegan(touches, with: event)
+        }
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesEnded(touches, with: event)
+            liftIfDone(touches, event)
+        }
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesCancelled(touches, with: event)
+            liftIfDone(touches, event)
+        }
+        private func liftIfDone(_ touches: Set<UITouch>, _ event: UIEvent?) {
+            let remaining = (event?.touches(for: self) ?? []).filter { $0.phase != .ended && $0.phase != .cancelled }
+            if remaining.isEmpty { onTouchUp() }
         }
     }
 }
