@@ -112,11 +112,17 @@ final class APIClient {
         return try await send(request("health"), as: Health.self).mock
     }
 
-    func render(_ image: UIImage, prompt: String = "", styleRef: UIImage? = nil) async throws -> UIImage {
+    /// `layout`: LayoutDescription text. `view`: "cutaway" (dollhouse angle) or "interior" (low camera).
+    /// `structure`: optional flat-color map of the same view, sent as PNG so its colors stay exact.
+    func render(_ image: UIImage, prompt: String = "", layout: String = "", view: String = "cutaway",
+                structure: UIImage? = nil, styleRef: UIImage? = nil) async throws -> UIImage {
         struct Rendered: Decodable { var imageBase64: String }
         var form = Multipart()
         try form.addImage("image", image)
         form.addField("prompt", prompt)
+        form.addField("layout", layout)
+        form.addField("view", view)
+        if let structure { try form.addImage("structure", structure, png: true) }
         if let styleRef { try form.addImage("style_ref", styleRef) }
         let out = try await send(form.request(request("render")), as: Rendered.self)
         guard let data = Data(base64Encoded: out.imageBase64), let result = UIImage(data: data) else {
@@ -183,11 +189,12 @@ private struct Multipart {
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
     }
 
-    mutating func addImage(_ name: String, _ image: UIImage) throws {
-        guard let jpeg = image.uploadJPEG() else { throw APIError.badResponse }
-        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(name).jpg\"\r\n"
-                    + "Content-Type: image/jpeg\r\n\r\n")
-        body.append(jpeg)
+    mutating func addImage(_ name: String, _ image: UIImage, png: Bool = false) throws {
+        guard let data = png ? image.pngData() : image.uploadJPEG() else { throw APIError.badResponse }
+        let (ext, type) = png ? ("png", "image/png") : ("jpg", "image/jpeg")
+        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(name).\(ext)\"\r\n"
+                    + "Content-Type: \(type)\r\n\r\n")
+        body.append(data)
         body.append("\r\n")
     }
 

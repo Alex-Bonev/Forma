@@ -8,6 +8,7 @@ import SwiftUI
 struct RenderView: View {
     @State private var model: RenderModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(ProjectStore.self) private var store
 
     init(snapshot: UIImage, projectID: UUID? = nil, prompt: String = "", styleRef: UIImage? = nil) {
         _model = State(initialValue: RenderModel(snapshot: snapshot, projectID: projectID, prompt: prompt, styleRef: styleRef))
@@ -38,7 +39,13 @@ struct RenderView: View {
                 }
         }
         .environment(\.colorScheme, .dark)
-        .task { if model.result == nil { await model.run() } }
+        .task {
+            guard model.result == nil else { return }
+            if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
+                model.layout = LayoutDescription.text(room: room, placements: project.placements, objects: store.objects)
+            }
+            await model.run()
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -87,6 +94,8 @@ final class RenderModel {
     let projectID: UUID?
     let prompt: String
     let styleRef: UIImage?
+    /// LayoutDescription of the room, filled in by RenderView before the first run.
+    var layout = ""
     private(set) var phase: Phase = .loading
     /// The snapshot the cached render was made from, so a stale slider compares the same room.
     private(set) var staleBefore: UIImage?
@@ -119,7 +128,7 @@ final class RenderModel {
     func run() async {
         phase = .loading
         do {
-            let image = try await APIClient.shared.render(snapshot, prompt: prompt, styleRef: styleRef)
+            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: layout, styleRef: styleRef)
             if let cacheURL, let beforeURL {
                 try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)
