@@ -10,8 +10,11 @@ struct RenderView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(ProjectStore.self) private var store
 
-    init(snapshot: UIImage, projectID: UUID? = nil, prompt: String = "", styleRef: UIImage? = nil) {
-        _model = State(initialValue: RenderModel(snapshot: snapshot, projectID: projectID, prompt: prompt, styleRef: styleRef))
+    /// `camera`: the Designer camera at capture time. With it, a structure map of the same view is sent too,
+    /// and a low camera starts in Photo mode.
+    init(snapshot: UIImage, projectID: UUID? = nil, camera: RenderCamera? = nil, prompt: String = "", styleRef: UIImage? = nil) {
+        _model = State(initialValue: RenderModel(snapshot: snapshot, projectID: projectID, camera: camera, prompt: prompt,
+                                                 styleRef: styleRef))
     }
 
     var body: some View {
@@ -44,7 +47,7 @@ struct RenderView: View {
         .onAppear {
             guard model.result == nil, !model.isRunning else { return }
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
-                model.layout = LayoutDescription.text(room: room, placements: project.placements, objects: store.objects)
+                model.setRoom(room, placements: project.placements, objects: store.objects)
             }
             model.start()
         }
@@ -103,19 +106,31 @@ final class RenderModel {
     let projectID: UUID?
     let prompt: String
     let styleRef: UIImage?
+    let camera: RenderCamera?
     /// LayoutDescription of the room, filled in by RenderView before the first run.
-    var layout = ""
+    private(set) var layout = ""
+    private var room: (model: RoomModel, placements: [Placement], objects: [ScannedObject])?
+    /// Computed once on the first run; the same for both view modes.
+    private var structure: StructureMap.Output?
     var view = View.cutaway
     private(set) var phase: Phase = .loading
     /// The snapshot the cached render was made from, so a stale slider compares the same room.
     private(set) var staleBefore: UIImage?
 
-    init(snapshot: UIImage, projectID: UUID?, prompt: String, styleRef: UIImage?) {
+    init(snapshot: UIImage, projectID: UUID?, camera: RenderCamera? = nil, prompt: String, styleRef: UIImage?) {
         self.snapshot = snapshot.croppedToRenderAspect()
         self.projectID = projectID
+        self.camera = camera
+        // Camera looks down -Z: a forward vector close to horizontal reads as a photo, not a dollhouse.
+        if let camera, abs(camera.transform.columns.2.y) < 0.4 { view = .interior }
         self.prompt = prompt
         self.styleRef = styleRef
         cacheKey = Self.cacheKey(prompt: prompt, styleRef: styleRef)
+    }
+
+    func setRoom(_ room: RoomModel, placements: [Placement], objects: [ScannedObject]) {
+        self.room = (room, placements, objects)
+        layout = LayoutDescription.text(room: room, placements: placements, objects: objects)
     }
 
     var isLoading: Bool { if case .loading = phase { true } else { false } }
@@ -162,8 +177,17 @@ final class RenderModel {
         let view = view, cacheURL = cacheURL, beforeURL = beforeURL
         phase = .loading
         do {
-            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: layout, view: view.rawValue,
-                                                        styleRef: styleRef)
+            if structure == nil, let camera, let room {
+                // ~0.1–2.5 s of ray casting; keep it off the main actor.
+                let job = Task.detached(priority: .userInitiated) {
+                    StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera)
+                }
+                structure = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
+            }
+            try Task.checkCancellation()
+            let fullLayout = [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: fullLayout, view: view.rawValue,
+                                                        structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef)
             if let cacheURL, let beforeURL {
                 try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)

@@ -109,5 +109,8 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
 - Placements clamp to the room's bounding rectangle, not the exact wall outline.
 - Make it real (`Features/Render/`) and vibe mode (`Features/Vibe/`) are built and tested in Simulator against `MOCK=1`.
   The Designer button is B's: on tap, `guard let snap = captureDesignerSnapshot()`, then show
-  `RenderView(snapshot: snap, projectID:)` in a sheet. Capture before presenting the sheet, or the sheet is captured.
+  `RenderView(snapshot: snap, projectID:, camera:)` in a sheet. Capture before presenting the sheet, or the sheet is captured.
+  `camera` is optional but makes renders keep the layout much better (a structure map of the same view is sent):
+  `RenderCamera(transform: camera.transformMatrix(relativeTo: nil), verticalFOV: camera.camera.fieldOfViewInDegrees,
+  viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)`, built at the same moment as the snapshot.
 - Not built yet: AR view, generic furniture USDZ swap.
