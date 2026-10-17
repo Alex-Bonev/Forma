@@ -18,6 +18,19 @@ Teammates: **B** owns Designer/visuals/Home/AR and the shared models; **C** owns
 - Object scan: `ObjectScanModel` drives `ObjectCaptureSession` states (ready → detecting → capturing → completed), then
   `PhotogrammetrySession` → `Objects/<id>/model.usdz`, deletes the photos after. Not yet run on device.
 
+## Status (Oct 17)
+
+- **Done:** tasks 1–3. The room scan and object scan work on device, and a real scanned chair was placed in a real scanned room.
+- **Also done:**
+  - Designer navigation.
+  - Realistic furniture from RoomPlan attributes.
+  - The Add Item catalog.
+  - Replace and Hide for scanned furniture.
+- **Next:**
+  - Task 5: rescan the final demo room in good light, pull it with `scripts/pull_demo_assets.py`, and bundle it.
+  - "Replace with scan" for the demo chair, so it stands where RoomPlan saw a chair.
+  - The demo rehearsal in `docs/DEMO.md`.
+
 ## Tasks, in order
 
 1. **Room scan on device (H0–8).** Scan a real room; confirm it saves, reopens after killing the app, and renders correctly in the Designer

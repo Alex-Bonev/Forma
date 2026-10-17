@@ -32,16 +32,30 @@ Hackathon demo, ~3 minutes, live. Optimize for a reliable demo, not production r
 | Stretch order | 1) Photoreal render, 2) Vibe mode, 3) AR view. |
 | Timeline | 48h. Feature freeze at **H40**. |
 
-## 3. What exists today (commit `5a2db11`)
+## 3. What exists today (`main` + `a/realism`, verified on the iPhone 17 Pro unless noted)
 
-- Home: room list, object library, Scan Room / Scan Object (disabled without LiDAR), "Load Demo Data".
-- Room scan: `RoomCaptureView` → `RoomModel` + `captured.json` + `room.usdz`. **Compiles; not yet run on device.**
-- Object scan: `ObjectCaptureView` guided flow → `PhotogrammetrySession` → `model.usdz`. **Compiles; not yet run on device.**
-- Designer: dollhouse with category-colored rounded boxes + billboard labels, cutaway-walls toggle, room dimensions,
-  object tray, drag on floor, twist/buttons to rotate, delete, persisted placements.
-  Custom orbit/zoom camera **just landed, needs on-device check**.
-- Demo data: hand-made 5×4 m room + procedural chair (works on Simulator / any iPhone).
-- Backend: `/health`, `/render`, `/vibe/analyze`, `/vibe/products` in MOCK mode, shared-secret header, size cap, one test.
+- **Home:** room list and object library, rename and delete (swipe or long-press), Scan Room and Scan Object
+  (disabled without LiDAR), "Load Demo Data".
+- **Room scan:** RoomPlan, with a review step before saving.
+  - Saves are aligned so the longest wall runs along X.
+  - Saves the floor outline and RoomPlan's furniture attributes (sofa shape, table type…).
+- **Object scan:** Object Capture with passes and flip, then on-device reconstruction to `model.usdz` + `thumb.jpg`.
+  - A real chair scanned and placed at real scale (0.67 × 1.10 × 0.67 m).
+- **Designer navigation:** own orbit camera plus a UIKit touch layer.
+  - One finger moves an object or orbits (with momentum), two fingers pan, pinch zooms, twist rotates, tap selects.
+  - Walls between the camera and the room fade out. Reset / Top view / cutaway controls.
+- **Realistic furniture:** RoomPlan boxes are swapped for Kenney CC0 models chosen by category and attributes,
+  stretched to RoomPlan's box. The boxes remain as the fallback.
+- **Add Item catalog:** 21 generic items at real sizes, for things RoomPlan misses.
+- **Scanned furniture:** tap it to Replace (with a scan or catalog item) or Hide (false detections), then restore.
+- **Tests:** UI tests in `RoomVibeUITests` (real gestures in the Simulator), `scripts/align_check`, `backend/test_main.py`.
+- **Backend** (David, `c/backend-ai`): real providers, APIClient, Render and Vibe screens. Not merged yet.
+
+RoomPlan facts that matter (checked in the SDK and on a real scan):
+- **Detection:** only 16 object categories are detected (storage, refrigerator, stove, bed, sink, washerDryer,
+  toilet, bathtub, oven, dishwasher, table, sofa, chair, fireplace, television, stairs). Anything else, such as a
+  traffic cone, is never detected. Use Add Item or Object Capture instead.
+- **Facing:** objects face local +Z, with their back toward −Z (against the wall).
 
 ## 4. Ownership (no overlap)
 
@@ -49,10 +63,11 @@ Every file has exactly one owner. To change someone else's file: ask in chat, or
 
 | Area | Owner | Files / folders |
 |---|---|---|
-| Room scan, object scan, capability checks, demo assets | **A (Alex)** | `Features/RoomScan/`, `Features/ObjectScan/`, `Core/Capabilities.swift`, `Resources/DemoData/`, `project.yml` |
-| Room rendering, Designer interaction, Home UI, visual polish, app icon, AR view | **B** | `Features/Designer/`, `Features/Home/`, `Features/AR/` (new), `Assets.xcassets` (new) |
-| Backend, app networking, render + vibe screens, snapshot capture | **C** | `backend/`, `Core/Networking/` (new), `Features/Render/` (new), `Features/Vibe/` (new) |
-| Shared data layer | **B** (reviewer: A) | `Core/Models.swift`, `Core/ProjectStore.swift`, `App/RoomVibeApp.swift` |
+| Room scan, object scan, capability checks, demo assets | **A (Alex)** | `Features/RoomScan/`, `Features/ObjectScan/`, `Core/Capabilities.swift`, `Resources/DemoData/`, `project.yml`, `scripts/` |
+| Designer navigation + furniture realism (moved from B at Alex's request) | **A (Alex)** | `Features/Designer/{TouchSurface,OrbitCamera,Catalog}.swift`; in `DesignerView.swift` the touch handlers, picking, catalog/replace/hide; in `RoomBuilder.swift` `furnitureModel`/`furnish`; `RoomVibeUITests/` |
+| Room visuals (walls, floor, materials, labels), Home UI, app icon, AR view | **Michelle (B)** | rest of `Features/Designer/` (`RoomBuilder.build` surfaces/floor/materials, `WallCutaway` look), `Features/Home/`, `Features/AR/` (new), `Assets.xcassets` (new) |
+| Backend, app networking, render + vibe screens, snapshot capture | **David (C)** | `backend/`, `Core/Networking/` (new), `Features/Render/` (new), `Features/Vibe/` (new) |
+| Shared data layer (additive optional fields only) | **Michelle (B)** (reviewer: A) | `Core/Models.swift`, `Core/ProjectStore.swift`, `App/RoomVibeApp.swift` |
 | Docs | everyone (own sections) | `README.md`, `docs/` |
 
 Known touch points (pre-agreed, small):
