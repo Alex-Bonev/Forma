@@ -13,21 +13,21 @@ final class DesignerGestureTests: XCTestCase {
         let add = app.buttons["Demo Chair"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.tap()
-        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "new object should be selected")
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5), "new object should be selected")
 
         // Chair sits on the camera target, which projects to the canvas center.
         let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
-        // Hit testing alone: deselect, then tap the chair to select it again.
-        app.buttons["Done"].tap()
-        XCTAssertFalse(app.buttons["Remove"].exists)
+        // Hit testing alone: deselect (tap empty floor near the top), then tap the chair to select it again.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08)).tap()
+        XCTAssertFalse(app.buttons["Delete"].exists)
         chair.tap()
-        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 2), "tap on the chair should select it")
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 2), "tap on the chair should select it")
         let before = canvas.value as? String
         chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.62)))
         sleep(1)
         let after = canvas.value as? String
         XCTAssertNotNil(before)
-        XCTAssertTrue(app.buttons["Remove"].exists, "chair should stay selected after the drag")
+        XCTAssertTrue(app.buttons["Delete"].exists, "chair should stay selected after the drag")
         XCTAssertGreaterThan(x(after), x(before) + 0.3, "dragging right should move the chair +x (\(before ?? "-") -> \(after ?? "-"))")
         XCUIScreen.main.screenshot().attach(named: "after-drag", to: self)
 
@@ -35,7 +35,6 @@ final class DesignerGestureTests: XCTestCase {
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.2))
             .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.25)))
         XCTAssertEqual(canvas.value as? String, after, "orbiting must not move or deselect the chair")
-        app.buttons["Done"].tap()
         canvas.pinch(withScale: 1.6, velocity: 2)
         sleep(1)
         XCUIScreen.main.screenshot().attach(named: "after-orbit-zoom", to: self)
@@ -53,9 +52,9 @@ final class DesignerGestureTests: XCTestCase {
         let plant = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Plant'")).firstMatch
         XCTAssertTrue(plant.waitForExistence(timeout: 3))
         plant.tap()
-        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "catalog item should be placed and selected")
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5), "catalog item should be placed and selected")
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
-        app.buttons["Remove"].tap()
+        app.buttons["Delete"].tap()
 
         // Scanned sofa (demo room) is selectable, hideable, restorable.
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
@@ -70,7 +69,7 @@ final class DesignerGestureTests: XCTestCase {
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
         app.buttons["Replace"].tap()
         app.buttons["Corner Sofa"].tap()
-        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Corner Sofa at") == true)
         sleep(1)
         XCUIScreen.main.screenshot().attach(named: "after-replace", to: self)
@@ -83,7 +82,7 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
         app.buttons["Add Item"].tap()
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Custom Box'")).firstMatch.tap()
-        let edit = app.buttons["Edit size and height"]
+        let edit = app.buttons["Size"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
         let width = app.steppers["Width, 0.50 m"]
@@ -107,7 +106,7 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(use.waitForExistence(timeout: 3), "marked item should offer its Vision suggestion")
         XCUIScreen.main.screenshot().attach(named: "after-suggestion", to: self)
         use.tap()
-        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
     }
 

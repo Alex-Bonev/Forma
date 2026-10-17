@@ -33,6 +33,18 @@ struct CatalogItem: Identifiable {
         .init(id: "bench", name: "Bench", model: "bench", size: [1.2, 0.45, 0.4], symbol: "rectangle.split.3x1"),
         .init(id: "trash", name: "Trash Can", model: "trashcan", size: [0.3, 0.5, 0.3], symbol: "trash"),
         .init(id: "box", name: "Box", model: "box", size: [0.5, 0.4, 0.4], symbol: "shippingbox"),
+        .init(id: "fireplace", name: "Fireplace", model: "fireplace", size: [1.4, 1.1, 0.45], symbol: "flame"),
+        // Bathroom
+        .init(id: "toilet", name: "Toilet", model: "toilet", size: [0.4, 0.78, 0.7], symbol: "toilet"),
+        .init(id: "bathtub", name: "Bathtub", model: "bathtub", size: [1.7, 0.58, 0.75], symbol: "bathtub"),
+        .init(id: "vanity", name: "Vanity", model: "sink", size: [0.8, 0.85, 0.5], symbol: "sink"),
+        .init(id: "wall_sink", name: "Wall Sink", model: "sink_wall", size: [0.6, 0.18, 0.45], symbol: "drop"),
+        // Kitchen & laundry
+        .init(id: "fridge", name: "Fridge", model: "refrigerator", size: [0.75, 1.85, 0.7], symbol: "refrigerator"),
+        .init(id: "stove", name: "Stove", model: "stove", size: [0.76, 0.92, 0.65], symbol: "frying.pan"),
+        .init(id: "oven", name: "Oven", model: "oven", size: [0.6, 0.6, 0.55], symbol: "oven"),
+        .init(id: "dishwasher", name: "Dishwasher", model: "dishwasher", size: [0.6, 0.85, 0.6], symbol: "dishwasher"),
+        .init(id: "washer", name: "Washer", model: "washerDryer", size: [0.6, 0.85, 0.6], symbol: "washer"),
     ]
 
     static func item(_ id: String?) -> CatalogItem? { all.first { $0.id == id } }

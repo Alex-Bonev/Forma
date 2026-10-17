@@ -97,14 +97,20 @@ enum ProceduralFurniture {
 
     /// Tank on the back 30% of depth (upper part), rounded bowl and seat in front, on a pedestal.
     private static func toilet(_ e: Entity, _ w: Float, _ h: Float, _ d: Float) {
-        let tankD = d * 0.3, tankZ = -d / 2 + tankD / 2
-        box(e, [w * 0.92, h * 0.46, tankD * 0.9], [0, h * 0.2, tankZ], ceramic)
-        box(e, [w, h * 0.06, tankD], [0, h * 0.47, tankZ], ceramic)
-        cylinder(e, [0.06 * w, h * 0.02, 0.06 * w], [0, h / 2, tankZ], chrome)
-        cylinder(e, [w * 0.5, h * 0.3, d * 0.42], [0, -h * 0.35, d * 0.08], ceramic)
-        sphere(e, [w * 0.86, h * 0.34, d * 0.72], [0, -h * 0.07, d * 0.14], ceramic)
-        cylinder(e, [w * 0.88, h * 0.04, d * 0.72], [0, h * 0.02, d * 0.14], ceramic)
-        cylinder(e, [w * 0.58, h * 0.042, d * 0.46], [0, h * 0.02, d * 0.16], ceramicShade)
+        // Overlapping rounded solids: base joins the tank, seat sits flush on the bowl. Nothing floats or pokes through.
+        let floor = -h / 2, seat = floor + h * 0.56
+        let tankD = d * 0.3, tankFront = -d / 2 + tankD
+        let tankBottom = seat - h * 0.14
+        box(e, [w, h / 2 - tankBottom, tankD], [0, (tankBottom + h / 2) / 2, -d / 2 + tankD / 2], ceramic,
+            radius: min(0.05, tankD / 3))
+        let baseBack = tankFront - d * 0.04, baseFront = d * 0.32, baseTop = seat - h * 0.1
+        box(e, [w * 0.5, baseTop - floor, baseFront - baseBack], [0, (floor + baseTop) / 2, (baseBack + baseFront) / 2],
+            ceramic, radius: min(0.06, w * 0.12))
+        let bowlBack = tankFront - d * 0.02, bowlFront = d / 2
+        let bowlH = h * 0.16, bowlZ = (bowlBack + bowlFront) / 2, bowlD = bowlFront - bowlBack
+        box(e, [w * 0.9, bowlH, bowlD], [0, seat - h * 0.02 - bowlH / 2, bowlZ], ceramic, radius: min(0.07, bowlH / 2.2))
+        box(e, [w * 0.92, h * 0.035, bowlD * 0.98], [0, seat, bowlZ], ceramic, radius: min(0.04, h * 0.017))
+        cylinder(e, [w * 0.12, h * 0.02, w * 0.12], [0, h / 2 + h * 0.005, -d / 2 + tankD / 2], chrome)
     }
 
     /// Ceramic shell with a recessed tub and a faucet on the left end.

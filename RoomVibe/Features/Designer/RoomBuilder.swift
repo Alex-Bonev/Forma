@@ -125,6 +125,7 @@ enum RoomBuilder {
     /// Priority: photoreal Poly Haven (when Realistic Models is on) → rounded procedural → Kenney (stretched).
     /// See docs/specs/rounded-furniture.md.
     static func furnitureEntity(_ key: String, size: SIMD3<Float>) async -> Entity? {
+        if key == "sink_wall" { return wallBasin(size) }
         let photoreal = realistic && realisticModels[key] != nil
         if !photoreal, let p = ProceduralFurniture.model(for: proceduralAliases[key] ?? key, size: size) { return p }
         guard let model = await furnitureTemplate(key) else { return nil }

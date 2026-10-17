@@ -301,79 +301,12 @@ struct DesignerView: View {
                     .transition(.opacity)
             }
             if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
-                // Title row: what's selected, plus the Vision suggestion for marked items (SceneClassifier).
-                let suggestion = CatalogItem.item(room.objects[i].attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) })
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(room.objects[i].label == RoomModel.markedLabel ? "Marked Item"
-                             : "Scanned \(room.objects[i].label.capitalized)")
-                            .font(.subheadline.weight(.semibold))
-                        if let suggestion {
-                            Text("Looks like a \(suggestion.name)").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .lineLimit(1)
-                    Spacer()
-                    if let suggestion {
-                        Button("Use \(suggestion.name)", systemImage: suggestion.symbol) {
-                            Task { await replaceRoomObject(i, catalog: suggestion) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .lineLimit(1)
-                    }
-                }
-                .padding(.horizontal)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                HStack(spacing: 14) {
-                    Menu {
-                        if !store.objects.isEmpty {
-                            Section("Your scans") {
-                                ForEach(store.objects) { o in Button(o.name) { Task { await replaceRoomObject(i, object: o) } } }
-                            }
-                        }
-                        Section("Catalog") {
-                            ForEach(CatalogItem.all) { c in
-                                Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
-                            }
-                        }
-                    } label: { Image(systemName: "arrow.triangle.2.circlepath") }
-                        .accessibilityLabel("Replace")
-                    Button { Task { await editRoomObject(i, room: room) } } label: { Image(systemName: "slider.horizontal.3") }
-                        .accessibilityLabel("Edit size and height")
-                    if Capabilities.canScanObject {
-                        Button { scanTarget = .roomObject(i) } label: { Image(systemName: "camera.viewfinder") }
-                            .accessibilityLabel("Scan real object to replace")
-                    }
-                    Button { hideRoomObject(i) } label: { Image(systemName: "eye.slash") }
-                        .accessibilityLabel("Hide")
-                    Button("Done") { selectedRoomObject = nil }
-                }
-                .font(.title3)
-                .buttonStyle(.bordered)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if selected == nil, let hidden = project.hiddenRoomObjects, !hidden.isEmpty {
+                roomObjectCard(i, room: room)
+            } else if let selected, placed[selected] != nil {
+                placementCard(selected, project: project)
+            } else if let hidden = project.hiddenRoomObjects, !hidden.isEmpty {
                 Button("Show \(hidden.count) hidden scanned item\(hidden.count == 1 ? "" : "s")") { restoreHidden() }
                     .font(.footnote)
-            }
-            if let selected, let e = placed[selected] {
-                HStack(spacing: 14) {
-                    Button { rotate(e, by: -.pi / 8) } label: { Image(systemName: "rotate.left") }
-                        .accessibilityLabel("Rotate left")
-                    Button { rotate(e, by: .pi / 8) } label: { Image(systemName: "rotate.right") }
-                        .accessibilityLabel("Rotate right")
-                    Button { editing = true } label: { Image(systemName: "slider.horizontal.3") }
-                        .accessibilityLabel("Edit size and height")
-                    if Capabilities.canScanObject {
-                        Button { scanTarget = .placement(selected) } label: { Image(systemName: "camera.viewfinder") }
-                            .accessibilityLabel("Scan real object to replace")
-                    }
-                    Button(role: .destructive) { remove(selected) } label: { Image(systemName: "trash") }
-                        .accessibilityLabel("Remove")
-                    Button("Done") { self.selected = nil }
-                }
-                .font(.title3)
-                .buttonStyle(.bordered)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -399,6 +332,70 @@ struct DesignerView: View {
         .background(.regularMaterial)
         .animation(.spring(duration: 0.3, bounce: 0), value: selected)
         .animation(.spring(duration: 0.3, bounce: 0), value: selectedRoomObject)
+    }
+
+    // MARK: Selection cards
+    // One card per selection: name + at most 4 labeled actions. Move = drag, rotate = twist, deselect = tap empty space.
+
+    private func placementCard(_ id: UUID, project: Project) -> some View {
+        selectionCard(title: selectionDescription(project)?.components(separatedBy: " at ").first ?? "Item",
+                      subtitle: "Drag to move · Twist to rotate") {
+            ActionButton("Size", icon: "slider.horizontal.3") { editing = true }
+            if Capabilities.canScanObject {
+                ActionButton("Scan Real", icon: "camera.viewfinder") { scanTarget = .placement(id) }
+            }
+            ActionButton("Delete", icon: "trash", role: .destructive) { remove(id) }
+        }
+    }
+
+    private func roomObjectCard(_ i: Int, room: RoomModel) -> some View {
+        let box = room.objects[i]
+        let marked = box.label == RoomModel.markedLabel
+        // Vision suggestion for marked items (SceneClassifier), offered as the first action.
+        let suggestion = CatalogItem.item(box.attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) })
+        return selectionCard(title: marked ? "Marked Item" : "Scanned \(box.label.capitalized)",
+                             subtitle: suggestion.map { "Looks like a \($0.name)" } ?? "From your room scan") {
+            if let suggestion {
+                ActionButton("Use \(suggestion.name)", icon: suggestion.symbol, prominent: true) {
+                    Task { await replaceRoomObject(i, catalog: suggestion) }
+                }
+            }
+            Menu {
+                if !store.objects.isEmpty {
+                    Section("Your scans") {
+                        ForEach(store.objects) { o in Button(o.name) { Task { await replaceRoomObject(i, object: o) } } }
+                    }
+                }
+                Section("Catalog") {
+                    ForEach(CatalogItem.all) { c in
+                        Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
+                    }
+                }
+            } label: { ActionLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
+                .accessibilityLabel("Replace")
+            if !marked {
+                ActionButton("Size", icon: "slider.horizontal.3") { Task { await editRoomObject(i, room: room) } }
+            }
+            if Capabilities.canScanObject {
+                ActionButton("Scan Real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) }
+            }
+            ActionButton("Hide", icon: "eye.slash") { hideRoomObject(i) }
+        }
+    }
+
+    private func selectionCard<Actions: View>(title: String, subtitle: String,
+                                              @ViewBuilder actions: () -> Actions) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            HStack(spacing: 8) { actions() }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var catalogSheet: some View {
@@ -522,7 +519,10 @@ struct DesignerView: View {
 
     /// Edit = turn scanned furniture into an editable placement (same model, same box), then open the editor.
     private func editRoomObject(_ i: Int, room: RoomModel) async {
-        let key = RoomBuilder.furnitureModel(for: room.objects[i])
+        var key = RoomBuilder.furnitureModel(for: room.objects[i])
+        if key == "sink", let e = roomObjectEntity(i), e.position(relativeTo: scene).y - room.objects[i].dimensions.y / 2 > 0.2 {
+            key = "sink_wall"   // floating sink = wall-mounted basin
+        }
         let item = CatalogItem.all.first { $0.model == key } ?? CatalogItem.item("custom_box")!
         await replaceRoomObject(i, catalog: item)
         editing = true
@@ -634,12 +634,6 @@ struct DesignerView: View {
         store.update(project)
     }
 
-    private func rotate(_ e: Entity, by angle: Float) {
-        var t = e.transform
-        t.rotation = simd_quatf(angle: angle, axis: [0, 1, 0]) * t.rotation
-        e.move(to: t, relativeTo: e.parent, duration: 0.25, timingFunction: .easeInOut)
-        commit(rotation: (e, t.rotation))
-    }
 
     private func remove(_ id: UUID) {
         guard var project else { return }
@@ -729,5 +723,43 @@ final class WallCutaway {
             // Fully hidden, not ghosted: even a faint textured wall (brick) reads as a pattern on furniture behind it.
             if outside && now < 0.02 { s.entity.isEnabled = false }
         }
+    }
+}
+
+/// Icon over a short caption: every action says what it does.
+struct ActionLabel: View {
+    let title: String
+    let icon: String
+    var prominent = false
+    var role: ButtonRole? = nil
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 18, weight: .medium))
+            Text(title).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(prominent ? AnyShapeStyle(.white) : role == .destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
+        .frame(maxWidth: .infinity, minHeight: 54)
+        .background(prominent ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct ActionButton: View {
+    let title: String
+    let icon: String
+    var prominent = false
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    init(_ title: String, icon: String, prominent: Bool = false, role: ButtonRole? = nil, action: @escaping () -> Void) {
+        self.title = title; self.icon = icon; self.prominent = prominent; self.role = role; self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) { ActionLabel(title: title, icon: icon, prominent: prominent, role: role) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
     }
 }
