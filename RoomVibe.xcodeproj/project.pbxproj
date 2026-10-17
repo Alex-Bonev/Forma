@@ -8,16 +8,12 @@
 
 /* Begin PBXFileReference section */
 		8B48A8288098F4BFBCFF9E53 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
-		944CEFEF2389ED2B0780AD34 /* RoomVibe.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RoomVibe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		944CEFEF2389ED2B0780AD34 /* RoomVibe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RoomVibe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		363F7AB0FB19849D85E8350E /* RoomVibe */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
 			path = RoomVibe;
 			sourceTree = "<group>";
 		};

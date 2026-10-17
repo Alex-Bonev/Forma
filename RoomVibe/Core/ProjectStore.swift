@@ -68,14 +68,24 @@ final class ProjectStore {
         try? persist()
     }
 
-    /// Bundled fallback: sample room + procedural chair. Works on any device, including Simulator.
+    /// Bundled fallback: sample room + sample chair. Works on any device, including Simulator.
+    /// The chair is the bundled scan (sample_chair.usdz, see scripts/pull_demo_assets.py) or, if absent, a procedural one.
     func loadDemoData() throws {
         guard let url = Bundle.main.url(forResource: "sample_room", withExtension: "json") else { return }
         let model = try JSONDecoder().decode(RoomModel.self, from: Data(contentsOf: url))
         try addRoom(name: "Demo Living Room", model: model)
-        if !objects.contains(where: { $0.modelFile == nil }) {
-            try addObject(ScannedObject(id: UUID(), name: "Demo Chair", modelFile: nil, boundingBox: [0.5, 0.9, 0.5]))
+        guard !objects.contains(where: { $0.name == "Demo Chair" }) else { return }
+        var chair = ScannedObject(id: UUID(), name: "Demo Chair", modelFile: nil, boundingBox: [0.5, 0.9, 0.5])
+        if let usdz = Bundle.main.url(forResource: "sample_chair", withExtension: "usdz") {
+            let dir = Self.objectDir(chair.id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: usdz, to: dir.appending(path: "model.usdz"))
+            if let thumb = Bundle.main.url(forResource: "sample_chair_thumb", withExtension: "jpg") {
+                try? FileManager.default.copyItem(at: thumb, to: dir.appending(path: "thumb.jpg"))
+            }
+            chair.modelFile = "model.usdz"
         }
+        try addObject(chair)
     }
 
     private func persist() throws {
