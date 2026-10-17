@@ -23,7 +23,6 @@ struct DesignerView: View {
     @State private var moving: (id: UUID, offset: SIMD3<Float>)?
     @State private var viewSize: CGSize = .zero
     @State private var lowWalls = false
-    @State private var topView = false
     @State private var showHint = true
     @State private var adding: String?
     @State private var twistingObject = false
@@ -102,11 +101,7 @@ struct DesignerView: View {
     /// Maps-style floating controls.
     private var viewControls: some View {
         VStack(spacing: 0) {
-            controlButton("scope", label: "Reset view") { camera.reset(); topView = false }
-            Divider().frame(width: 28)
-            controlButton(topView ? "view.3d" : "square.grid.3x3.topleft.filled", label: topView ? "3D view" : "Top view") {
-                camera.toggleTopView(); topView = camera.isTopView
-            }
+            controlButton("scope", label: "Reset view") { camera.reset() }
             Divider().frame(width: 28)
             finishesMenu
             Divider().frame(width: 28)
@@ -186,7 +181,6 @@ struct DesignerView: View {
                     if let p = floorPoint(at: location) { e.position = clamp(p + moving.offset, keeping: e) }
                 } else {
                     camera.orbit(by: delta)
-                    if topView { topView = camera.isTopView }
                 }
             case .ended:
                 if let moving {

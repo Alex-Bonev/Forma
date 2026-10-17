@@ -29,7 +29,20 @@ struct Finish: Identifiable, Hashable {
         .init(id: "concrete", name: "Concrete", texture: "finish_concrete_floor_02", tile: 2.5),
     ]
 
-    static func wall(_ id: String?) -> Finish { walls.first { $0.id == id } ?? walls[0] }
+    static func wall(_ id: String?) -> Finish {
+        if let id, id.hasPrefix(paintPrefix), let c = UIColor(hex: String(id.dropFirst(paintPrefix.count))) {
+            return Finish(id: id, name: "Matched Paint", color: c)
+        }
+        return walls.first { $0.id == id } ?? walls[0]
+    }
+
+    /// Custom paint (e.g. sampled from room photos), stored in Project.wallFinish as "paint:#RRGGBB".
+    static let paintPrefix = "paint:"
+    static func paintID(_ c: UIColor) -> String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return paintPrefix + String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+    }
     static func floor(_ id: String?) -> Finish { floors.first { $0.id == id } ?? floors[0] }
 
     private static var textures: [String: TextureResource] = [:]
@@ -78,5 +91,14 @@ struct Finish: Identifiable, Hashable {
         }
         visit(room)
         for (m, finish, size) in targets { m.model?.materials = [await finish.material(size: size)] }
+    }
+}
+
+extension UIColor {
+    /// "#RRGGBB"
+    convenience init?(hex: String) {
+        let h = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        self.init(red: CGFloat(v >> 16 & 0xFF) / 255, green: CGFloat(v >> 8 & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
     }
 }
