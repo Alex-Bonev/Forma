@@ -8,6 +8,9 @@ struct Project: Codable, Identifiable, Hashable {
     var placements: [Placement] = []
     /// Indices into the room's RoomPlan objects the user hid (false detections, or replaced by a placement).
     var hiddenRoomObjects: [Int]? = nil
+    /// Finish.id for walls / floor (nil = default white / light).
+    var wallFinish: String? = nil
+    var floorFinish: String? = nil
 }
 
 struct ScannedObject: Codable, Identifiable, Hashable {

@@ -106,10 +106,41 @@ struct DesignerView: View {
                 camera.toggleTopView(); topView = camera.isTopView
             }
             Divider().frame(width: 28)
+            finishesMenu
+            Divider().frame(width: 28)
             controlButton(lowWalls ? "square.split.bottomrightquarter.fill" : "square.split.bottomrightquarter",
                           label: lowWalls ? "Full walls" : "Cutaway walls") { lowWalls.toggle() }
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Wall and floor finish presets, saved per room.
+    private var finishesMenu: some View {
+        Menu {
+            Picker("Walls", selection: finishBinding(\.wallFinish, default: Finish.walls[0].id)) {
+                ForEach(Finish.walls) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            Picker("Floor", selection: finishBinding(\.floorFinish, default: Finish.floors[0].id)) {
+                ForEach(Finish.floors) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "paintbrush").font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Finishes")
+    }
+
+    private func finishBinding(_ key: WritableKeyPath<Project, String?>, default d: String) -> Binding<String> {
+        Binding(
+            get: { project?[keyPath: key] ?? d },
+            set: { id in
+                guard var p = project, let room = roomEntity else { return }
+                p[keyPath: key] = id
+                store.update(p)
+                let wall = Finish.wall(p.wallFinish), floor = Finish.floor(p.floorFinish)
+                Task { await Finish.apply(to: room, wall: wall, floor: floor) }
+            })
     }
 
     private func controlButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
@@ -360,7 +391,11 @@ struct DesignerView: View {
         roomSize = built.size
         walls.collect(from: built.entity)
         for i in project?.hiddenRoomObjects ?? [] { roomObjectEntity(i)?.isEnabled = false }
-        Task { await RoomBuilder.furnish(built, room: room) }
+        let wall = Finish.wall(project?.wallFinish), floor = Finish.floor(project?.floorFinish)
+        Task {
+            await Finish.apply(to: built.entity, wall: wall, floor: floor)
+            await RoomBuilder.furnish(built, room: room)
+        }
     }
 
     private func spawn(_ p: Placement) async {
@@ -505,7 +540,7 @@ final class WallCutaway {
     func collect(from room: Entity) {
         surfaces = []
         func visit(_ e: Entity) {
-            if e.name == RoomBuilder.surfaceName {
+            if e.name.hasPrefix(RoomBuilder.surfaceName) {
                 let p = e.position(relativeTo: nil)
                 let z = e.orientation(relativeTo: nil).act([0, 0, 1])
                 var n = simd_normalize(SIMD2(z.x, z.z))

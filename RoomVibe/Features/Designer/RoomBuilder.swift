@@ -8,7 +8,9 @@ enum RoomBuilder {
     struct Built { let entity: Entity; let size: SIMD2<Float> }
 
     static let wallThickness: Float = 0.08
-    static let surfaceName = "surface"
+    static let surfaceName = "surface"              // prefix of every wall/door/window entity (wall cutaway)
+    static let wallName = "surface:wall"
+    static let floorName = "floor"
     static let furniturePrefix = "furniture:"
 
     static func build(_ room: RoomModel, wallScale: Float = 1) -> Built {
@@ -32,20 +34,21 @@ enum RoomBuilder {
         let floor = ModelEntity(mesh: .generatePlane(width: size.x + 0.4, depth: size.y + 0.4),
                                 materials: [material(.init(white: 0.93, alpha: 1), roughness: 0.9)])
         floor.position = center
+        floor.name = floorName
         content.addChild(floor)
 
-        func addSurface(_ b: RoomModel.Box, depth: Float, color: UIColor) {
+        func addSurface(_ b: RoomModel.Box, depth: Float, color: UIColor, kind: String) {
             let h = b.dimensions.y * wallScale
             let e = ModelEntity(mesh: .generateBox(size: [b.dimensions.x, h, depth]), materials: [material(color)])
             e.transform = Transform(matrix: b.transform)
             // Shrink from the floor up, not around the center.
             e.position.y = lo.y + (e.position.y - lo.y - b.dimensions.y / 2) * wallScale + h / 2
-            e.name = surfaceName   // walls/doors/windows: faded by DesignerView when between camera and room
+            e.name = surfaceName + ":" + kind   // faded by DesignerView's WallCutaway when between camera and room
             content.addChild(e)
         }
-        room.walls.forEach { addSurface($0, depth: wallThickness, color: .init(white: 0.97, alpha: 1)) }
-        room.doors.forEach { addSurface($0, depth: wallThickness + 0.02, color: .init(red: 0.55, green: 0.42, blue: 0.3, alpha: 1)) }
-        room.windows.forEach { addSurface($0, depth: wallThickness + 0.02, color: .init(red: 0.62, green: 0.8, blue: 0.95, alpha: 1)) }
+        room.walls.forEach { addSurface($0, depth: wallThickness, color: .init(white: 0.97, alpha: 1), kind: "wall") }
+        room.doors.forEach { addSurface($0, depth: wallThickness + 0.02, color: .init(red: 0.55, green: 0.42, blue: 0.3, alpha: 1), kind: "door") }
+        room.windows.forEach { addSurface($0, depth: wallThickness + 0.02, color: .init(red: 0.62, green: 0.8, blue: 0.95, alpha: 1), kind: "window") }
 
         for (i, b) in room.objects.enumerated() {
             let e = ModelEntity(mesh: .generateBox(size: b.dimensions, cornerRadius: min(0.04, b.dimensions.min() / 4)),
@@ -115,8 +118,17 @@ enum RoomBuilder {
     static func furnish(_ built: Built, room: RoomModel) async {
         for (i, b) in room.objects.enumerated() {
             guard let box = built.entity.findEntity(named: furniturePrefix + "\(i)") as? ModelEntity,
-                  box.findEntity(named: "furniture-model") == nil,
-                  let model = await furnitureTemplate(furnitureModel(for: b)) else { continue }
+                  box.findEntity(named: "furniture-model") == nil else { continue }
+            // A sink box floating above the floor is a wall-mounted basin (RoomPlan boxes only the basin).
+            if b.label == "sink", box.position(relativeTo: built.entity).y - b.dimensions.y / 2 > 0.2 {
+                let basin = wallBasin(b.dimensions)
+                basin.name = "furniture-model"
+                box.addChild(basin)
+                box.model = nil
+                box.findEntity(named: "label")?.isEnabled = false
+                continue
+            }
+            guard let model = await furnitureTemplate(furnitureModel(for: b)) else { continue }
             let bounds = model.visualBounds(relativeTo: nil)
             guard bounds.extents.min() > 0 else { continue }
             let holder = Entity()
@@ -126,16 +138,31 @@ enum RoomBuilder {
             // Kenney models face -Z; RoomPlan objects face +Z (back against the wall), verified on a real scan.
             holder.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0])
             holder.scale = b.dimensions / bounds.extents
-            // RoomPlan's sink box is just the basin at counter height: extend the model down to the floor (a vanity).
-            let bottom = box.position(relativeTo: built.entity).y - b.dimensions.y / 2
-            if b.label == "sink", bottom > 0.2 {
-                holder.scale.y = (b.dimensions.y + bottom) / bounds.extents.y
-                holder.position.y = -bottom / 2
-            }
             box.addChild(holder)
             box.model = nil                                  // hide the box, keep its transform as the anchor
             box.findEntity(named: "label")?.isEnabled = false // the model speaks for itself
         }
+    }
+
+    /// Wall-mounted ceramic basin filling `size` (centered box, back toward -Z / the wall).
+    static func wallBasin(_ size: SIMD3<Float>) -> Entity {
+        let ceramic = material(.init(white: 0.96, alpha: 1), roughness: 0.25)
+        let basin = Entity()
+        let body = ModelEntity(mesh: .generateBox(size: size, cornerRadius: min(0.05, size.min() / 3)), materials: [ceramic])
+        basin.addChild(body)
+        // Recessed bowl: a darker inset slab just under the rim.
+        let bowl = ModelEntity(mesh: .generateBox(size: [size.x * 0.78, 0.01, size.z * 0.62], cornerRadius: 0.004),
+                               materials: [material(.init(white: 0.82, alpha: 1), roughness: 0.2)])
+        bowl.position = [0, size.y / 2 + 0.001, size.z * 0.06]
+        basin.addChild(bowl)
+        let chrome = material(.init(white: 0.75, alpha: 1), roughness: 0.15)
+        let faucet = ModelEntity(mesh: .generateCylinder(height: 0.14, radius: 0.012), materials: [chrome])
+        faucet.position = [0, size.y / 2 + 0.07, -size.z / 2 + 0.05]
+        basin.addChild(faucet)
+        let spout = ModelEntity(mesh: .generateBox(size: [0.022, 0.018, 0.09], cornerRadius: 0.008), materials: [chrome])
+        spout.position = [0, size.y / 2 + 0.13, -size.z / 2 + 0.09]
+        basin.addChild(spout)
+        return basin
     }
 
     static func color(for category: String) -> UIColor {
