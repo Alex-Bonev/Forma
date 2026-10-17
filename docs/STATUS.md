@@ -29,7 +29,7 @@ Last updated: 2026-10-17, branch `a/realism` (PR #3, open). `main` has PRs #1 an
   - Replace or Hide scanned furniture.
   - Edit size and mounting height.
 - **Finishes:**
-  - Walls: 6 presets + Matched Paint. Floors: 5 presets.
+  - Walls: 12 presets + Matched Paint. Floors: 10 presets.
   - CC0 textures. Synchronous load, because the async loader crashes RealityKit.
 
 **Docs:**
@@ -45,12 +45,8 @@ Last updated: 2026-10-17, branch `a/realism` (PR #3, open). `main` has PRs #1 an
 ## Open issues (from Alex's device test, Oct 17)
 
 1. ~~**Toilet model:**~~ **Fixed.** Rebuilt from overlapping rounded solids: the tank joins the base and the seat sits flush.
-2. ~~**Selection UI is cluttered and confusing.**~~ **Fixed:** one card per selection, with a name, a hint and ≤4 labeled actions; no rotate or Done buttons. The buttons are unlabeled and hard to hit. Simplify:
-   - Drop the rotate buttons (twist does it).
-   - Drop the "Done" buttons (tap empty space deselects).
-   - Remaining actions get short text labels.
-   - At most about 3–4 actions per selection.
-3. ~~**Edit on a scanned sink turns it into a grey box.**~~ **Fixed:** the catalog now covers every rounded model, including Wall Sink, and a floating sink edits as a wall sink. `editRoomObject` only maps furniture keys that have a catalog item, and wall-mounted sinks (`wallBasin`) have none. Every furniture key, and the wall basin, needs an editable equivalent.
+2. ~~**Selection UI is cluttered and confusing.**~~ **Fixed:** one card per selection, with a name, a hint and ≤4 labeled actions; no rotate or Done buttons.
+3. ~~**Edit on a scanned sink turns it into a grey box.**~~ **Fixed:** the catalog now covers every rounded model, including Wall Sink, and a floating sink edits as a wall sink.
 4. ~~**More wall and floor textures:**~~ **Done:** walls now have 12 presets + Matched Paint and floors have 10. See `docs/specs/finishes-assets.md`.
 
 ## Unverified on device (needs Alex's phone)

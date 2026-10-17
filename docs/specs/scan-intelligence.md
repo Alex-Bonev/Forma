@@ -1,6 +1,6 @@
 # Spec: Scan intelligence (on-device classification)
 
-Status: **ready to build**. Owner: A (Alex), built by a delegated agent. Branch base: `a/realism`.
+Status: **built** (merged into `a/realism`). Owner: A (Alex), built by a delegated agent. Branch base: `a/realism`.
 
 ## Why Apple Vision, not Jev
 
