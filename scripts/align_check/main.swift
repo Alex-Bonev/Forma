@@ -1,0 +1,25 @@
+import Foundation
+// Run: swiftc RoomVibe/Core/Models.swift RoomVibe/Features/RoomScan/RoomAlignment.swift scripts/align_check/main.swift -o /tmp/align_check && /tmp/align_check
+import simd
+// Self-check: a 5x4 room rotated 30° comes back axis-aligned with the right footprint.
+func rotY(_ a: Float, _ t: SIMD3<Float>) -> simd_float4x4 {
+    var m = simd_float4x4(simd_quatf(angle: a, axis: [0, 1, 0])); m.columns.3 = SIMD4(t, 1); return m
+}
+let a: Float = .pi / 6
+let base: [(Float, SIMD3<Float>, Float)] = [(5, [0, 1.25, -2], 0), (5, [0, 1.25, 2], 0), (4, [2.5, 1.25, 0], .pi/2), (4, [-2.5, 1.25, 0], .pi/2)]
+let walls = base.map { w, p, r in
+    RoomModel.Box(label: "wall", dimensions: [w, 2.5, 0], transform: rotY(a, .zero) * rotY(r, p))
+}
+let sofa = RoomModel.Box(label: "sofa", dimensions: [2, 0.8, 1], transform: rotY(a, .zero) * rotY(0, [1, 0.4, 0]))
+let room = RoomModel(walls: walls, objects: [sofa]).axisAligned()
+var lo = SIMD3<Float>(repeating: 1e9), hi = -lo
+for b in room.walls {
+    let c = SIMD3(b.columns[3].x, b.columns[3].y, b.columns[3].z), x = SIMD3(b.columns[0].x, b.columns[0].y, b.columns[0].z) * b.dimensions.x / 2
+    for p in [c + x, c - x] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
+}
+let size = SIMD2(hi.x - lo.x, hi.z - lo.z)
+assert(abs(size.x - 5) < 1e-3 && abs(size.y - 4) < 1e-3, "footprint \(size)")
+let s = room.objects[0].columns
+assert(abs(s[0].z) < 1e-4 && abs(s[3].x - 1) < 1e-4 && abs(s[3].z) < 1e-4, "sofa \(s)")
+assert(abs(room.walls[0].columns[3].y - 1.25) < 1e-5, "height kept")
+print("align_check OK", size)

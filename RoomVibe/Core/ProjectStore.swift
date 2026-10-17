@@ -38,8 +38,13 @@ final class ProjectStore {
         let project = Project(id: UUID(), name: name, createdAt: .now)
         let dir = Self.projectDir(project.id)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try JSONEncoder().encode(model).write(to: dir.appending(path: "room.json"))
-        try extraFiles(dir)
+        do {
+            try JSONEncoder().encode(model).write(to: dir.appending(path: "room.json"))
+            try extraFiles(dir)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)   // no orphan folder outside the index
+            throw error
+        }
         projects.insert(project, at: 0)
         try persist()
         return project

@@ -34,10 +34,10 @@ struct RoomScanView: View {
         .onChange(of: scanner?.error) { _, new in error = new }
         .alert("Name this room", isPresented: $naming) {
             TextField("Living Room", text: $name)
-            Button("Save") { save() }
+            Button("Save") { DispatchQueue.main.async { save() } }
             Button("Cancel", role: .cancel) {}
         }
-        .alert("Couldn't save the scan", isPresented: .constant(error != nil)) {
+        .alert("Scan failed", isPresented: .constant(error != nil)) {
             Button("OK") { dismiss() }
         } message: { Text(error ?? "") }
     }
@@ -93,7 +93,7 @@ struct RoomScanView: View {
 
     private func save() {
         guard let room = scanner?.result else { return }
-        let model = RoomModel(room)
+        let model = RoomModel(room).axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.
         guard !model.walls.isEmpty else {
             error = "No walls were detected. Try scanning again and point at every wall."
@@ -114,14 +114,16 @@ struct RoomScanView: View {
     }
 }
 
+@MainActor
 @Observable
-final class RoomScanner: NSObject, RoomCaptureViewDelegate {
+final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     enum Phase { case scanning, processing, review }
 
     let view = RoomCaptureView(frame: .zero)
     private(set) var phase = Phase.scanning
     private(set) var result: CapturedRoom?
     private(set) var error: String?
+    private var cancelled = false
 
     override init() {
         super.init()
@@ -139,13 +141,16 @@ final class RoomScanner: NSObject, RoomCaptureViewDelegate {
         view.captureSession.stop()
     }
 
+    /// Stop without processing: the scan is being thrown away.
     func cancel() {
+        cancelled = true
         if phase == .scanning { view.captureSession.stop() }
     }
 
     func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: (any Error)?) -> Bool {
-        if let error { self.error = error.localizedDescription; return false }
-        return true
+        // Errors here (tracking lost, device too hot, room too big) end the session.
+        if let error, !cancelled { self.error = error.localizedDescription }
+        return error == nil && !cancelled
     }
 
     func captureView(didPresent processedResult: CapturedRoom, error: (any Error)?) {
