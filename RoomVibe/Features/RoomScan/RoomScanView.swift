@@ -214,8 +214,11 @@ extension RoomModel {
             doors: room.doors.map { box($0, "door") },
             windows: room.windows.map { box($0, "window") },
             openings: room.openings.map { box($0, "opening") },
-            objects: room.objects.map {
-                Box(label: String(describing: $0.category), dimensions: $0.dimensions, transform: $0.transform)
+            objects: room.objects.map { o in
+                var b = Box(label: String(describing: o.category), dimensions: o.dimensions, transform: o.transform)
+                // Type-qualified so "existing" (arm vs back) and "lShaped" (sofa vs table) stay unambiguous.
+                b.attributes = o.attributes.map { "\(type(of: $0)).\($0.rawValue)" }
+                return b
             },
             floorOutline: Self.outline(of: room.floors)
         )

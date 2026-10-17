@@ -7,13 +7,21 @@ ModelIO's OBJ->USD export collapses submesh materials onto one binding, so this 
 import subprocess, sys, tempfile
 from pathlib import Path
 
-# RoomPlan CapturedRoom.Object.Category -> Kenney model. fireplace has no match (renders as a box).
+# RoomPlan CapturedRoom.Object.Category (+ variants, + catalog-only items) -> Kenney model.
+# fireplace has no match (renders as a box).
 MAPPING = {
     "storage": "bookcaseClosedWide", "refrigerator": "kitchenFridgeLarge", "stove": "kitchenStove",
     "bed": "bedDouble", "sink": "kitchenSink", "washerDryer": "washerDryerStacked", "toilet": "toilet",
     "bathtub": "bathtub", "oven": "kitchenStoveElectric", "dishwasher": "kitchenCabinetDrawer",
     "table": "table", "sofa": "loungeSofa", "chair": "chairCushion", "television": "televisionModern",
     "stairs": "stairs",
+    # Variants chosen from RoomPlan attributes / size (see RoomBuilder.furnitureModel).
+    "sofa_corner": "loungeSofaCorner", "sofa_single": "loungeChair", "sofa_long": "loungeSofaLong",
+    "table_coffee": "tableCoffee", "table_round": "tableRound",
+    "chair_swivel": "chairDesk", "chair_stool": "stoolBar", "chair_arm": "loungeDesignChair",
+    "storage_shelf": "bookcaseOpen", "storage_cabinet": "bookcaseClosedDoors", "storage_low": "cabinetTelevision",
+    "plant": "pottedPlant", "lamp": "lampSquareFloor", "rug": "rugRectangle", "desk": "desk",
+    "bench": "bench", "sideTable": "sideTable", "trashcan": "trashcan", "box": "cardboardBoxClosed",
 }
 
 

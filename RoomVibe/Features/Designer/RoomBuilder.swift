@@ -9,6 +9,7 @@ enum RoomBuilder {
 
     static let wallThickness: Float = 0.08
     static let surfaceName = "surface"
+    static let furniturePrefix = "furniture:"
 
     static func build(_ room: RoomModel, wallScale: Float = 1) -> Built {
         let boxes = room.walls.isEmpty ? room.objects : room.walls
@@ -46,10 +47,11 @@ enum RoomBuilder {
         room.doors.forEach { addSurface($0, depth: wallThickness + 0.02, color: .init(red: 0.55, green: 0.42, blue: 0.3, alpha: 1)) }
         room.windows.forEach { addSurface($0, depth: wallThickness + 0.02, color: .init(red: 0.62, green: 0.8, blue: 0.95, alpha: 1)) }
 
-        for b in room.objects {
+        for (i, b) in room.objects.enumerated() {
             let e = ModelEntity(mesh: .generateBox(size: b.dimensions, cornerRadius: min(0.04, b.dimensions.min() / 4)),
                                 materials: [material(color(for: b.label))])
             e.transform = Transform(matrix: b.transform)
+            e.name = furniturePrefix + "\(i)"
             content.addChild(e)
 
             let text = ModelEntity(mesh: .generateText(b.label.capitalized, extrusionDepth: 0.002,
@@ -58,13 +60,82 @@ enum RoomBuilder {
                                    materials: [UnlitMaterial(color: .darkGray)])
             let tb = text.visualBounds(relativeTo: nil)
             let label = Entity()
-            label.position = e.position + [0, b.dimensions.y / 2 + 0.12, 0]
+            label.name = "label"
+            label.position = [0, b.dimensions.y / 2 + 0.12, 0]   // gravity-aligned box: local y is up
             text.position = -tb.center
             label.addChild(text)
             label.components.set(BillboardComponent())
-            content.addChild(label)
+            e.addChild(label)
         }
         return Built(entity: root, size: size)
+    }
+
+    // MARK: Realistic furniture (Tier 2)
+
+    /// Bundled model for a RoomPlan object, picked by category, attributes and size.
+    /// Files: Resources/DemoData/Furniture/<name>.usdz (Kenney Furniture Kit, CC0).
+    static func furnitureModel(for b: RoomModel.Box) -> String {
+        let a = Set(b.attributes ?? [])
+        switch b.label {
+        case "sofa":
+            if a.contains("SofaType.lShaped") || a.contains("SofaType.lShapedExtension") { return "sofa_corner" }
+            if a.contains("SofaType.singleSeat") { return "sofa_single" }
+            return b.dimensions.x > 2.4 ? "sofa_long" : "sofa"
+        case "table":
+            if a.contains("TableShapeType.circularElliptic") { return "table_round" }
+            if a.contains("TableType.coffee") || b.dimensions.y < 0.55 { return "table_coffee" }
+            return "table"
+        case "chair":
+            if a.contains("ChairType.swivel") { return "chair_swivel" }
+            if a.contains("ChairType.stool") { return "chair_stool" }
+            if a.contains("ChairArmType.existing") { return "chair_arm" }
+            return "chair"
+        case "storage":
+            if a.contains("StorageType.shelf") { return "storage_shelf" }
+            if b.dimensions.y < 0.9 { return "storage_low" }
+            return a.contains("StorageType.cabinet") ? "storage_cabinet" : "storage"
+        default:
+            return b.label
+        }
+    }
+
+    private static var templates: [String: Entity] = [:]
+
+    /// Bundled furniture template, loaded once and cloned per use.
+    static func furnitureTemplate(_ name: String) async -> Entity? {
+        if let t = templates[name] { return t.clone(recursive: true) }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "usdz"),
+              let t = try? await Entity(contentsOf: url) else { return nil }
+        templates[name] = t
+        return t.clone(recursive: true)
+    }
+
+    /// Swaps each furniture box for a real model stretched to the box (RoomPlan boxes are tight bounds).
+    /// Boxes stay as the fallback when a category has no model. Call after `build`; safe to call again.
+    static func furnish(_ built: Built, room: RoomModel) async {
+        for (i, b) in room.objects.enumerated() {
+            guard let box = built.entity.findEntity(named: furniturePrefix + "\(i)") as? ModelEntity,
+                  box.findEntity(named: "furniture-model") == nil,
+                  let model = await furnitureTemplate(furnitureModel(for: b)) else { continue }
+            let bounds = model.visualBounds(relativeTo: nil)
+            guard bounds.extents.min() > 0 else { continue }
+            let holder = Entity()
+            holder.name = "furniture-model"
+            holder.addChild(model)
+            model.position = -bounds.center
+            // Kenney models face -Z; RoomPlan objects face +Z (back against the wall), verified on a real scan.
+            holder.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0])
+            holder.scale = b.dimensions / bounds.extents
+            // RoomPlan's sink box is just the basin at counter height: extend the model down to the floor (a vanity).
+            let bottom = box.position(relativeTo: built.entity).y - b.dimensions.y / 2
+            if b.label == "sink", bottom > 0.2 {
+                holder.scale.y = (b.dimensions.y + bottom) / bounds.extents.y
+                holder.position.y = -bottom / 2
+            }
+            box.addChild(holder)
+            box.model = nil                                  // hide the box, keep its transform as the anchor
+            box.findEntity(named: "label")?.isEnabled = false // the model speaks for itself
+        }
     }
 
     static func color(for category: String) -> UIColor {

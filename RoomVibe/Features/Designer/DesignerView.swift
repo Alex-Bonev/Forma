@@ -81,18 +81,6 @@ struct DesignerView: View {
                 .padding()
         }
         .overlay(alignment: .topTrailing) { viewControls.padding() }
-        .overlay(alignment: .top) {
-            if showHint || objectHint {
-                Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
-                                : "Drag to look around · Two fingers to pan · Pinch to zoom")
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.top, 56)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
         .animation(.easeOut(duration: 0.3), value: showHint)
         .animation(.easeOut(duration: 0.3), value: objectHint)
         .sensoryFeedback(.impact(weight: .light), trigger: lifts)
@@ -218,6 +206,13 @@ struct DesignerView: View {
 
     @ViewBuilder private func bottomPanel(_ project: Project) -> some View {
         VStack(spacing: 12) {
+            if showHint || objectHint {
+                Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
+                                : "Drag to look around · Two fingers to pan · Pinch to zoom")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .transition(.opacity)
+            }
             if let selected, let e = placed[selected] {
                 HStack(spacing: 20) {
                     Button { rotate(e, by: -.pi / 8) } label: { Image(systemName: "rotate.left") }
@@ -268,6 +263,7 @@ struct DesignerView: View {
         roomEntity = built.entity
         roomSize = built.size
         walls.collect(from: built.entity)
+        Task { await RoomBuilder.furnish(built, room: room) }
     }
 
     private func spawn(_ p: Placement) async {

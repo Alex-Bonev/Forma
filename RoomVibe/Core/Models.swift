@@ -30,6 +30,8 @@ struct RoomModel: Codable {
         var label: String
         var dimensions: SIMD3<Float>   // walls/doors/windows have z = 0
         var columns: [SIMD4<Float>]    // simd_float4x4 columns
+        /// RoomPlan object attributes, type-qualified, e.g. "SofaType.lShaped", "ChairArmType.existing". nil for old saves.
+        var attributes: [String]? = nil
 
         var transform: simd_float4x4 { .init(columns[0], columns[1], columns[2], columns[3]) }
     }

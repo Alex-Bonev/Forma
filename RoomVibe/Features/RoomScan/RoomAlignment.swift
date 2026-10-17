@@ -10,7 +10,12 @@ extension RoomModel {
         let yaw = atan2(-x.z, x.x)
         let q = simd_quatf(angle: -yaw, axis: [0, 1, 0]), r = simd_float4x4(q)
         func rotate(_ boxes: [Box]) -> [Box] {
-            boxes.map { Box(label: $0.label, dimensions: $0.dimensions, transform: r * $0.transform) }
+            boxes.map { b in
+                var b = b
+                let t = r * b.transform
+                b.columns = [t.columns.0, t.columns.1, t.columns.2, t.columns.3]
+                return b
+            }
         }
         return RoomModel(walls: rotate(walls), doors: rotate(doors), windows: rotate(windows),
                          openings: rotate(openings), objects: rotate(objects),
