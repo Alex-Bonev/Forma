@@ -25,11 +25,12 @@ struct RenderView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
                     ToolbarItem(placement: .bottomBar) {
-                        NavigationLink {
-                            VibeView(snapshot: model.snapshot, projectID: model.projectID)
-                        } label: {
-                            Label("Match a vibe from a photo", systemImage: "sparkles").labelStyle(.titleAndIcon)
+                        // Vibe mode (VibeView) is parked for the MVP demo; it would go next to this picker.
+                        Picker("View", selection: Binding(get: { model.view }, set: { model.view = $0 })) {
+                            ForEach(RenderModel.View.allCases, id: \.self) { Text($0.title) }
                         }
+                        .pickerStyle(.segmented)
+                        .disabled(model.isLoading)
                     }
                     if let result = model.result {
                         ToolbarItem(placement: .primaryAction) {
@@ -39,13 +40,15 @@ struct RenderView: View {
                 }
         }
         .environment(\.colorScheme, .dark)
-        .task {
-            guard model.result == nil else { return }
+        .onChange(of: model.view) { model.start() }
+        .onAppear {
+            guard model.result == nil, !model.isRunning else { return }
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
                 model.layout = LayoutDescription.text(room: room, placements: project.placements, objects: store.objects)
             }
-            await model.run()
+            model.start()
         }
+        .onDisappear { model.cancel() }
     }
 
     @ViewBuilder private var content: some View {
@@ -66,7 +69,7 @@ struct RenderView: View {
                 if isStale {
                     Label("Offline: showing the last render of this room", systemImage: "clock.arrow.circlepath")
                         .font(.footnote).foregroundStyle(.secondary)
-                    Button("Try again") { Task { await model.run() } }.buttonStyle(.bordered)
+                    Button("Try again") { model.start() }.buttonStyle(.bordered)
                 } else {
                     Text("Drag the divider to compare").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -78,7 +81,7 @@ struct RenderView: View {
             } description: {
                 Text(message)
             } actions: {
-                Button("Try again") { Task { await model.run() } }.buttonStyle(.borderedProminent)
+                Button("Try again") { model.start() }.buttonStyle(.borderedProminent)
             }
             .foregroundStyle(.white)
         }
@@ -90,12 +93,19 @@ struct RenderView: View {
 final class RenderModel {
     enum Phase { case loading, done(UIImage, isStale: Bool), failed(String) }
 
+    /// Backend `view` modes: keep the dollhouse angle, or read as an eye-level interior photo.
+    enum View: String, CaseIterable {
+        case cutaway, interior
+        var title: String { self == .cutaway ? "Dollhouse" : "Photo" }
+    }
+
     let snapshot: UIImage
     let projectID: UUID?
     let prompt: String
     let styleRef: UIImage?
     /// LayoutDescription of the room, filled in by RenderView before the first run.
     var layout = ""
+    var view = View.cutaway
     private(set) var phase: Phase = .loading
     /// The snapshot the cached render was made from, so a stale slider compares the same room.
     private(set) var staleBefore: UIImage?
@@ -105,37 +115,64 @@ final class RenderModel {
         self.projectID = projectID
         self.prompt = prompt
         self.styleRef = styleRef
-        cacheURL = Self.cacheURL(projectID: projectID, prompt: prompt, styleRef: styleRef)
+        cacheKey = Self.cacheKey(prompt: prompt, styleRef: styleRef)
     }
+
+    var isLoading: Bool { if case .loading = phase { true } else { false } }
 
     var result: UIImage? {
         if case .done(let image, _) = phase { image } else { nil }
     }
 
-    /// Last successful render per room (and per style prompt + reference image), used when the network fails.
-    private let cacheURL: URL?
-
-    private static func cacheURL(projectID: UUID?, prompt: String, styleRef: UIImage?) -> URL? {
+    /// Last successful render per room, view, style prompt and reference image; used when the network fails.
+    private var cacheURL: URL? {
         guard let projectID else { return nil }
+        return ProjectStore.projectDir(projectID).appending(path: "render-\(view.rawValue)\(cacheKey).jpg")
+    }
+    private let cacheKey: String
+
+    private static func cacheKey(prompt: String, styleRef: UIImage?) -> String {
         var key = Data(prompt.utf8)
         if let ref = styleRef?.uploadJPEG() { key.append(ref) }
-        let name = key.isEmpty ? "render" : "render-" + SHA256.hash(data: key).prefix(8).map { String(format: "%02x", $0) }.joined()
-        return ProjectStore.projectDir(projectID).appending(path: "\(name).jpg")
+        return key.isEmpty ? "" : "-" + SHA256.hash(data: key).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private var beforeURL: URL? { cacheURL?.deletingPathExtension().appendingPathExtension("before.jpg") }
 
-    func run() async {
+    private var task: Task<Void, Never>?
+    private var generation = 0
+    var isRunning: Bool { task != nil }
+
+    /// Starts a render for the current view, cancelling any one in flight. Results of older requests are dropped.
+    func start() {
+        task?.cancel()
+        task = Task { await run() }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+
+    private func run() async {
+        generation += 1
+        let gen = generation
+        defer { if gen == generation { task = nil } }
+        // Capture everything the request depends on; the picker may change while it is in flight.
+        let view = view, cacheURL = cacheURL, beforeURL = beforeURL
         phase = .loading
         do {
-            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: layout, styleRef: styleRef)
+            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: layout, view: view.rawValue,
+                                                        styleRef: styleRef)
             if let cacheURL, let beforeURL {
                 try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)
                 try? snapshot.jpegData(compressionQuality: 0.8)?.write(to: beforeURL, options: .atomic)
             }
+            guard gen == generation else { return }
             phase = .done(image, isStale: false)
         } catch {
+            guard gen == generation, !Task.isCancelled else { return }
             if Self.isNetworkFailure(error), let cacheURL, let data = try? Data(contentsOf: cacheURL),
                let cached = UIImage(data: data) {
                 staleBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
