@@ -6,6 +6,10 @@ struct HomeView: View {
     @State private var scanningRoom = false
     @State private var scanningObject = false
     @State private var error: String?
+    @State private var renaming: Rename?
+    @State private var newName = ""
+
+    private enum Rename { case room(Project), object(ScannedObject) }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -27,7 +31,14 @@ struct HomeView: View {
                                 Image(systemName: "cube.transparent").foregroundStyle(.tint)
                             }
                         }
-                        .swipeActions { Button("Delete", role: .destructive) { store.delete(project) } }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) { store.delete(project) }
+                            Button("Rename") { startRename(.room(project), project.name) }.tint(.indigo)
+                        }
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") { startRename(.room(project), project.name) }
+                            Button("Delete", systemImage: "trash", role: .destructive) { store.delete(project) }
+                        }
                     }
                 }
 
@@ -38,7 +49,14 @@ struct HomeView: View {
                     }
                     ForEach(store.objects) { object in
                         Label(object.name, systemImage: object.modelFile == nil ? "chair" : "chair.fill")
-                            .swipeActions { Button("Delete", role: .destructive) { store.delete(object) } }
+                            .swipeActions {
+                                Button("Delete", role: .destructive) { store.delete(object) }
+                                Button("Rename") { startRename(.object(object), object.name) }.tint(.indigo)
+                            }
+                            .contextMenu {
+                                Button("Rename", systemImage: "pencil") { startRename(.object(object), object.name) }
+                                Button("Delete", systemImage: "trash", role: .destructive) { store.delete(object) }
+                            }
                     }
                 }
 
@@ -90,9 +108,30 @@ struct HomeView: View {
                 if store.projects.isEmpty { try? store.loadDemoData() }
                 if let first = store.projects.first { path = [first.id] }
             }
+            .alert("Rename", isPresented: .constant(renaming != nil)) {
+                TextField("Name", text: $newName)
+                Button("Save") { commitRename() }
+                Button("Cancel", role: .cancel) { renaming = nil }
+            }
             .alert("Something went wrong", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
             } message: { Text(error ?? "") }
+        }
+    }
+
+    private func startRename(_ target: Rename, _ current: String) {
+        newName = current
+        renaming = target
+    }
+
+    private func commitRename() {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        defer { renaming = nil }
+        guard !name.isEmpty else { return }
+        switch renaming {
+        case .room(var p): p.name = name; store.update(p)
+        case .object(let o): store.rename(o, to: name)
+        case nil: break
         }
     }
 }

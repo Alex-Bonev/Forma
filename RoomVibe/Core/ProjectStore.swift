@@ -80,6 +80,12 @@ final class ProjectStore {
         try? persist()
     }
 
+    func rename(_ object: ScannedObject, to name: String) {
+        guard let i = objects.firstIndex(where: { $0.id == object.id }) else { return }
+        objects[i].name = name
+        try? persist()
+    }
+
     func delete(_ project: Project) {
         projects.removeAll { $0.id == project.id }
         try? FileManager.default.removeItem(at: Self.projectDir(project.id))
