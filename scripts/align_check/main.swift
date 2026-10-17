@@ -11,7 +11,8 @@ let walls = base.map { w, p, r in
     RoomModel.Box(label: "wall", dimensions: [w, 2.5, 0], transform: rotY(a, .zero) * rotY(r, p))
 }
 let sofa = RoomModel.Box(label: "sofa", dimensions: [2, 0.8, 1], transform: rotY(a, .zero) * rotY(0, [1, 0.4, 0]))
-let room = RoomModel(walls: walls, objects: [sofa]).axisAligned()
+let outline: [SIMD3<Float>] = [[-2.5, 0, -2], [2.5, 0, -2], [2.5, 0, 2], [-2.5, 0, 2]].map { simd_quatf(angle: a, axis: [0, 1, 0]).act($0) }
+let room = RoomModel(walls: walls, objects: [sofa], floorOutline: outline).axisAligned()
 var lo = SIMD3<Float>(repeating: 1e9), hi = -lo
 for b in room.walls {
     let c = SIMD3(b.columns[3].x, b.columns[3].y, b.columns[3].z), x = SIMD3(b.columns[0].x, b.columns[0].y, b.columns[0].z) * b.dimensions.x / 2
@@ -22,4 +23,6 @@ precondition(abs(size.x - 5) < 1e-3 && abs(size.y - 4) < 1e-3, "footprint \(size
 let s = room.objects[0].columns
 precondition(abs(s[0].z) < 1e-4 && abs(s[3].x - 1) < 1e-4 && abs(s[3].z) < 1e-4, "sofa \(s)")
 precondition(abs(room.walls[0].columns[3].y - 1.25) < 1e-5, "height kept")
+let fo = room.floorOutline!
+precondition(abs(fo.map(\.x).max()! - 2.5) < 1e-4 && abs(fo.map(\.z).max()! - 2) < 1e-4, "outline aligned \(fo)")
 print("align_check OK", size)

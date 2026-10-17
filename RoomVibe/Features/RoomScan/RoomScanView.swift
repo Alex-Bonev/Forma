@@ -1,5 +1,6 @@
 import SwiftUI
 import RoomPlan
+import simd
 
 /// Full-screen RoomPlan capture: scan -> Done -> Apple's processed preview -> Save + name -> Designer.
 struct RoomScanView: View {
@@ -215,7 +216,18 @@ extension RoomModel {
             openings: room.openings.map { box($0, "opening") },
             objects: room.objects.map {
                 Box(label: String(describing: $0.category), dimensions: $0.dimensions, transform: $0.transform)
-            }
+            },
+            floorOutline: Self.outline(of: room.floors)
         )
+    }
+
+    /// Largest floor's polygon in world space (polygonCorners are in the surface's own frame).
+    private static func outline(of floors: [CapturedRoom.Surface]) -> [SIMD3<Float>]? {
+        guard let f = floors.max(by: { $0.dimensions.x * $0.dimensions.y < $1.dimensions.x * $1.dimensions.y })
+        else { return nil }
+        return f.polygonCorners.map { c in
+            let p = f.transform * SIMD4(c, 1)
+            return SIMD3(p.x, p.y, p.z)
+        }
     }
 }
