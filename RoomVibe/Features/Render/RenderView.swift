@@ -21,6 +21,13 @@ struct RenderView: View {
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                    ToolbarItem(placement: .bottomBar) {
+                        NavigationLink {
+                            VibeView(snapshot: model.snapshot, projectID: model.projectID)
+                        } label: {
+                            Label("Match a vibe from a photo", systemImage: "sparkles").labelStyle(.titleAndIcon)
+                        }
+                    }
                     if let result = model.result {
                         ToolbarItem(placement: .primaryAction) {
                             ShareLink(item: Image(uiImage: result), preview: SharePreview("RoomVibe render", image: Image(uiImage: result)))
