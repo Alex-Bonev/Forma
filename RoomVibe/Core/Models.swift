@@ -6,6 +6,8 @@ struct Project: Codable, Identifiable, Hashable {
     var name: String
     var createdAt: Date
     var placements: [Placement] = []
+    /// Indices into the room's RoomPlan objects the user hid (false detections, or replaced by a placement).
+    var hiddenRoomObjects: [Int]? = nil
 }
 
 struct ScannedObject: Codable, Identifiable, Hashable {
@@ -21,6 +23,10 @@ struct Placement: Codable, Identifiable, Hashable {
     var objectID: UUID
     var position: SIMD3<Float>   // room-local, y = 0 (floor)
     var yRotation: Float         // radians
+    /// Set for generic catalog furniture (CatalogItem.id); `objectID` is then `Placement.catalogObjectID`.
+    var catalogItem: String? = nil
+
+    static let catalogObjectID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }
 
 /// Our own slim copy of RoomPlan output. Lets demo data be hand-written JSON

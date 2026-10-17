@@ -41,6 +41,41 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "after-orbit-zoom", to: self)
     }
 
+    func testCatalogAndScannedFurniture() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+
+        // Catalog item drops in and is selected.
+        app.buttons["Add Item"].tap()
+        let plant = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Plant'")).firstMatch
+        XCTAssertTrue(plant.waitForExistence(timeout: 3))
+        plant.tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "catalog item should be placed and selected")
+        XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
+        app.buttons["Remove"].tap()
+
+        // Scanned sofa (demo room) is selectable, hideable, restorable.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
+        XCTAssertTrue(app.buttons["Replace"].waitForExistence(timeout: 3), "tapping scanned furniture should select it")
+        app.buttons["Hide"].tap()
+        let restore = app.buttons["Show 1 hidden scanned item"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 3))
+        restore.tap()
+        XCTAssertFalse(restore.waitForExistence(timeout: 1))
+
+        // Replace the scanned sofa with a catalog model at the same spot.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
+        app.buttons["Replace"].tap()
+        app.buttons["Corner Sofa"].tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        XCTAssertTrue((canvas.value as? String)?.hasPrefix("Corner Sofa at") == true)
+        sleep(1)
+        XCUIScreen.main.screenshot().attach(named: "after-replace", to: self)
+    }
+
     func testRenameObject() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo"]
