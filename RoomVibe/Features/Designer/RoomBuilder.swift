@@ -8,6 +8,7 @@ enum RoomBuilder {
     struct Built { let entity: Entity; let size: SIMD2<Float> }
 
     static let wallThickness: Float = 0.08
+    static let surfaceName = "surface"
 
     static func build(_ room: RoomModel, wallScale: Float = 1) -> Built {
         let boxes = room.walls.isEmpty ? room.objects : room.walls
@@ -38,6 +39,7 @@ enum RoomBuilder {
             e.transform = Transform(matrix: b.transform)
             // Shrink from the floor up, not around the center.
             e.position.y = lo.y + (e.position.y - lo.y - b.dimensions.y / 2) * wallScale + h / 2
+            e.name = surfaceName   // walls/doors/windows: faded by DesignerView when between camera and room
             content.addChild(e)
         }
         room.walls.forEach { addSurface($0, depth: wallThickness, color: .init(white: 0.97, alpha: 1)) }
@@ -103,7 +105,10 @@ enum RoomBuilder {
     /// Placed object: model sits on y = 0, centered. Hit testing is done by DesignerView's own ray math.
     static func placedEntity(for object: ScannedObject, url: URL?) async -> Entity {
         var model: Entity = demoChair()
-        if let url, let loaded = try? await Entity(contentsOf: url) { model = loaded }
+        if let url {
+            do { model = try await Entity(contentsOf: url) }
+            catch { print("RoomVibe: failed to load \(url.lastPathComponent): \(error)") }   // falls back to the demo chair
+        }
         let b = model.visualBounds(relativeTo: nil)
         model.position -= [b.center.x, b.min.y, b.center.z]
         let container = Entity()

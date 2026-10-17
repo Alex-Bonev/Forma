@@ -16,6 +16,7 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSCameraUsageDescription: RoomVibe uses the camera and LiDAR to scan rooms and objects.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: RoomVibe saves renders of your room to Photos.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
@@ -26,3 +27,25 @@ targets:
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_STYLE: Automatic
+  RoomVibeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [RoomVibeUITests]
+    dependencies:
+      - target: RoomVibe
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        PRODUCT_BUNDLE_IDENTIFIER: $(RV_BUNDLE_PREFIX).roomvibe.uitests
+schemes:
+  RoomVibe:
+    build:
+      targets:
+        RoomVibe: all
+        RoomVibeUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [RoomVibeUITests]

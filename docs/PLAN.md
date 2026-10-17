@@ -3,8 +3,8 @@
 Source of truth for scope, ownership and timeline. Per-person handoff prompts live next to this file:
 
 - `docs/handoff-A-scanning.md` — **Alex** (Mac + LiDAR iPhone 17 Pro, the demo device)
-- `docs/handoff-B-designer.md` — **Teammate B** (Mac + LiDAR iPhone)
-- `docs/handoff-C-backend-ai.md` — **Teammate C** (Mac, no LiDAR needed)
+- `docs/handoff-B-designer.md` — **Michelle (B)** (Mac + LiDAR iPhone)
+- `docs/handoff-C-backend-ai.md` — **David (C)** (Mac, no LiDAR needed)
 
 ## 1. Product
 
@@ -106,7 +106,7 @@ Fallbacks: bundled demo data if a scan fails; cached render if Wi-Fi fails; scre
 | # | Question | Who decides | Needed by |
 |---|---|---|---|
 | 1 | Teammates' GitHub usernames (to add as collaborators) | Alex | Now |
-| 2 | Which teammate is B (has LiDAR) and which is C? | Team | H0 |
+| 2 | ~~Which teammate is B and which is C?~~ Michelle = B, David = C | — | done |
 | 3 | Image provider for `/render`: needs image-to-image or structure-conditioned editing (keeps layout). Any sponsor credits? | C, confirm with team | H2 |
 | 4 | LLM for vibe analysis and shopping/product search API | C | H24 |
 | 5 | Who owns the Vercel account + where keys are shared (not in git) | C | H6 |
