@@ -108,7 +108,9 @@ def http() -> httpx.AsyncClient:
 
 
 def gemini() -> genai.Client:
-    return genai.Client(api_key=IMAGE_API_KEY)  # swapped for a fake in tests
+    # No retries: the SDK honors Retry-After on 429 (can be an hour), which hangs the request past TIMEOUT.
+    no_retry = genai.types.HttpOptions(retry_options=genai.types.HttpRetryOptions(attempts=0))
+    return genai.Client(api_key=IMAGE_API_KEY, http_options=no_retry)  # swapped for a fake in tests
 
 
 async def read_image(f: UploadFile) -> bytes:
@@ -167,8 +169,9 @@ async def render(
         return {"image_base64": base64.b64encode(data).decode()}  # echo input as the "render"
     require(IMAGE_API_KEY, "IMAGE_API_KEY")
     full_prompt = render_prompt(view, layout, prompt, structure is not None, style_ref is not None)
+    client = gemini()  # keep a reference: a Client that gets garbage-collected mid-request closes its HTTP pool
     try:
-        interaction = await gemini().aio.interactions.create(
+        interaction = await client.aio.interactions.create(
             model=IMAGE_MODEL,
             input=[{"type": "text", "text": full_prompt}, *images],
             response_format={"type": "image", "mime_type": "image/jpeg",
