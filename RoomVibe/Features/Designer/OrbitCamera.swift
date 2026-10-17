@@ -94,13 +94,6 @@ final class OrbitCamera {
         goal = h
     }
 
-    func toggleTopView() {
-        spin = .zero
-        goal.elevation = goal.elevation > 1.3 ? home.elevation : Self.elevationRange.upperBound
-    }
-
-    var isTopView: Bool { goal.elevation > 1.3 }
-
     // MARK: Frame update
 
     func update(dt: Float) {

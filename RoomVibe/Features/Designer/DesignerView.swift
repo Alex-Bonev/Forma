@@ -16,10 +16,23 @@ struct DesignerView: View {
     @State private var roomSize: SIMD2<Float> = .zero
     @State private var placed: [UUID: Entity] = [:]   // placement id -> entity
     @State private var selected: UUID?
+    @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
+    @State private var highlighted: Entity?
+    @State private var showCatalog = false
+    @State private var editing = false
+    @State private var showPhotos = false
+    @State private var scanTarget: ScanTarget?
+    @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
+
+    /// What a new Object Capture scan should replace.
+    enum ScanTarget: Identifiable {
+        case placement(UUID), roomObject(Int)
+        var id: String { switch self { case .placement(let u): u.uuidString; case .roomObject(let i): "room-\(i)" } }
+    }
+    @AppStorage(RoomBuilder.realisticKey) private var realisticFurniture = true
     @State private var moving: (id: UUID, offset: SIMD3<Float>)?
     @State private var viewSize: CGSize = .zero
     @State private var lowWalls = false
-    @State private var topView = false
     @State private var showHint = true
     @State private var adding: String?
     @State private var twistingObject = false
@@ -37,7 +50,21 @@ struct DesignerView: View {
                 .navigationTitle(project.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .onChange(of: lowWalls) { rebuildRoom(room) }
-                .onChange(of: selected) { old, new in highlight(old: old, new: new) }
+                .onChange(of: realisticFurniture) { rebuildRoom(room) }
+                .onChange(of: selected) { _, new in
+                    if new != nil { selectedRoomObject = nil }
+                    highlight(new.flatMap { placed[$0] })
+                }
+                .onChange(of: selectedRoomObject) { _, new in
+                    if new != nil { selected = nil }
+                    highlight(new.flatMap(roomObjectEntity))
+                }
+                .sheet(isPresented: $showCatalog) { catalogSheet }
+                .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
+                .sheet(isPresented: $editing) { if let selected { editor(selected) } }
+                .fullScreenCover(item: $scanTarget) { target in
+                    ObjectScanView { object in Task { await applyScan(object, to: target) } }
+                }
                 .safeAreaInset(edge: .bottom) { bottomPanel(project) }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
@@ -81,18 +108,6 @@ struct DesignerView: View {
                 .padding()
         }
         .overlay(alignment: .topTrailing) { viewControls.padding() }
-        .overlay(alignment: .top) {
-            if showHint || objectHint {
-                Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
-                                : "Drag to look around · Two fingers to pan · Pinch to zoom")
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.top, 56)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
         .animation(.easeOut(duration: 0.3), value: showHint)
         .animation(.easeOut(duration: 0.3), value: objectHint)
         .sensoryFeedback(.impact(weight: .light), trigger: lifts)
@@ -101,16 +116,48 @@ struct DesignerView: View {
     /// Maps-style floating controls.
     private var viewControls: some View {
         VStack(spacing: 0) {
-            controlButton("scope", label: "Reset view") { camera.reset(); topView = false }
-            Divider().frame(width: 28)
-            controlButton(topView ? "view.3d" : "square.grid.3x3.topleft.filled", label: topView ? "3D view" : "Top view") {
-                camera.toggleTopView(); topView = camera.isTopView
+            controlButton("scope", label: "Reset view") { camera.reset() }
+            if !RoomPhotos.photoURLs(projectDir: ProjectStore.projectDir(projectID)).isEmpty {
+                Divider().frame(width: 28)
+                controlButton("photo.on.rectangle", label: "Room photos") { showPhotos = true }
             }
+            Divider().frame(width: 28)
+            finishesMenu
             Divider().frame(width: 28)
             controlButton(lowWalls ? "square.split.bottomrightquarter.fill" : "square.split.bottomrightquarter",
                           label: lowWalls ? "Full walls" : "Cutaway walls") { lowWalls.toggle() }
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Wall and floor finish presets, saved per room.
+    private var finishesMenu: some View {
+        Menu {
+            Picker("Walls", selection: finishBinding(\.wallFinish, default: Finish.walls[0].id)) {
+                ForEach(Finish.walls) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            Picker("Floor", selection: finishBinding(\.floorFinish, default: Finish.floors[0].id)) {
+                ForEach(Finish.floors) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            Toggle("Realistic Models", systemImage: "sparkles", isOn: $realisticFurniture)
+        } label: {
+            Image(systemName: "paintbrush").font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Finishes")
+    }
+
+    private func finishBinding(_ key: WritableKeyPath<Project, String?>, default d: String) -> Binding<String> {
+        Binding(
+            get: { project?[keyPath: key] ?? d },
+            set: { id in
+                guard var p = project, let room = roomEntity else { return }
+                p[keyPath: key] = id
+                store.update(p)
+                let wall = Finish.wall(p.wallFinish), floor = Finish.floor(p.floorFinish)
+                Task { await Finish.apply(to: room, wall: wall, floor: floor) }
+            })
     }
 
     private func controlButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
@@ -123,7 +170,8 @@ struct DesignerView: View {
     /// VoiceOver (and UI tests) read the selected object's saved position.
     private func selectionDescription(_ project: Project) -> String? {
         guard let selected, let p = project.placements.first(where: { $0.id == selected }),
-              let name = store.objects.first(where: { $0.id == p.objectID })?.name else { return nil }
+              let name = CatalogItem.item(p.catalogItem)?.name ?? store.objects.first(where: { $0.id == p.objectID })?.name
+        else { return nil }
         return String(format: "%@ at %.2f, %.2f m", name, p.position.x, p.position.z)
     }
 
@@ -143,7 +191,7 @@ struct DesignerView: View {
                    let start = floorPoint(at: location) {
                     moving = (id, e.position - start)
                     selected = id
-                    e.scale = [1.04, 1.04, 1.04]   // lifted while dragged
+                    e.scale = baseScale(id) * 1.04   // lifted while dragged
                     lifts += 1
                     objectHint = false
                 }
@@ -152,11 +200,10 @@ struct DesignerView: View {
                     if let p = floorPoint(at: location) { e.position = clamp(p + moving.offset, keeping: e) }
                 } else {
                     camera.orbit(by: delta)
-                    if topView { topView = camera.isTopView }
                 }
             case .ended:
                 if let moving {
-                    placed[moving.id]?.scale = .one
+                    placed[moving.id]?.scale = baseScale(moving.id)
                     self.moving = nil
                     commit()
                 } else {
@@ -185,7 +232,11 @@ struct DesignerView: View {
             }
             if phase == .ended { twistingObject = false }
         }
-        h.tap = { location in selected = hitPlacement(at: location) }
+        h.tap = { location in
+            if let id = hitPlacement(at: location) { selected = id }
+            else if let i = hitRoomObject(at: location) { selected = nil; selectedRoomObject = i }
+            else { selected = nil; selectedRoomObject = nil }
+        }
         return h
     }
 
@@ -214,30 +265,53 @@ struct DesignerView: View {
         return best?.id
     }
 
+    private func roomObjectEntity(_ i: Int) -> Entity? {
+        roomEntity?.findEntity(named: RoomBuilder.furniturePrefix + "\(i)")
+    }
+
+    /// Scanned (RoomPlan) furniture under the finger, tested against each object's box.
+    private func hitRoomObject(at point: CGPoint) -> Int? {
+        guard let project, let room = store.room(for: project),
+              let (o, d) = content?.ray(through: point, in: .local, to: .scene) else { return nil }
+        var best: (i: Int, t: Float)?
+        for (i, b) in room.objects.enumerated() {
+            guard let e = roomObjectEntity(i), e.isEnabled else { continue }
+            let hi = b.dimensions / 2 + 0.05, lo = -hi
+            let ro = e.convert(position: o, from: nil), rd = e.convert(direction: d, from: nil)
+            var tmin: Float = 0, tmax = Float.greatestFiniteMagnitude
+            for k in 0..<3 {
+                var t0 = (lo[k] - ro[k]) / rd[k], t1 = (hi[k] - ro[k]) / rd[k]
+                if t0 > t1 { swap(&t0, &t1) }
+                tmin = max(tmin, t0); tmax = min(tmax, t1)
+            }
+            if tmin <= tmax, tmin < best?.t ?? .greatestFiniteMagnitude { best = (i, tmin) }
+        }
+        return best?.i
+    }
+
     // MARK: Panel
 
     @ViewBuilder private func bottomPanel(_ project: Project) -> some View {
         VStack(spacing: 12) {
-            if let selected, let e = placed[selected] {
-                HStack(spacing: 20) {
-                    Button { rotate(e, by: -.pi / 8) } label: { Image(systemName: "rotate.left") }
-                        .accessibilityLabel("Rotate left")
-                    Button { rotate(e, by: .pi / 8) } label: { Image(systemName: "rotate.right") }
-                        .accessibilityLabel("Rotate right")
-                    Button(role: .destructive) { remove(selected) } label: { Image(systemName: "trash") }
-                        .accessibilityLabel("Remove")
-                    Button("Done") { self.selected = nil }
-                }
-                .font(.title3)
-                .buttonStyle(.bordered)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            if showHint || objectHint {
+                Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
+                                : "Drag to look around · Two fingers to pan · Pinch to zoom")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .transition(.opacity)
+            }
+            if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
+                roomObjectCard(i, room: room)
+            } else if let selected, placed[selected] != nil {
+                placementCard(selected, project: project)
+            } else if let hidden = project.hiddenRoomObjects, !hidden.isEmpty {
+                Button("Show \(hidden.count) hidden scanned item\(hidden.count == 1 ? "" : "s")") { restoreHidden() }
+                    .font(.footnote)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    if store.objects.isEmpty {
-                        Text("Object library is empty. Scan an object or load demo data.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
+                    Button { showCatalog = true } label: { Label("Add Item", systemImage: "plus.square.on.square") }
+                        .buttonStyle(.borderedProminent)
                     ForEach(store.objects) { object in
                         Button { Task { await add(object) } } label: {
                             if adding == object.name {
@@ -257,6 +331,101 @@ struct DesignerView: View {
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
         .animation(.spring(duration: 0.3, bounce: 0), value: selected)
+        .animation(.spring(duration: 0.3, bounce: 0), value: selectedRoomObject)
+    }
+
+    // MARK: Selection cards
+    // One card per selection: name + at most 4 labeled actions. Move = drag, rotate = twist, deselect = tap empty space.
+
+    private func placementCard(_ id: UUID, project: Project) -> some View {
+        selectionCard(title: selectionDescription(project)?.components(separatedBy: " at ").first ?? "Item",
+                      subtitle: "Drag to move · Twist to rotate") {
+            ActionButton("Size", icon: "slider.horizontal.3") { editing = true }
+            if Capabilities.canScanObject {
+                ActionButton("Scan Real", icon: "camera.viewfinder") { scanTarget = .placement(id) }
+            }
+            ActionButton("Delete", icon: "trash", role: .destructive) { remove(id) }
+        }
+    }
+
+    private func roomObjectCard(_ i: Int, room: RoomModel) -> some View {
+        let box = room.objects[i]
+        let marked = box.label == RoomModel.markedLabel
+        // Vision suggestion for marked items (SceneClassifier), offered as the first action.
+        let suggestion = CatalogItem.item(box.attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) })
+        return selectionCard(title: marked ? "Marked Item" : "Scanned \(box.label.capitalized)",
+                             subtitle: suggestion.map { "Looks like a \($0.name)" } ?? "From your room scan") {
+            if let suggestion {
+                ActionButton("Use \(suggestion.name)", icon: suggestion.symbol, prominent: true) {
+                    Task { await replaceRoomObject(i, catalog: suggestion) }
+                }
+            }
+            Menu {
+                if !store.objects.isEmpty {
+                    Section("Your scans") {
+                        ForEach(store.objects) { o in Button(o.name) { Task { await replaceRoomObject(i, object: o) } } }
+                    }
+                }
+                Section("Catalog") {
+                    ForEach(CatalogItem.all) { c in
+                        Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
+                    }
+                }
+            } label: { ActionLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
+                .accessibilityLabel("Replace")
+            if !marked {
+                ActionButton("Size", icon: "slider.horizontal.3") { Task { await editRoomObject(i, room: room) } }
+            }
+            if Capabilities.canScanObject {
+                ActionButton("Scan Real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) }
+            }
+            ActionButton("Hide", icon: "eye.slash") { hideRoomObject(i) }
+        }
+    }
+
+    private func selectionCard<Actions: View>(title: String, subtitle: String,
+                                              @ViewBuilder actions: () -> Actions) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            HStack(spacing: 8) { actions() }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private var catalogSheet: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
+                    ForEach(CatalogItem.all) { item in
+                        Button {
+                            showCatalog = false
+                            Task { await add(catalog: item) }
+                        } label: {
+                            VStack(spacing: 8) {
+                                Image(systemName: item.symbol).font(.title2).frame(height: 30)
+                                Text(item.name).font(.footnote.weight(.medium)).lineLimit(1)
+                                Text(String(format: "%.1f × %.1f m", item.size.x, item.size.z))
+                                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                            }
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Add Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showCatalog = false } } }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: Actions
@@ -268,20 +437,36 @@ struct DesignerView: View {
         roomEntity = built.entity
         roomSize = built.size
         walls.collect(from: built.entity)
+        for i in project?.hiddenRoomObjects ?? [] { roomObjectEntity(i)?.isEnabled = false }
+        let wall = Finish.wall(project?.wallFinish), floor = Finish.floor(project?.floorFinish)
+        Task {
+            await Finish.apply(to: built.entity, wall: wall, floor: floor)
+            await RoomBuilder.furnish(built, room: room)
+        }
     }
 
     private func spawn(_ p: Placement) async {
-        guard let object = store.objects.first(where: { $0.id == p.objectID }) else {
+        let e: Entity
+        if let item = CatalogItem.item(p.catalogItem) {
+            e = await item.entity()
+        } else if let object = store.objects.first(where: { $0.id == p.objectID }) {
+            e = await RoomBuilder.placedEntity(for: object, url: store.modelURL(for: object))
+            print("RoomVibe: spawned \(object.name) file=\(object.modelFile ?? "procedural") extents=\(e.visualBounds(relativeTo: e).extents)")
+        } else {
             print("RoomVibe: placement \(p.id) references missing object \(p.objectID)")
             return
         }
-        let e = await RoomBuilder.placedEntity(for: object, url: store.modelURL(for: object))
-        print("RoomVibe: spawned \(object.name) file=\(object.modelFile ?? "procedural") extents=\(e.visualBounds(relativeTo: e).extents)")
+        naturalSize[p.id] = e.visualBounds(relativeTo: e).extents
         e.name = p.id.uuidString
         e.position = p.position
         e.orientation = simd_quatf(angle: p.yRotation, axis: [0, 1, 0])
+        e.scale = p.scale ?? .one
         scene.addChild(e)
         placed[p.id] = e
+    }
+
+    private func baseScale(_ id: UUID) -> SIMD3<Float> {
+        project?.placements.first { $0.id == id }?.scale ?? .one
     }
 
     /// Drops the object where the user is looking (the camera's floor target), then selects it.
@@ -300,12 +485,155 @@ struct DesignerView: View {
         objectHint = false
     }
 
-    private func rotate(_ e: Entity, by angle: Float) {
-        var t = e.transform
-        t.rotation = simd_quatf(angle: angle, axis: [0, 1, 0]) * t.rotation
-        e.move(to: t, relativeTo: e.parent, duration: 0.25, timingFunction: .easeInOut)
-        commit(rotation: (e, t.rotation))
+    private func add(catalog item: CatalogItem) async {
+        guard var project else { return }
+        let p = Placement(id: UUID(), objectID: Placement.catalogObjectID, position: clamp(camera.goal.target),
+                          yRotation: 0, catalogItem: item.id)
+        project.placements.append(p)
+        store.update(project)
+        await spawn(p)
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        selected = p.id
     }
+
+    /// Hide a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
+    /// Catalog replacements are stretched to RoomPlan's measured box; scans keep their real scale.
+    /// Wall-mounted objects keep their height (bottom of RoomPlan's box above the floor).
+    private func replaceRoomObject(_ i: Int, object: ScannedObject? = nil, catalog: CatalogItem? = nil) async {
+        guard var project, let anchor = roomObjectEntity(i), let box = store.room(for: project)?.objects[i] else { return }
+        let pos = anchor.position(relativeTo: scene)
+        let bottom = pos.y - box.dimensions.y / 2
+        var yaw = { let f = anchor.orientation(relativeTo: scene).act([0, 0, 1]); return atan2(f.x, f.z) }()
+        if box.label == RoomModel.markedLabel, let away = yawAwayFromNearestWall(pos) { yaw = away }
+        var p = Placement(id: UUID(), objectID: object?.id ?? Placement.catalogObjectID,
+                          position: [pos.x, bottom > 0.1 ? bottom : 0, pos.z], yRotation: yaw, catalogItem: catalog?.id)
+        if let catalog { p.scale = box.dimensions / catalog.size }
+        project.placements.append(p)
+        project.hiddenRoomObjects = Array(Set((project.hiddenRoomObjects ?? []) + [i])).sorted()
+        store.update(project)
+        anchor.isEnabled = false
+        selectedRoomObject = nil
+        await spawn(p)
+        selected = p.id
+    }
+
+    /// Edit = turn scanned furniture into an editable placement (same model, same box), then open the editor.
+    private func editRoomObject(_ i: Int, room: RoomModel) async {
+        var key = RoomBuilder.furnitureModel(for: room.objects[i])
+        if key == "sink", let e = roomObjectEntity(i), e.position(relativeTo: scene).y - room.objects[i].dimensions.y / 2 > 0.2 {
+            key = "sink_wall"   // floating sink = wall-mounted basin
+        }
+        let item = CatalogItem.all.first { $0.model == key } ?? CatalogItem.item("custom_box")!
+        await replaceRoomObject(i, catalog: item)
+        editing = true
+    }
+
+    /// Facing for things marked on a wall: front points into the room, away from the closest wall.
+    private func yawAwayFromNearestWall(_ p: SIMD3<Float>) -> Float? {
+        guard let project, let room = store.room(for: project), let roomEntity else { return nil }
+        let center = roomEntity.children.first?.position ?? .zero   // RoomBuilder's content offset
+        let local = p - center
+        var best: (d: Float, n: SIMD3<Float>)?
+        for w in room.walls {
+            let c = SIMD3(w.columns[3].x, w.columns[3].y, w.columns[3].z), n = SIMD3(w.columns[2].x, 0, w.columns[2].z)
+            let x = SIMD3(w.columns[0].x, 0, w.columns[0].z)
+            guard abs(simd_dot(local - c, x)) < w.dimensions.x / 2 + 0.2 else { continue }
+            let d = simd_dot(local - c, n)
+            if abs(d) < best?.d ?? .greatestFiniteMagnitude { best = (abs(d), d >= 0 ? n : -n) }
+        }
+        guard let n = best?.n, best!.d < 0.8 else { return nil }
+        return atan2(n.x, n.z)
+    }
+
+    /// A fresh scan replaces a placement (keeping spot, facing and height) or a piece of scanned furniture.
+    private func applyScan(_ object: ScannedObject, to target: ScanTarget) async {
+        switch target {
+        case .roomObject(let i):
+            await replaceRoomObject(i, object: object)
+        case .placement(let id):
+            guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+            project.placements[k].objectID = object.id
+            project.placements[k].catalogItem = nil
+            project.placements[k].scale = nil
+            store.update(project)
+            placed.removeValue(forKey: id)?.removeFromParent()
+            await spawn(project.placements[k])
+            selected = id
+        }
+    }
+
+    // MARK: Editor
+
+    /// Size (per axis) and mounting height of the selected placement, applied live.
+    private func editor(_ id: UUID) -> some View {
+        NavigationStack {
+            Form {
+                Section("Size") {
+                    dimensionRow("Width", id: id, axis: 0)
+                    dimensionRow("Height", id: id, axis: 1)
+                    dimensionRow("Depth", id: id, axis: 2)
+                    Button("Reset to Natural Size") { setScale(id) { _ in .one } }
+                }
+                Section {
+                    LabeledContent("Height above floor", value: String(format: "%.2f m", elevation(id)))
+                    Slider(value: Binding(get: { Double(elevation(id)) }, set: { setElevation(id, Float($0)) }), in: 0...2.4, step: 0.01)
+                    Button("Put on Floor") { setElevation(id, 0) }
+                } header: { Text("Mounting") } footer: {
+                    Text("Raise wall-mounted items like sinks, shelves, TVs or lamps.")
+                }
+            }
+            .navigationTitle(selectionDescription(project!)?.components(separatedBy: " at ").first ?? "Edit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { editing = false } } }
+        }
+        .presentationDetents([.medium])
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+    }
+
+    private func dimensionRow(_ title: String, id: UUID, axis: Int) -> some View {
+        let natural = naturalSize[id] ?? .one
+        let size = natural * baseScale(id)
+        return Stepper(value: Binding(
+            get: { Double(size[axis]) },
+            set: { v in setScale(id) { s in var s = s; s[axis] = max(Float(v), 0.05) / max(natural[axis], 0.001); return s } }
+        ), in: 0.05...6, step: 0.05) {
+            LabeledContent(title, value: String(format: "%.2f m", size[axis]))
+        }
+    }
+
+    private func setScale(_ id: UUID, _ change: (SIMD3<Float>) -> SIMD3<Float>) {
+        guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        let s = change(project.placements[k].scale ?? .one)
+        project.placements[k].scale = s == .one ? nil : s
+        store.update(project)
+        placed[id]?.scale = s
+        if let e = placed[id] { highlight(e) }   // resize the selection disc
+    }
+
+    private func elevation(_ id: UUID) -> Float { project?.placements.first { $0.id == id }?.position.y ?? 0 }
+
+    private func setElevation(_ id: UUID, _ y: Float) {
+        guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        project.placements[k].position.y = y
+        store.update(project)
+        placed[id]?.position.y = y
+    }
+
+    private func hideRoomObject(_ i: Int) {
+        guard var project else { return }
+        project.hiddenRoomObjects = Array(Set((project.hiddenRoomObjects ?? []) + [i])).sorted()
+        store.update(project)
+        roomObjectEntity(i)?.isEnabled = false
+        selectedRoomObject = nil
+    }
+
+    private func restoreHidden() {
+        guard var project else { return }
+        for i in project.hiddenRoomObjects ?? [] { roomObjectEntity(i)?.isEnabled = true }
+        project.hiddenRoomObjects = nil
+        store.update(project)
+    }
+
 
     private func remove(_ id: UUID) {
         guard var project else { return }
@@ -315,17 +643,19 @@ struct DesignerView: View {
         selected = nil
     }
 
-    /// Soft disc on the floor under the selected object.
-    private func highlight(old: UUID?, new: UUID?) {
-        if let old { placed[old]?.findEntity(named: "selection")?.removeFromParent() }
-        guard let new, let e = placed[new] else { return }
+    /// Soft disc on the floor under the selected object (a placement or scanned furniture).
+    private func highlight(_ e: Entity?) {
+        highlighted?.findEntity(named: "selection")?.removeFromParent()
+        highlighted = e
+        guard let e else { return }
         let b = e.visualBounds(relativeTo: e)
         let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
         var m = UnlitMaterial(color: .systemBlue)
         m.blending = .transparent(opacity: 0.4)
         let disc = ModelEntity(mesh: .generateCylinder(height: 0.004, radius: radius), materials: [m])
         disc.name = "selection"
-        disc.position.y = 0.003
+        // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
+        disc.position.y = 0.003 - e.position(relativeTo: scene).y
         e.addChild(disc)
     }
 
@@ -351,7 +681,7 @@ struct DesignerView: View {
             half = SIMD2(b.extents.x, b.extents.z) / 2
         }
         let h = simd_max(roomSize / 2 - half - RoomBuilder.wallThickness / 2, .zero)
-        return [min(max(p.x, -h.x), h.x), 0, min(max(p.z, -h.y), h.y)]
+        return [min(max(p.x, -h.x), h.x), max(p.y, 0), min(max(p.z, -h.y), h.y)]   // y = mounting height
     }
 }
 
@@ -364,7 +694,7 @@ final class WallCutaway {
     func collect(from room: Entity) {
         surfaces = []
         func visit(_ e: Entity) {
-            if e.name == RoomBuilder.surfaceName {
+            if e.name.hasPrefix(RoomBuilder.surfaceName) {
                 let p = e.position(relativeTo: nil)
                 let z = e.orientation(relativeTo: nil).act([0, 0, 1])
                 var n = simd_normalize(SIMD2(z.x, z.z))
@@ -380,10 +710,56 @@ final class WallCutaway {
         let cam = SIMD2(c.x, c.z)
         for s in surfaces {
             let outside = simd_dot(cam - s.center, s.outward) > 0.05
-            let goal: Float = outside ? 0.07 : 1
-            let now = s.entity.components[OpacityComponent.self]?.opacity ?? 1
+            let goal: Float = outside ? 0 : 1
+            var now = s.entity.components[OpacityComponent.self]?.opacity ?? 1
+            if !s.entity.isEnabled {
+                guard !outside else { continue }
+                s.entity.isEnabled = true   // camera came back around: fade in from nothing
+                now = 0
+            }
             guard abs(now - goal) > 0.005 else { continue }
-            s.entity.components.set(OpacityComponent(opacity: now + (goal - now) * 0.2))
+            now += (goal - now) * 0.2
+            s.entity.components.set(OpacityComponent(opacity: now))
+            // Fully hidden, not ghosted: even a faint textured wall (brick) reads as a pattern on furniture behind it.
+            if outside && now < 0.02 { s.entity.isEnabled = false }
         }
+    }
+}
+
+/// Icon over a short caption: every action says what it does.
+struct ActionLabel: View {
+    let title: String
+    let icon: String
+    var prominent = false
+    var role: ButtonRole? = nil
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 18, weight: .medium))
+            Text(title).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(prominent ? AnyShapeStyle(.white) : role == .destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
+        .frame(maxWidth: .infinity, minHeight: 54)
+        .background(prominent ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct ActionButton: View {
+    let title: String
+    let icon: String
+    var prominent = false
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    init(_ title: String, icon: String, prominent: Bool = false, role: ButtonRole? = nil, action: @escaping () -> Void) {
+        self.title = title; self.icon = icon; self.prominent = prominent; self.role = role; self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) { ActionLabel(title: title, icon: icon, prominent: prominent, role: role) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
     }
 }

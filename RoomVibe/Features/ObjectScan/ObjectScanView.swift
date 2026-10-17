@@ -7,6 +7,8 @@ import QuickLookThumbnailing
 /// Follows Apple's "Scanning objects using Object Capture" sample: ready -> detecting (fit box) -> capturing
 /// (scan passes, optional flip) -> finish -> reconstruct -> preview + name -> library.
 struct ObjectScanView: View {
+    /// Called after the scan is saved to the library (e.g. to swap it in for a placeholder).
+    var onSaved: (ScannedObject) -> Void = { _ in }
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     // Created once on appear: a @State default would build a new ObjectCaptureSession on every parent re-render.
@@ -22,6 +24,7 @@ struct ObjectScanView: View {
                     do {
                         try store.addObject(object)
                         dismiss()
+                        onSaved(object)
                     } catch {
                         saveError = error.localizedDescription
                     }

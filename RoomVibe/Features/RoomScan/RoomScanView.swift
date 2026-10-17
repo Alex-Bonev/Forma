@@ -1,5 +1,6 @@
 import SwiftUI
 import RoomPlan
+import ARKit
 import simd
 
 /// Full-screen RoomPlan capture: scan -> Done -> Apple's processed preview -> Save + name -> Designer.
@@ -14,6 +15,7 @@ struct RoomScanView: View {
     @State private var confirmDiscard = false
     @State private var name = ""
     @State private var error: String?
+    @State private var saving = false
 
     var body: some View {
         ZStack {
@@ -22,6 +24,11 @@ struct RoomScanView: View {
                 RoomCaptureRepresentable(view: scanner.view)
                     .id(ObjectIdentifier(scanner))
                     .ignoresSafeArea()
+                    // Tap anything RoomPlan doesn't recognize to mark it (saved as a "marked item").
+                    .onTapGesture(coordinateSpace: .local) { p in
+                        if scanner.phase == .scanning { scanner.mark(at: p) }
+                    }
+                    .sensoryFeedback(.impact(weight: .medium), trigger: scanner.markers.count)
                 controls(scanner)
             }
         }
@@ -37,7 +44,7 @@ struct RoomScanView: View {
         .onChange(of: scanner?.error) { _, new in if let new { error = new } }
         .alert("Name this room", isPresented: $naming) {
             TextField("Living Room", text: $name)
-            Button("Save") { DispatchQueue.main.async { save() } }
+            Button("Save") { Task { await save() } }
             Button("Cancel", role: .cancel) {}
         }
         .alert("Scan failed", isPresented: .constant(error != nil)) {
@@ -63,6 +70,14 @@ struct RoomScanView: View {
                     if scanner.result == nil { dismiss() } else { confirmDiscard = true }
                 }
                 Spacer()
+                if scanner.phase == .scanning, !scanner.photos.shots.isEmpty {
+                    Label("\(scanner.photos.shots.count) photo\(scanner.photos.shots.count == 1 ? "" : "s")", systemImage: "camera")
+                        .font(.caption.weight(.medium))
+                        .monospacedDigit()
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.ultraThinMaterial, in: Capsule())
+                    Spacer()
+                }
                 if scanner.phase == .scanning {
                     ScanChromeButton(title: "Done", prominent: true) { scanner.stop() }
                 }
@@ -73,8 +88,17 @@ struct RoomScanView: View {
 
             switch scanner.phase {
             case .scanning:
-                Text("Move slowly around the room. Point at every wall and piece of furniture.")
-                    .scanCaption()
+                VStack(spacing: 8) {
+                    if !scanner.markers.isEmpty || scanner.markMissed {
+                        Text(scanner.markMissed ? "No surface there. Try again closer."
+                                                : "\(scanner.markers.count) item\(scanner.markers.count == 1 ? "" : "s") marked")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    Text("Move slowly around the room. Tap anything it misses to mark it.")
+                        .scanCaption()
+                }
             case .processing:
                 HStack(spacing: 10) {
                     ProgressView()
@@ -87,6 +111,7 @@ struct RoomScanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(saving)   // finish classification takes up to ~1.5 s
                 .padding(.horizontal, 24).padding(.bottom, 24)
                 .sensoryFeedback(.success, trigger: scanner.phase)
             }
@@ -94,21 +119,46 @@ struct RoomScanView: View {
         .animation(.spring(duration: 0.3, bounce: 0), value: scanner.phase)
     }
 
-    private func save() {
-        guard let room = scanner?.result else { return }
-        let model = RoomModel(room).axisAligned()
+    private func save() async {
+        guard !saving, let room = scanner?.result else { return }
+        saving = true
+        defer { saving = false }
+        var model = RoomModel(room)
+        let markers = scanner?.markers ?? []
+        model.objects += zip(RoomModel.markedItems(markers.map(\.point), walls: model.walls), markers).map { box, m in
+            var box = box
+            if let s = m.suggestion { box.attributes = ["Vision.\(s.vision)", "Suggest.\(s.catalog)"] }
+            return box
+        }
+        // Photos are in the raw ARSession world frame, so match against walls before axisAligned().
+        // VERIFY on device: CapturedRoom transforms share the ARSession world frame (no re-anchoring after processing).
+        let photos = scanner?.photos
+        let paint = photos.flatMap { RoomPhotos.wallColor(walls: model.walls, photos: $0.shots) }
+        let walls = model.walls, shots = photos?.shots.map { ($0.photo, $0.jpeg) } ?? []
+        model = model.axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.
         guard !model.walls.isEmpty else {
             error = "No walls were detected. Point at every wall while scanning."
             return
         }
+        // Brick walls / wood floor from the photos (Vision, on device, off main).
+        let finishes = await Task.detached(priority: .userInitiated) {
+            SceneClassifier.finishes(walls: walls, photos: shots)
+        }.value
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let project = try store.addRoom(name: trimmed.isEmpty ? "Room" : trimmed, model: model) { dir in
+            var project = try store.addRoom(name: trimmed.isEmpty ? "Room" : trimmed, model: model) { dir in
                 // Raw RoomPlan output kept for later (model substitution, sharing, QuickLook).
                 // Note: these are in RoomPlan's original frame; room.json is rotated by axisAligned().
                 try JSONEncoder().encode(room).write(to: dir.appending(path: "captured.json"))
                 try? room.export(to: dir.appending(path: "room.usdz"))
+                try? photos?.write(to: dir)   // nice-to-have: never fail the scan over photos
+            }
+            let wall = finishes.brickWalls ? "brick" : paint.map(Finish.paintID)
+            if wall != nil || finishes.woodFloor {
+                if let wall { project.wallFinish = wall }
+                if finishes.woodFloor { project.floorFinish = "oak" }
+                store.update(project)
             }
             dismiss()
             onSaved(project)
@@ -159,6 +209,7 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     private(set) var result: CapturedRoom?
     private(set) var error: String?
     private var cancelled = false
+    let photos = RoomPhotos()
 
     override init() {
         super.init()
@@ -169,16 +220,51 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     required init?(coder: NSCoder) { nil }
     func encode(with coder: NSCoder) {}
 
-    func start() { view.captureSession.run(configuration: RoomCaptureSession.Configuration()) }
+    func start() {
+        view.captureSession.run(configuration: RoomCaptureSession.Configuration())
+        photos.start(view.captureSession.arSession)
+    }
 
     func stop() {
         phase = .processing
+        photos.stop()
         view.captureSession.stop()
+    }
+
+    /// A point the user tapped during the scan (something RoomPlan doesn't detect) and what Vision thinks it is.
+    struct Marker { var point: SIMD3<Float>; var suggestion: SceneClassifier.Suggestion? }
+    private(set) var markers: [Marker] = []
+    private(set) var markMissed = false
+
+    /// Raycast from a tap on the capture view into the AR scene (RoomPlan exposes its ARSession).
+    /// VERIFY on device: CapturedRoom transforms share this ARSession's world frame.
+    func mark(at point: CGPoint) {
+        let session = view.captureSession.arSession
+        guard let frame = session.currentFrame, view.bounds.width > 0 else { return }
+        let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
+        // View point -> normalized image coordinates (inverse of the camera image's display transform).
+        let normalized = CGPoint(x: point.x / view.bounds.width, y: point.y / view.bounds.height)
+        let imagePoint = normalized.applying(frame.displayTransform(for: orientation, viewportSize: view.bounds.size).inverted())
+        let query = frame.raycastQuery(from: imagePoint, allowing: .estimatedPlane, alignment: .any)
+        guard let hit = session.raycast(query).first else { markMissed = true; return }
+        markMissed = false
+        let t = hit.worldTransform.columns.3
+        markers.append(Marker(point: [t.x, t.y, t.z]))
+        // Classify a square around the tap. Keep only the pixel buffer, not the ARFrame (ARKit recycles frames).
+        // VERIFY on device: the crop frames the tapped thing and the portrait orientation reads upright.
+        let i = markers.count - 1, buffer = frame.capturedImage, camera = frame.camera.transform
+        Task.detached(priority: .userInitiated) {
+            let suggestion = SceneClassifier.crop(buffer, around: imagePoint).flatMap {
+                SceneClassifier.suggestion(SceneClassifier.classify($0, orientation: SceneClassifier.orientation(camera: camera)))
+            }
+            await MainActor.run { self.markers[i].suggestion = suggestion }
+        }
     }
 
     /// Stop without processing: the scan is being thrown away.
     func cancel() {
         cancelled = true
+        photos.stop()
         if phase == .scanning { view.captureSession.stop() }
     }
 
@@ -214,8 +300,11 @@ extension RoomModel {
             doors: room.doors.map { box($0, "door") },
             windows: room.windows.map { box($0, "window") },
             openings: room.openings.map { box($0, "opening") },
-            objects: room.objects.map {
-                Box(label: String(describing: $0.category), dimensions: $0.dimensions, transform: $0.transform)
+            objects: room.objects.map { o in
+                var b = Box(label: String(describing: o.category), dimensions: o.dimensions, transform: o.transform)
+                // Type-qualified so "existing" (arm vs back) and "lShaped" (sofa vs table) stay unambiguous.
+                b.attributes = o.attributes.map { "\(type(of: $0)).\($0.rawValue)" }
+                return b
             },
             floorOutline: Self.outline(of: room.floors)
         )

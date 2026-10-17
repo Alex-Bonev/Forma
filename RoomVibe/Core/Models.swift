@@ -6,6 +6,11 @@ struct Project: Codable, Identifiable, Hashable {
     var name: String
     var createdAt: Date
     var placements: [Placement] = []
+    /// Indices into the room's RoomPlan objects the user hid (false detections, or replaced by a placement).
+    var hiddenRoomObjects: [Int]? = nil
+    /// Finish.id for walls / floor (nil = default white / light).
+    var wallFinish: String? = nil
+    var floorFinish: String? = nil
 }
 
 struct ScannedObject: Codable, Identifiable, Hashable {
@@ -19,8 +24,14 @@ struct ScannedObject: Codable, Identifiable, Hashable {
 struct Placement: Codable, Identifiable, Hashable {
     let id: UUID
     var objectID: UUID
-    var position: SIMD3<Float>   // room-local, y = 0 (floor)
+    var position: SIMD3<Float>   // room-local; y = height of the object's bottom above the floor (0 = on the floor)
     var yRotation: Float         // radians
+    /// Set for generic catalog furniture (CatalogItem.id); `objectID` is then `Placement.catalogObjectID`.
+    var catalogItem: String? = nil
+    /// Per-axis size multiplier set in the editor (nil = natural size).
+    var scale: SIMD3<Float>? = nil
+
+    static let catalogObjectID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }
 
 /// Our own slim copy of RoomPlan output. Lets demo data be hand-written JSON
@@ -30,6 +41,8 @@ struct RoomModel: Codable {
         var label: String
         var dimensions: SIMD3<Float>   // walls/doors/windows have z = 0
         var columns: [SIMD4<Float>]    // simd_float4x4 columns
+        /// RoomPlan object attributes, type-qualified, e.g. "SofaType.lShaped", "ChairArmType.existing". nil for old saves.
+        var attributes: [String]? = nil
 
         var transform: simd_float4x4 { .init(columns[0], columns[1], columns[2], columns[3]) }
     }
