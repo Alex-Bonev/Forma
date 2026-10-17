@@ -55,6 +55,38 @@ def test_render_provider(monkeypatch):
     assert "Style: cozy" in sent["input"][0]["text"]
 
 
+def test_render_layout_structure_and_view(monkeypatch):
+    sent = {}
+
+    async def create(**kw):
+        sent.update(kw)
+        return type("I", (), {"output_image": type("O", (), {"data": "out"})()})()
+
+    fake_provider(monkeypatch, None)
+    fake_gemini(monkeypatch, create)
+    r = c.post("/render", headers=H, data={"layout": "sofa: blue block", "view": "interior"},
+               files={"image": ("a.jpg", jpeg()), "structure": ("s.png", jpeg(), "image/png")})
+    assert r.status_code == 200
+    text = sent["input"][0]["text"]
+    assert "interior photograph" in text and "sofa: blue block" in text and "Image 2 is a structure map" in text
+    assert [p["mime_type"] for p in sent["input"][1:]] == ["image/jpeg", "image/png"]  # snapshot first, then map
+    bad = c.post("/render", headers=H, data={"view": "fisheye"}, files={"image": ("a.jpg", jpeg())})
+    assert bad.status_code == 422
+
+
+def test_render_image_numbering():
+    assert "Image 2 is only a style reference" in main.render_prompt("cutaway", "", "", False, True)
+    both = main.render_prompt("cutaway", "", "", True, True)
+    assert "Image 2 is a structure map" in both and "Image 3 is only a style reference" in both
+    assert "listed in the layout" not in both  # no layout, no legend promised
+
+
+def test_render_combined_upload_cap():
+    half = b"x" * (2 * 1024 * 1024 + 1)
+    r = c.post("/render", headers=H, files={"image": ("a.jpg", half), "structure": ("s.png", half)})
+    assert r.status_code == 413  # enforced in mock mode too
+
+
 def test_render_provider_error(monkeypatch):
     async def create(**kw):
         raise RuntimeError("bad key")

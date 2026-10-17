@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import secrets
+from typing import Literal
 
 import anthropic
 import httpx
@@ -34,13 +35,45 @@ MAX_RESPONSE_B64 = 4_400_000  # base64 render must fit Vercel's 4.5 MB response 
 
 logging.getLogger("httpx").setLevel(logging.WARNING)  # INFO logs full URLs, incl. SerpAPI's api_key param
 
-RENDER_PROMPT = (
-    "This is a screenshot of a simple 3D dollhouse model of a real room: flat walls and colored blocks "
-    "standing in for furniture. Turn it into a photorealistic interior photograph. Keep the exact camera "
-    "angle, room shape, wall and window positions, and the position, size and orientation of every piece "
-    "of furniture. Replace each block with a realistic piece of furniture of that type and size. "
-    "Natural daylight, realistic materials and shadows. No people, no text, no labels."
+RENDER_VIEWS = {
+    # Snapshot from the Designer's high orbit angle: keep it a cutaway, just make it look real.
+    "cutaway": (
+        "Image 1 is a screenshot of a simple 3D dollhouse model of a real room, seen from above at an angle "
+        "with some walls cut away. Turn it into a photorealistic architectural visualization of the same "
+        "cutaway: same camera angle and framing, cut walls shown as clean cut sections, warm natural light, "
+        "realistic materials and soft shadows."
+    ),
+    # Snapshot from a low camera: make it read like a real interior photo.
+    "interior": (
+        "Image 1 is a screenshot of a simple 3D model of a real room. Turn it into a photorealistic interior "
+        "photograph taken from exactly this camera position: natural daylight, realistic materials and shadows, "
+        "shot on a full-frame camera."
+    ),
+}
+RENDER_RULES = (
+    "Keep the room shape and every wall, window and door exactly where it is. The colored blocks are "
+    "placeholders: replace each block with a realistic piece of furniture of its type that fills the same "
+    "footprint and height, facing the same way. Keep empty floor empty and do not add large furniture; small "
+    "decor such as plants, rugs and lamps is fine. Remove all text labels. No people, no text, no watermark."
 )
+MAX_LAYOUT = 2000
+
+
+def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_style_ref: bool) -> str:
+    parts = [RENDER_VIEWS[view], RENDER_RULES]
+    if layout:
+        parts.append(f"Room layout, from the room scan: {layout[:MAX_LAYOUT]}")
+    n = 2
+    if has_structure:
+        legend = " (colors are listed in the layout)" if layout else ""
+        parts.append(f"Image {n} is a structure map of the exact same view: each flat color marks one surface{legend}, "
+                     "brighter means closer to the camera. Match its outlines exactly, but do not copy its colors.")
+        n += 1
+    if has_style_ref:
+        parts.append(f"Image {n} is only a style reference for materials, colors and decor.")
+    if style:
+        parts.append(f"Style: {style}")
+    return " ".join(parts)
 
 
 def check_secret(x_app_secret: str = Header("")):
@@ -109,20 +142,31 @@ def health():
 
 
 @app.post("/render")
-async def render(image: UploadFile = File(...), prompt: str = Form(""), style_ref: UploadFile | None = File(None)):
+async def render(
+    image: UploadFile = File(...),
+    prompt: str = Form(""),
+    layout: str = Form(""),
+    view: Literal["cutaway", "interior"] = Form("cutaway"),
+    structure: UploadFile | None = File(None),
+    style_ref: UploadFile | None = File(None),
+):
+    """image: Designer snapshot. layout: text description of the room. structure: optional color-coded map of
+    the same view. prompt: optional style words. style_ref: optional inspiration photo."""
     data = await read_image(image)
+    images, total = [], 0
+    for f in (image, structure, style_ref):
+        if f is None:
+            continue
+        raw = data if f is image else await read_image(f)
+        total += len(raw)
+        if total > MAX_UPLOAD:
+            raise HTTPException(413, "images too large together; send JPEGs <= 1536px")
+        images.append({"type": "image", "mime_type": f.content_type or "image/jpeg",
+                       "data": base64.b64encode(raw).decode()})
     if MOCK:
         return {"image_base64": base64.b64encode(data).decode()}  # echo input as the "render"
     require(IMAGE_API_KEY, "IMAGE_API_KEY")
-    full_prompt = RENDER_PROMPT + (f" Style: {prompt}" if prompt else "")
-    images = [{"type": "image", "mime_type": image.content_type or "image/jpeg", "data": base64.b64encode(data).decode()}]
-    if style_ref:
-        ref = await read_image(style_ref)
-        if len(data) + len(ref) > MAX_UPLOAD:
-            raise HTTPException(413, "images too large together; send JPEGs <= 1536px")
-        images.append({"type": "image", "mime_type": style_ref.content_type or "image/jpeg",
-                       "data": base64.b64encode(ref).decode()})
-        full_prompt += " Use the second image only as a style reference for materials, colors and decor."
+    full_prompt = render_prompt(view, layout, prompt, structure is not None, style_ref is not None)
     try:
         interaction = await gemini().aio.interactions.create(
             model=IMAGE_MODEL,
