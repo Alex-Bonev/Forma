@@ -1,6 +1,6 @@
 # Spec: More wall and floor finishes
 
-Status: **ready to build** (delegated). Owner: A (Alex).
+Status: **built** (merged into `a/realism`). Owner: A (Alex).
 
 ## Goal
 

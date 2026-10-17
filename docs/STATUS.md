@@ -51,7 +51,7 @@ Last updated: 2026-10-17, branch `a/realism` (PR #3, open). `main` has PRs #1 an
    - Remaining actions get short text labels.
    - At most about 3–4 actions per selection.
 3. ~~**Edit on a scanned sink turns it into a grey box.**~~ **Fixed:** the catalog now covers every rounded model, including Wall Sink, and a floating sink edits as a wall sink. `editRoomObject` only maps furniture keys that have a catalog item, and wall-mounted sinks (`wallBasin`) have none. Every furniture key, and the wall basin, needs an editable equivalent.
-4. **More wall and floor textures:** delegated (`docs/specs/finishes-assets.md`).
+4. ~~**More wall and floor textures:**~~ **Done:** walls now have 12 presets + Matched Paint and floors have 10. See `docs/specs/finishes-assets.md`.
 
 ## Unverified on device (needs Alex's phone)
 
