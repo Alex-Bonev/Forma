@@ -20,6 +20,7 @@ struct DesignerView: View {
     @State private var highlighted: Entity?
     @State private var showCatalog = false
     @State private var editing = false
+    @State private var showPhotos = false
     @State private var scanTarget: ScanTarget?
     @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
 
@@ -59,6 +60,7 @@ struct DesignerView: View {
                     highlight(new.flatMap(roomObjectEntity))
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
+                .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
                 .sheet(isPresented: $editing) { if let selected { editor(selected) } }
                 .fullScreenCover(item: $scanTarget) { target in
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
@@ -115,6 +117,10 @@ struct DesignerView: View {
     private var viewControls: some View {
         VStack(spacing: 0) {
             controlButton("scope", label: "Reset view") { camera.reset() }
+            if !RoomPhotos.photoURLs(projectDir: ProjectStore.projectDir(projectID)).isEmpty {
+                Divider().frame(width: 28)
+                controlButton("photo.on.rectangle", label: "Room photos") { showPhotos = true }
+            }
             Divider().frame(width: 28)
             finishesMenu
             Divider().frame(width: 28)
