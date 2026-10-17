@@ -301,6 +301,19 @@ struct DesignerView: View {
                     .transition(.opacity)
             }
             if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
+                // Marked during the scan and classified by Vision (SceneClassifier): one tap to the catalog item.
+                if let c = CatalogItem.item(room.objects[i].attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) }) {
+                    HStack(spacing: 12) {
+                        Text("Looks like a \(c.name)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Use \(c.name)", systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding(.horizontal)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 HStack(spacing: 12) {
                     Text(room.objects[i].label == RoomModel.markedLabel ? "Marked Item"
                          : "Scanned \(room.objects[i].label.capitalized)")
