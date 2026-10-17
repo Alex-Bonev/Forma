@@ -83,14 +83,13 @@ The AI provider is not picked yet; non-mock endpoints return 501 until one is wi
 
 ## Work split
 
-- **A** RoomPlan capture + RoomBuilder visuals (`Features/RoomScan`, `Features/Designer/RoomBuilder.swift`)
-- **B** Object Capture + reconstruction (`Features/ObjectScan`)
-- **C** Designer interactions, persistence, polish (`Features/Designer/DesignerView.swift`) — works today with demo data
-- **D** Backend + render/vibe screens (`backend/`, new `Features/Render`, `Features/Vibe`)
+See `docs/PLAN.md` (scope, ownership, 48h timeline) and the per-person handoff prompts in `docs/`:
+A = scanning (`handoff-A-scanning.md`), B = Designer/visuals/AR (`handoff-B-designer.md`),
+C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
 
 ## Status / known gaps
 
 - Scanning only runs on a LiDAR device; verify on the demo phone early.
-- Rotation is via buttons (two-finger rotate conflicts with orbit camera). Delete is the trash button.
+- Custom orbit camera: drag empty space to orbit, drag an object to move it, pinch to zoom, twist to rotate the selection.
 - Placements clamp to the room's bounding rectangle, not the exact wall outline.
 - Not built yet: app-side API client, photoreal render, vibe mode, AR view, generic furniture USDZ swap.
