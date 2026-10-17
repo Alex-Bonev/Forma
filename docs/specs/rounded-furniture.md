@@ -1,6 +1,6 @@
 # Spec: Consistent rounded furniture style
 
-Status: **in progress** (delegated agent, worktree). Owner: A (Alex).
+Status: **built** (procedural models by a delegated agent; integrated in `RoomBuilder.furnitureEntity`). Owner: A (Alex).
 
 ## Problem
 

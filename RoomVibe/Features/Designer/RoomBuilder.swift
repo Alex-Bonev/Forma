@@ -118,6 +118,27 @@ enum RoomBuilder {
     static let realisticKey = "realisticFurniture"
     static var realistic: Bool { UserDefaults.standard.object(forKey: realisticKey) as? Bool ?? true }
 
+    /// Procedural keys for model names that differ.
+    private static let proceduralAliases = ["storage_low": "tv_console"]
+
+    /// Model for `key` exactly filling `size`, centered on the origin, front facing +Z (RoomPlan's convention).
+    /// Priority: photoreal Poly Haven (when Realistic Models is on) → rounded procedural → Kenney (stretched).
+    /// See docs/specs/rounded-furniture.md.
+    static func furnitureEntity(_ key: String, size: SIMD3<Float>) async -> Entity? {
+        let photoreal = realistic && realisticModels[key] != nil
+        if !photoreal, let p = ProceduralFurniture.model(for: proceduralAliases[key] ?? key, size: size) { return p }
+        guard let model = await furnitureTemplate(key) else { return nil }
+        let bounds = model.visualBounds(relativeTo: nil)
+        guard bounds.extents.min() > 0 else { return nil }
+        let holder = Entity()
+        holder.addChild(model)
+        model.position = -bounds.center
+        // Kenney / Poly Haven models face -Z; RoomPlan objects face +Z (back against the wall), verified on a real scan.
+        holder.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0])
+        holder.scale = size / bounds.extents
+        return holder
+    }
+
     /// Bundled furniture template, loaded once and cloned per use.
     static func furnitureTemplate(_ requested: String) async -> Entity? {
         let name = realistic ? realisticModels[requested] ?? requested : requested
@@ -143,17 +164,9 @@ enum RoomBuilder {
                 box.findEntity(named: "label")?.isEnabled = false
                 continue
             }
-            guard let model = await furnitureTemplate(furnitureModel(for: b)) else { continue }
-            let bounds = model.visualBounds(relativeTo: nil)
-            guard bounds.extents.min() > 0 else { continue }
-            let holder = Entity()
-            holder.name = "furniture-model"
-            holder.addChild(model)
-            model.position = -bounds.center
-            // Kenney models face -Z; RoomPlan objects face +Z (back against the wall), verified on a real scan.
-            holder.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0])
-            holder.scale = b.dimensions / bounds.extents
-            box.addChild(holder)
+            guard let model = await furnitureEntity(furnitureModel(for: b), size: b.dimensions) else { continue }
+            model.name = "furniture-model"
+            box.addChild(model)
             box.model = nil                                  // hide the box, keep its transform as the anchor
             box.findEntity(named: "label")?.isEnabled = false // the model speaks for itself
         }

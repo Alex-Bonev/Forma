@@ -40,17 +40,9 @@ struct CatalogItem: Identifiable {
     /// Model at real size, facing +Z like RoomPlan objects, sitting on y = 0. Box stand-in if the file is missing.
     @MainActor
     func entity() async -> Entity {
-        let holder = Entity()
-        if let model = await RoomBuilder.furnitureTemplate(self.model) {
-            let b = model.visualBounds(relativeTo: nil)
-            model.position = -b.center
-            holder.addChild(model)
-            holder.scale = size / simd_max(b.extents, SIMD3(repeating: 0.001))
-            holder.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0])   // Kenney models face -Z
-        } else {
-            holder.addChild(ModelEntity(mesh: .generateBox(size: size, cornerRadius: 0.02),
-                                        materials: [RoomBuilder.material(.lightGray)]))
-        }
+        let holder = await RoomBuilder.furnitureEntity(model, size: size)
+            ?? ModelEntity(mesh: .generateBox(size: size, cornerRadius: min(0.06, size.min() / 4)),
+                           materials: [RoomBuilder.material(.lightGray)])
         holder.position.y = size.y / 2
         let wrapper = Entity()   // unscaled, so selection disc and bounds behave like scanned objects
         wrapper.addChild(holder)
