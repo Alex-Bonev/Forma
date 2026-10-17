@@ -24,10 +24,12 @@ struct ScannedObject: Codable, Identifiable, Hashable {
 struct Placement: Codable, Identifiable, Hashable {
     let id: UUID
     var objectID: UUID
-    var position: SIMD3<Float>   // room-local, y = 0 (floor)
+    var position: SIMD3<Float>   // room-local; y = height of the object's bottom above the floor (0 = on the floor)
     var yRotation: Float         // radians
     /// Set for generic catalog furniture (CatalogItem.id); `objectID` is then `Placement.catalogObjectID`.
     var catalogItem: String? = nil
+    /// Per-axis size multiplier set in the editor (nil = natural size).
+    var scale: SIMD3<Float>? = nil
 
     static let catalogObjectID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }

@@ -19,6 +19,15 @@ struct DesignerView: View {
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
     @State private var highlighted: Entity?
     @State private var showCatalog = false
+    @State private var editing = false
+    @State private var scanTarget: ScanTarget?
+    @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
+
+    /// What a new Object Capture scan should replace.
+    enum ScanTarget: Identifiable {
+        case placement(UUID), roomObject(Int)
+        var id: String { switch self { case .placement(let u): u.uuidString; case .roomObject(let i): "room-\(i)" } }
+    }
     @AppStorage(RoomBuilder.realisticKey) private var realisticFurniture = true
     @State private var moving: (id: UUID, offset: SIMD3<Float>)?
     @State private var viewSize: CGSize = .zero
@@ -50,6 +59,10 @@ struct DesignerView: View {
                     highlight(new.flatMap(roomObjectEntity))
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
+                .sheet(isPresented: $editing) { if let selected { editor(selected) } }
+                .fullScreenCover(item: $scanTarget) { target in
+                    ObjectScanView { object in Task { await applyScan(object, to: target) } }
+                }
                 .safeAreaInset(edge: .bottom) { bottomPanel(project) }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
@@ -172,7 +185,7 @@ struct DesignerView: View {
                    let start = floorPoint(at: location) {
                     moving = (id, e.position - start)
                     selected = id
-                    e.scale = [1.04, 1.04, 1.04]   // lifted while dragged
+                    e.scale = baseScale(id) * 1.04   // lifted while dragged
                     lifts += 1
                     objectHint = false
                 }
@@ -184,7 +197,7 @@ struct DesignerView: View {
                 }
             case .ended:
                 if let moving {
-                    placed[moving.id]?.scale = .one
+                    placed[moving.id]?.scale = baseScale(moving.id)
                     self.moving = nil
                     commit()
                 } else {
@@ -299,6 +312,12 @@ struct DesignerView: View {
                             }
                         }
                     } label: { Label("Replace", systemImage: "arrow.triangle.2.circlepath") }
+                    Button { Task { await editRoomObject(i, room: room) } } label: { Image(systemName: "slider.horizontal.3") }
+                        .accessibilityLabel("Edit size and height")
+                    if Capabilities.canScanObject {
+                        Button { scanTarget = .roomObject(i) } label: { Image(systemName: "camera.viewfinder") }
+                            .accessibilityLabel("Scan real object to replace")
+                    }
                     Button { hideRoomObject(i) } label: { Image(systemName: "eye.slash") }
                         .accessibilityLabel("Hide")
                     Button("Done") { selectedRoomObject = nil }
@@ -311,11 +330,17 @@ struct DesignerView: View {
                     .font(.footnote)
             }
             if let selected, let e = placed[selected] {
-                HStack(spacing: 20) {
+                HStack(spacing: 14) {
                     Button { rotate(e, by: -.pi / 8) } label: { Image(systemName: "rotate.left") }
                         .accessibilityLabel("Rotate left")
                     Button { rotate(e, by: .pi / 8) } label: { Image(systemName: "rotate.right") }
                         .accessibilityLabel("Rotate right")
+                    Button { editing = true } label: { Image(systemName: "slider.horizontal.3") }
+                        .accessibilityLabel("Edit size and height")
+                    if Capabilities.canScanObject {
+                        Button { scanTarget = .placement(selected) } label: { Image(systemName: "camera.viewfinder") }
+                            .accessibilityLabel("Scan real object to replace")
+                    }
                     Button(role: .destructive) { remove(selected) } label: { Image(systemName: "trash") }
                         .accessibilityLabel("Remove")
                     Button("Done") { self.selected = nil }
@@ -408,11 +433,17 @@ struct DesignerView: View {
             print("RoomVibe: placement \(p.id) references missing object \(p.objectID)")
             return
         }
+        naturalSize[p.id] = e.visualBounds(relativeTo: e).extents
         e.name = p.id.uuidString
         e.position = p.position
         e.orientation = simd_quatf(angle: p.yRotation, axis: [0, 1, 0])
+        e.scale = p.scale ?? .one
         scene.addChild(e)
         placed[p.id] = e
+    }
+
+    private func baseScale(_ id: UUID) -> SIMD3<Float> {
+        project?.placements.first { $0.id == id }?.scale ?? .one
     }
 
     /// Drops the object where the user is looking (the camera's floor target), then selects it.
@@ -443,12 +474,17 @@ struct DesignerView: View {
     }
 
     /// Hide a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
+    /// Catalog replacements are stretched to RoomPlan's measured box; scans keep their real scale.
+    /// Wall-mounted objects keep their height (bottom of RoomPlan's box above the floor).
     private func replaceRoomObject(_ i: Int, object: ScannedObject? = nil, catalog: CatalogItem? = nil) async {
-        guard var project, let anchor = roomObjectEntity(i) else { return }
+        guard var project, let anchor = roomObjectEntity(i), let box = store.room(for: project)?.objects[i] else { return }
         let pos = anchor.position(relativeTo: scene)
-        let forward = anchor.orientation(relativeTo: scene).act([0, 0, 1])
-        let p = Placement(id: UUID(), objectID: object?.id ?? Placement.catalogObjectID, position: [pos.x, 0, pos.z],
-                          yRotation: atan2(forward.x, forward.z), catalogItem: catalog?.id)
+        let bottom = pos.y - box.dimensions.y / 2
+        var yaw = { let f = anchor.orientation(relativeTo: scene).act([0, 0, 1]); return atan2(f.x, f.z) }()
+        if box.label == RoomModel.markedLabel, let away = yawAwayFromNearestWall(pos) { yaw = away }
+        var p = Placement(id: UUID(), objectID: object?.id ?? Placement.catalogObjectID,
+                          position: [pos.x, bottom > 0.1 ? bottom : 0, pos.z], yRotation: yaw, catalogItem: catalog?.id)
+        if let catalog { p.scale = box.dimensions / catalog.size }
         project.placements.append(p)
         project.hiddenRoomObjects = Array(Set((project.hiddenRoomObjects ?? []) + [i])).sorted()
         store.update(project)
@@ -456,6 +492,105 @@ struct DesignerView: View {
         selectedRoomObject = nil
         await spawn(p)
         selected = p.id
+    }
+
+    /// Edit = turn scanned furniture into an editable placement (same model, same box), then open the editor.
+    private func editRoomObject(_ i: Int, room: RoomModel) async {
+        let key = RoomBuilder.furnitureModel(for: room.objects[i])
+        let item = CatalogItem.all.first { $0.model == key } ?? CatalogItem.item("custom_box")!
+        await replaceRoomObject(i, catalog: item)
+        editing = true
+    }
+
+    /// Facing for things marked on a wall: front points into the room, away from the closest wall.
+    private func yawAwayFromNearestWall(_ p: SIMD3<Float>) -> Float? {
+        guard let project, let room = store.room(for: project), let roomEntity else { return nil }
+        let center = roomEntity.children.first?.position ?? .zero   // RoomBuilder's content offset
+        let local = p - center
+        var best: (d: Float, n: SIMD3<Float>)?
+        for w in room.walls {
+            let c = SIMD3(w.columns[3].x, w.columns[3].y, w.columns[3].z), n = SIMD3(w.columns[2].x, 0, w.columns[2].z)
+            let x = SIMD3(w.columns[0].x, 0, w.columns[0].z)
+            guard abs(simd_dot(local - c, x)) < w.dimensions.x / 2 + 0.2 else { continue }
+            let d = simd_dot(local - c, n)
+            if abs(d) < best?.d ?? .greatestFiniteMagnitude { best = (abs(d), d >= 0 ? n : -n) }
+        }
+        guard let n = best?.n, best!.d < 0.8 else { return nil }
+        return atan2(n.x, n.z)
+    }
+
+    /// A fresh scan replaces a placement (keeping spot, facing and height) or a piece of scanned furniture.
+    private func applyScan(_ object: ScannedObject, to target: ScanTarget) async {
+        switch target {
+        case .roomObject(let i):
+            await replaceRoomObject(i, object: object)
+        case .placement(let id):
+            guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+            project.placements[k].objectID = object.id
+            project.placements[k].catalogItem = nil
+            project.placements[k].scale = nil
+            store.update(project)
+            placed.removeValue(forKey: id)?.removeFromParent()
+            await spawn(project.placements[k])
+            selected = id
+        }
+    }
+
+    // MARK: Editor
+
+    /// Size (per axis) and mounting height of the selected placement, applied live.
+    private func editor(_ id: UUID) -> some View {
+        NavigationStack {
+            Form {
+                Section("Size") {
+                    dimensionRow("Width", id: id, axis: 0)
+                    dimensionRow("Height", id: id, axis: 1)
+                    dimensionRow("Depth", id: id, axis: 2)
+                    Button("Reset to Natural Size") { setScale(id) { _ in .one } }
+                }
+                Section {
+                    LabeledContent("Height above floor", value: String(format: "%.2f m", elevation(id)))
+                    Slider(value: Binding(get: { Double(elevation(id)) }, set: { setElevation(id, Float($0)) }), in: 0...2.4, step: 0.01)
+                    Button("Put on Floor") { setElevation(id, 0) }
+                } header: { Text("Mounting") } footer: {
+                    Text("Raise wall-mounted items like sinks, shelves, TVs or lamps.")
+                }
+            }
+            .navigationTitle(selectionDescription(project!)?.components(separatedBy: " at ").first ?? "Edit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { editing = false } } }
+        }
+        .presentationDetents([.medium])
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+    }
+
+    private func dimensionRow(_ title: String, id: UUID, axis: Int) -> some View {
+        let natural = naturalSize[id] ?? .one
+        let size = natural * baseScale(id)
+        return Stepper(value: Binding(
+            get: { Double(size[axis]) },
+            set: { v in setScale(id) { s in var s = s; s[axis] = max(Float(v), 0.05) / max(natural[axis], 0.001); return s } }
+        ), in: 0.05...6, step: 0.05) {
+            LabeledContent(title, value: String(format: "%.2f m", size[axis]))
+        }
+    }
+
+    private func setScale(_ id: UUID, _ change: (SIMD3<Float>) -> SIMD3<Float>) {
+        guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        let s = change(project.placements[k].scale ?? .one)
+        project.placements[k].scale = s == .one ? nil : s
+        store.update(project)
+        placed[id]?.scale = s
+        if let e = placed[id] { highlight(e) }   // resize the selection disc
+    }
+
+    private func elevation(_ id: UUID) -> Float { project?.placements.first { $0.id == id }?.position.y ?? 0 }
+
+    private func setElevation(_ id: UUID, _ y: Float) {
+        guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        project.placements[k].position.y = y
+        store.update(project)
+        placed[id]?.position.y = y
     }
 
     private func hideRoomObject(_ i: Int) {
@@ -526,7 +661,7 @@ struct DesignerView: View {
             half = SIMD2(b.extents.x, b.extents.z) / 2
         }
         let h = simd_max(roomSize / 2 - half - RoomBuilder.wallThickness / 2, .zero)
-        return [min(max(p.x, -h.x), h.x), 0, min(max(p.z, -h.y), h.y)]
+        return [min(max(p.x, -h.x), h.x), max(p.y, 0), min(max(p.z, -h.y), h.y)]   // y = mounting height
     }
 }
 

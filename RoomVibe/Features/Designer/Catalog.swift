@@ -10,6 +10,8 @@ struct CatalogItem: Identifiable {
     let symbol: String
 
     static let all: [CatalogItem] = [
+        // Placeholder to size by hand (Edit) and later swap for a real scan (Scan).
+        .init(id: "custom_box", name: "Custom Box", model: "custom_box", size: [0.5, 0.5, 0.5], symbol: "cube"),
         .init(id: "sofa", name: "Sofa", model: "sofa", size: [2.0, 0.85, 0.9], symbol: "sofa"),
         .init(id: "sofa_corner", name: "Corner Sofa", model: "sofa_corner", size: [2.4, 0.85, 1.6], symbol: "sofa"),
         .init(id: "armchair", name: "Armchair", model: "sofa_single", size: [0.85, 0.85, 0.85], symbol: "chair.lounge"),

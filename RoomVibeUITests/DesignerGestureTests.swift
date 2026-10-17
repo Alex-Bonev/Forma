@@ -76,6 +76,24 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "after-replace", to: self)
     }
 
+    func testCustomBoxEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        app.buttons["Add Item"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Custom Box'")).firstMatch.tap()
+        let edit = app.buttons["Edit size and height"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.tap()
+        let width = app.steppers["Width, 0.50 m"]
+        XCTAssertTrue(width.waitForExistence(timeout: 3), "custom box starts 0.5 m wide")
+        width.buttons["Increment"].tap()   // +5 cm
+        XCTAssertTrue(app.steppers["Width, 0.55 m"].waitForExistence(timeout: 2), "width should update live")
+        app.buttons["Done"].firstMatch.tap()
+        XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
+    }
+
     func testRenameObject() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo"]
