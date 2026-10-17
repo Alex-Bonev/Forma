@@ -1,0 +1,10 @@
+.DS_Store
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+Config/Local.xcconfig
+__pycache__/
+.venv/
+.env
+.vercel

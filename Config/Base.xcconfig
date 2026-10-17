@@ -1,0 +1,6 @@
+// Shared build settings. Per-developer signing lives in Local.xcconfig (gitignored).
+// Copy Local.xcconfig.example to Local.xcconfig and fill in your own team + bundle prefix.
+RV_BUNDLE_PREFIX = com.example
+DEVELOPMENT_TEAM =
+#include? "Local.xcconfig"
+PRODUCT_BUNDLE_IDENTIFIER = $(RV_BUNDLE_PREFIX).roomvibe
