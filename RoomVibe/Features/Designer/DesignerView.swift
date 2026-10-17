@@ -1,9 +1,5 @@
 import SwiftUI
 import RealityKit
-import os
-
-private let log = Logger(subsystem: "RoomVibe", category: "Designer")
-
 /// Core demo screen: orbit the dollhouse, drop library objects in, drag/rotate/delete them.
 ///
 /// Touch model (all on `TouchSurface`):
@@ -276,11 +272,11 @@ struct DesignerView: View {
 
     private func spawn(_ p: Placement) async {
         guard let object = store.objects.first(where: { $0.id == p.objectID }) else {
-            log.error("placement \(p.id) references missing object \(p.objectID)")
+            print("RoomVibe: placement \(p.id) references missing object \(p.objectID)")
             return
         }
         let e = await RoomBuilder.placedEntity(for: object, url: store.modelURL(for: object))
-        log.info("spawned \(object.name, privacy: .public) extents \(e.visualBounds(relativeTo: e).extents, privacy: .public)")
+        print("RoomVibe: spawned \(object.name) file=\(object.modelFile ?? "procedural") extents=\(e.visualBounds(relativeTo: e).extents)")
         e.name = p.id.uuidString
         e.position = p.position
         e.orientation = simd_quatf(angle: p.yRotation, axis: [0, 1, 0])
