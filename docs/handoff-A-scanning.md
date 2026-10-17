@@ -14,9 +14,9 @@ Teammates: **B** owns Designer/visuals/Home/AR and the shared models; **C** owns
 ## Current state
 
 - Room scan: `RoomScanner` (delegate) + `RoomCaptureRepresentable`; on result → name alert → `store.addRoom` writes
-  `room.json` (`RoomModel`), `captured.json` (raw `CapturedRoom`), `room.usdz`. Not yet run on device.
+  `room.json` (`RoomModel`), `captured.json` (raw `CapturedRoom`), `room.usdz`.
 - Object scan: `ObjectScanModel` drives `ObjectCaptureSession` states (ready → detecting → capturing → completed), then
-  `PhotogrammetrySession` → `Objects/<id>/model.usdz`, deletes the photos after. Not yet run on device.
+  `PhotogrammetrySession` → `Objects/<id>/model.usdz` + `thumb.jpg`, deletes the photos after.
 
 ## Status (Oct 17)
 
