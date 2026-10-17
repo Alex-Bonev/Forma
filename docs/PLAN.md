@@ -51,6 +51,22 @@ Hackathon demo, ~3 minutes, live. Optimize for a reliable demo, not production r
 - **Tests:** UI tests in `RoomVibeUITests` (real gestures in the Simulator), `scripts/align_check`, `backend/test_main.py`.
 - **Backend** (David, `c/backend-ai`): real providers, APIClient, Render and Vibe screens. Not merged yet.
 
+**Specs for in-flight and recent work** (agents build against these; update them whenever scope changes):
+- [`docs/specs/designer-editing.md`](specs/designer-editing.md): select / edit size + mounting height / Custom Box / replace / scan-to-replace (built).
+- [`docs/specs/rounded-furniture.md`](specs/rounded-furniture.md): one soft, rounded style; procedural models for every low-poly category.
+- [`docs/specs/scan-intelligence.md`](specs/scan-intelligence.md): on-device Apple Vision classification for marked items and wall/floor finishes.
+  We chose Vision over Jev because Jev is text-only, cloud-only and early-access.
+
+**Scope changes (Oct 17, Alex):**
+- Removed: the top-view toggle.
+- Added:
+  - photos captured during room scans (gallery + Matched Paint wall color)
+  - wall/floor finishes
+  - tap-to-mark missed items during a scan
+  - editable size and mounting height
+  - scan-to-replace placeholders
+  - a consistent rounded furniture style
+
 RoomPlan facts that matter (checked in the SDK and on a real scan):
 - **Detection:** only 16 object categories are detected (storage, refrigerator, stove, bed, sink, washerDryer,
   toilet, bathtub, oven, dishwasher, table, sofa, chair, fireplace, television, stairs). Anything else, such as a
