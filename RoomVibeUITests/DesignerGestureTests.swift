@@ -27,17 +27,25 @@ final class DesignerGestureTests: XCTestCase {
         sleep(1)
         let after = canvas.value as? String
         XCTAssertNotNil(before)
-        XCTAssertNotEqual(before, after, "dragging the chair should move and save it (\(before ?? "-") -> \(after ?? "-"))")
+        XCTAssertTrue(app.buttons["Remove"].exists, "chair should stay selected after the drag")
+        XCTAssertGreaterThan(x(after), x(before) + 0.3, "dragging right should move the chair +x (\(before ?? "-") -> \(after ?? "-"))")
         XCUIScreen.main.screenshot().attach(named: "after-drag", to: self)
 
         // Empty area near the top: orbit, then zoom. (The lower canvas sits under the bottom panel.)
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.2))
             .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.25)))
+        XCTAssertEqual(canvas.value as? String, after, "orbiting must not move or deselect the chair")
         app.buttons["Done"].tap()
         canvas.pinch(withScale: 1.6, velocity: 2)
         sleep(1)
         XCUIScreen.main.screenshot().attach(named: "after-orbit-zoom", to: self)
     }
+}
+
+/// x from "Demo Chair at 1.23, 0.45 m".
+private func x(_ value: String?) -> Double {
+    guard let v = value, let at = v.range(of: " at ") else { return .nan }
+    return Double(v[at.upperBound...].split(separator: ",").first ?? "") ?? .nan
 }
 
 private extension XCUIScreenshot {

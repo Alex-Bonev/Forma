@@ -26,6 +26,9 @@ struct DesignerView: View {
     @State private var topView = false
     @State private var showHint = true
     @State private var adding: String?
+    @State private var twistingObject = false
+    @State private var objectHint = false
+    @State private var lifts = 0   // haptic trigger
     // Kept for picking: RealityKit's own ray(through:) matches its real render surface, which is taller than the
     // SwiftUI frame (it extends under the bottom panel), so hand-rolled projection from the frame missed objects.
     @State private var content: RealityViewCameraContent?
@@ -62,10 +65,11 @@ struct DesignerView: View {
             camera.onFrame = { w.update(cameraPosition: $0) }
             camera.configure(roomSize: roomSize)
             let cam = camera
-            camera.updates = content.subscribe(to: SceneEvents.Update.self) { e in
-                MainActor.assumeIsolated { cam.update(dt: Float(e.deltaTime)) }
+            camera.updates = content.subscribe(to: SceneEvents.Update.self) { [weak cam] e in
+                MainActor.assumeIsolated { cam?.update(dt: Float(e.deltaTime)) }
             }
-            for p in project.placements { await spawn(p) }
+            // Show the room right away; large scans stream in after.
+            Task { for p in project.placements { await spawn(p) } }
         }
         .ignoresSafeArea(edges: .bottom)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
@@ -82,8 +86,9 @@ struct DesignerView: View {
         }
         .overlay(alignment: .topTrailing) { viewControls.padding() }
         .overlay(alignment: .top) {
-            if showHint {
-                Text("Drag to look around · Two fingers to pan · Pinch to zoom")
+            if showHint || objectHint {
+                Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
+                                : "Drag to look around · Two fingers to pan · Pinch to zoom")
                     .font(.caption.weight(.medium))
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.regularMaterial, in: Capsule())
@@ -93,6 +98,8 @@ struct DesignerView: View {
             }
         }
         .animation(.easeOut(duration: 0.3), value: showHint)
+        .animation(.easeOut(duration: 0.3), value: objectHint)
+        .sensoryFeedback(.impact(weight: .light), trigger: lifts)
     }
 
     /// Maps-style floating controls.
@@ -129,9 +136,10 @@ struct DesignerView: View {
     private var touchHandlers: TouchSurface.Handlers {
         var h = TouchSurface.Handlers()
         h.touchDown = {
-            camera.stopMomentum()
+            camera.grab()
             if showHint { showHint = false }
         }
+        h.touchUp = { camera.release() }
         h.oneFinger = { phase, location, delta, velocity in
             switch phase {
             case .began:
@@ -140,6 +148,8 @@ struct DesignerView: View {
                     moving = (id, e.position - start)
                     selected = id
                     e.scale = [1.04, 1.04, 1.04]   // lifted while dragged
+                    lifts += 1
+                    objectHint = false
                 }
             case .changed:
                 if let moving, let e = placed[moving.id] {
@@ -159,9 +169,10 @@ struct DesignerView: View {
             }
         }
         h.twoFingerPan = { delta in
-            if moving == nil { camera.pan(by: delta, viewHeight: viewSize.height) }
+            if moving == nil && !twistingObject { camera.pan(by: delta, viewHeight: viewSize.height) }
         }
         h.pinch = { phase, scale in
+            if twistingObject { return }   // rotating an object shouldn't also zoom
             switch phase {
             case .began: camera.beginZoom()
             case .changed: camera.zoom(scale: scale)
@@ -169,12 +180,14 @@ struct DesignerView: View {
             }
         }
         h.twist = { phase, delta in
-            if let selected, let e = placed[selected] {
+            if phase == .began { twistingObject = selected != nil }
+            if twistingObject, let selected, let e = placed[selected] {
                 if phase == .ended { commit() }
                 else { e.orientation = simd_quatf(angle: -Float(delta), axis: [0, 1, 0]) * e.orientation }
             } else if phase != .ended {
                 camera.twist(by: delta)
             }
+            if phase == .ended { twistingObject = false }
         }
         h.tap = { location in selected = hitPlacement(at: location) }
         return h
@@ -286,6 +299,9 @@ struct DesignerView: View {
         await spawn(p)
         if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
         selected = p.id
+        objectHint = true
+        try? await Task.sleep(for: .seconds(4))
+        objectHint = false
     }
 
     private func rotate(_ e: Entity, by angle: Float) {
@@ -330,14 +346,15 @@ struct DesignerView: View {
     }
 
     // ponytail: clamps to the room's bounding rectangle, not the actual wall polygon (L-shaped rooms leak).
-    /// Keeps `entity`'s footprint (not just its center) inside the walls.
+    /// Keeps `entity`'s footprint (not just its center) inside the walls, per axis.
     private func clamp(_ p: SIMD3<Float>, keeping entity: Entity? = nil) -> SIMD3<Float> {
-        var r: Float = 0
-        if let entity {
-            let b = entity.visualBounds(relativeTo: entity.parent)
-            r = max(b.extents.x, b.extents.z) / 2
+        var half = SIMD2<Float>.zero
+        // The model is the first child (the selection disc would inflate the bounds).
+        if let model = entity?.children.first {
+            let b = model.visualBounds(relativeTo: entity?.parent)
+            half = SIMD2(b.extents.x, b.extents.z) / 2
         }
-        let h = simd_max(roomSize / 2 - r - RoomBuilder.wallThickness / 2, .zero)
+        let h = simd_max(roomSize / 2 - half - RoomBuilder.wallThickness / 2, .zero)
         return [min(max(p.x, -h.x), h.x), 0, min(max(p.z, -h.y), h.y)]
     }
 }

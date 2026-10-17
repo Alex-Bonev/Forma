@@ -44,7 +44,17 @@ final class OrbitCamera {
 
     // MARK: Gesture input (screen points)
 
-    func stopMomentum() { spin = .zero }
+    /// Finger down: stop dead where the camera is now (grab-to-stop), and track 1:1 until release.
+    func grab() {
+        spin = .zero
+        goal.azimuth = current.azimuth
+        goal.elevation = current.elevation
+        tracking = true
+    }
+
+    func release() { tracking = false }
+
+    private var tracking = false
 
     func orbit(by delta: CGSize) {
         goal.azimuth -= Float(delta.width) * Self.orbitSpeed
@@ -74,12 +84,18 @@ final class OrbitCamera {
         goal.distance = (zoomStart / Float(max(scale, 0.01))).clamped(to: zoomRange)
     }
 
-    func twist(by radians: CGFloat) { goal.azimuth -= Float(radians) }
+    func twist(by radians: CGFloat) { goal.azimuth += Float(radians) }   // clockwise twist turns the room clockwise
 
-    func reset() { stopMomentum(); goal = home }
+    /// Back to the framed view along the shortest turn (azimuth is unbounded after flicks).
+    func reset() {
+        spin = .zero
+        var h = home
+        h.azimuth += 2 * .pi * ((current.azimuth - h.azimuth) / (2 * .pi)).rounded()
+        goal = h
+    }
 
     func toggleTopView() {
-        stopMomentum()
+        spin = .zero
         goal.elevation = goal.elevation > 1.3 ? home.elevation : Self.elevationRange.upperBound
     }
 
@@ -96,7 +112,8 @@ final class OrbitCamera {
             if simd_length(spin) < 0.02 { spin = .zero }
         }
         // Exponential approach ≈ critically damped follow; framerate independent.
-        let k = 1 - exp(-dt * 16)
+        // While a finger is down, follow almost 1:1; otherwise ease (reset, top view, momentum tail).
+        let k = 1 - exp(-dt * (tracking ? 60 : 12))
         current.azimuth += (goal.azimuth - current.azimuth) * k
         current.elevation += (goal.elevation - current.elevation) * k
         current.distance += (goal.distance - current.distance) * k
