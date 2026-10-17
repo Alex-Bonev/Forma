@@ -19,6 +19,20 @@ final class ProjectStore {
               let lib = try? JSONDecoder().decode(Library.self, from: data) else { return }
         projects = lib.projects
         objects = lib.objects
+        removeOrphans()
+    }
+
+    /// Folders left by scans that were killed mid-capture (never added to the index).
+    /// Only runs after the index decoded, so a bad index can never wipe real data.
+    private func removeOrphans() {
+        let known = Set(projects.map(\.id.uuidString) + objects.map(\.id.uuidString))
+        let fm = FileManager.default
+        for parent in ["Projects", "Objects"] {
+            let url = Self.root.appending(path: parent)
+            for name in (try? fm.contentsOfDirectory(atPath: url.path(percentEncoded: false))) ?? [] where !known.contains(name) {
+                try? fm.removeItem(at: url.appending(path: name))
+            }
+        }
     }
 
     static func projectDir(_ id: UUID) -> URL { root.appending(path: "Projects/\(id)") }

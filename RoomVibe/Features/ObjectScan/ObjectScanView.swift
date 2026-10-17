@@ -20,6 +20,7 @@ struct ObjectScanView: View {
                     try? store.addObject(object)
                     dismiss()
                 }
+                .sensoryFeedback(.success, trigger: model.phase == .done)
             }
         }
         .overlay(alignment: .topLeading) {
@@ -93,13 +94,16 @@ private struct ObjectScanContent: View {
                 .controlSize(.large)
             }
             .foregroundStyle(.white)
-            .sensoryFeedback(.success, trigger: model.phase)
             .quickLookPreview($previewURL)
         case .failed(let message):
             ContentUnavailableView {
                 Label("Scan failed", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message)
+            } actions: {
+                if model.canRetryReconstruction {
+                    Button("Try Again") { model.retryReconstruction() }.buttonStyle(.borderedProminent)
+                }
             }
             .foregroundStyle(.white)
         }
@@ -110,6 +114,8 @@ private struct ObjectScanContent: View {
 private struct CaptureOverlay: View {
     let session: ObjectCaptureSession
     @State private var pass = 1
+    @State private var detectionFailed = false
+    private static let minShots = 10   // fewer photos than this won't reconstruct (Apple sample: minNumImages)
 
     var body: some View {
         VStack {
@@ -151,7 +157,9 @@ private struct CaptureOverlay: View {
     private var instruction: String? {
         switch session.state {
         case .initializing: "Starting camera…"
-        case .ready: "Point the camera at the object and center it in the circle."
+        case .ready: detectionFailed
+            ? "Couldn't find the surface. Place the object on a flat, textured surface and center it."
+            : "Point the camera at the object and center it in the circle."
         case .detecting: "Drag the box edges so it fits the object snugly."
         case .capturing: "Walk slowly around the object. Keep it in frame."
         case .finishing: "Finishing capture…"
@@ -162,7 +170,7 @@ private struct CaptureOverlay: View {
     @ViewBuilder private var actions: some View {
         switch session.state {
         case .ready:
-            primary("Continue") { _ = session.startDetecting() }
+            primary("Continue") { detectionFailed = !session.startDetecting() }
         case .detecting:
             HStack(spacing: 12) {
                 Button("Reset Box") { _ = session.resetDetection() }.buttonStyle(.bordered).controlSize(.large)
@@ -170,7 +178,9 @@ private struct CaptureOverlay: View {
             }
         case .capturing:
             // Finishing before one full pass gives a poor model; still allowed for demos under time pressure.
-            Button("Finish Early") { session.finish() }.buttonStyle(.bordered).controlSize(.large)
+            Button("Finish Early") { session.finish() }
+                .buttonStyle(.bordered).controlSize(.large)
+                .disabled(session.numberOfShotsTaken < Self.minShots)
         case .initializing, .finishing:
             ProgressView().tint(.white)
         default:
@@ -186,8 +196,11 @@ private struct CaptureOverlay: View {
                 .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if pass < 3 {
                 HStack(spacing: 12) {
-                    Button("Flip Object") { pass += 1; session.beginNewScanPassAfterFlip() }
-                    Button("Don't Flip") { pass += 1; session.beginNewScanPass() }
+                    // Not flippable: Apple recommends more passes at other heights instead of flipping.
+                    if !session.feedback.contains(.objectNotFlippable) {
+                        Button("Flip Object") { pass += 1; detectionFailed = false; session.beginNewScanPassAfterFlip() }
+                    }
+                    Button("Scan Again") { pass += 1; session.beginNewScanPass() }
                 }
                 .buttonStyle(.bordered)
             }
@@ -226,23 +239,34 @@ final class ObjectScanModel {
     enum Phase: Equatable { case capturing, reconstructing(Double, TimeInterval?), done, failed(String) }
 
     static let modelName = "model.usdz"
-    static let thumbnailName = "thumb.jpg"   // Objects/<id>/thumb.jpg, read by the library UI
+    static let thumbnailName = "thumb.jpg"   // Objects/<id>/thumb.jpg, for the library UI (owner: Designer/Home)
     let id = UUID()
     private(set) var session: ObjectCaptureSession?
     private(set) var phase = Phase.capturing
     private(set) var thumbnail: UIImage?
     private var boundingBox: SIMD3<Float> = [0.5, 0.5, 0.5]
     private var photogrammetry: PhotogrammetrySession?
-    private var task: Task<Void, Never>?
+    private var saved = false
+    private var cancelled = false
 
     private var dir: URL { ProjectStore.objectDir(id) }
     private var images: URL { dir.appending(path: "Images/") }
     private var checkpoint: URL { dir.appending(path: "Checkpoint/") }
     var modelURL: URL { dir.appending(path: Self.modelName) }
 
+    var canRetryReconstruction: Bool {
+        session == nil && photogrammetry == nil
+            && ((try? FileManager.default.contentsOfDirectory(atPath: images.path(percentEncoded: false)))?.isEmpty == false)
+    }
+
     func start() {
         do {
             for d in [images, checkpoint] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+            // Photos can be hundreds of MB; keep them out of iCloud backups.
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            var url = dir
+            try url.setResourceValues(values)
         } catch {
             phase = .failed(error.localizedDescription)
             return
@@ -251,18 +275,23 @@ final class ObjectScanModel {
         var config = ObjectCaptureSession.Configuration()
         config.checkpointDirectory = checkpoint
         session.start(imagesDirectory: images, configuration: config)
+        if case .failed(let error) = session.state {   // e.g. insufficient storage, fails immediately
+            phase = .failed(error.localizedDescription)
+            return
+        }
         self.session = session
-        task = Task {
+        Task {
             for await state in session.stateUpdates {
                 switch state {
                 case .completed:
-                    // Release the capture session (camera + memory) before the heavy reconstruction step.
+                    // Release the capture session (camera, GPU, memory) before reconstruction. This loop must
+                    // end too, or its `session` reference keeps it alive.
                     self.session = nil
-                    await reconstruct()
+                    Task { await self.reconstruct() }
                     return
                 case .failed(let error):
                     self.session = nil
-                    phase = .failed(error.localizedDescription)
+                    if cancelled { cleanUp() } else { phase = .failed(error.localizedDescription) }
                     return
                 default: break
                 }
@@ -270,31 +299,40 @@ final class ObjectScanModel {
         }
     }
 
+    /// Sessions finish asynchronously; files are deleted once they report back (see cleanUp call sites).
     func cancel() {
-        task?.cancel()
-        session?.cancel()
-        photogrammetry?.cancel()
-        // Saved scans keep their folder; anything else is dropped.
-        if !saved { try? FileManager.default.removeItem(at: dir) }
+        cancelled = true
+        if let session { session.cancel() }
+        else if let photogrammetry { photogrammetry.cancel() }
+        else { cleanUp() }
     }
 
-    private var saved = false
+    func retryReconstruction() {
+        Task { await reconstruct() }   // same checkpoint dir: PhotogrammetrySession resumes where it can
+    }
 
     func scannedObject(named name: String) -> ScannedObject {
         saved = true
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return ScannedObject(id: id, name: trimmed.isEmpty ? "Object" : trimmed, modelFile: Self.modelName, boundingBox: boundingBox)
+    }
+
+    private func cleanUp() {
+        if !saved { try? FileManager.default.removeItem(at: dir) }
     }
 
     private func reconstruct() async {
         phase = .reconstructing(0, nil)
+        defer { photogrammetry = nil }
         do {
             var config = PhotogrammetrySession.Configuration()
             config.checkpointDirectory = checkpoint
             let ps = try PhotogrammetrySession(input: images, configuration: config)
             photogrammetry = ps
+            // Iterator first so no early output is missed. The sequence never ends on its own: return explicitly.
+            var outputs = ps.outputs.makeAsyncIterator()
             try ps.process(requests: [.modelFile(url: modelURL)])
-            for try await output in ps.outputs {
+            while let output = try await outputs.next() {
                 switch output {
                 case .requestProgress(_, let fraction):
                     if case .reconstructing(_, let eta) = phase { phase = .reconstructing(fraction, eta) }
@@ -303,15 +341,16 @@ final class ObjectScanModel {
                 case .requestError(_, let error):
                     phase = .failed(error.localizedDescription)
                 case .processingCancelled:
+                    cleanUp()
                     return
                 case .processingComplete:
-                    guard case .reconstructing = phase else { return }
-                    await finishModel()
+                    if case .reconstructing = phase { await finishModel() }
+                    return
                 default: break
                 }
             }
         } catch {
-            phase = .failed(error.localizedDescription)
+            if cancelled { cleanUp() } else { phase = .failed(error.localizedDescription) }
         }
     }
 
