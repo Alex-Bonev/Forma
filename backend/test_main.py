@@ -35,21 +35,32 @@ def test_flow():
     assert big.status_code == 413
 
 
+def fake_gemini(monkeypatch, create):
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(main, "gemini", lambda: NS(aio=NS(interactions=NS(create=create))))
+
+
 def test_render_provider(monkeypatch):
     sent = {}
 
-    def handler(req):
-        sent["body"] = req.content
-        return httpx.Response(200, json={"data": [{"b64_json": "out"}]})
+    async def create(**kw):
+        sent.update(kw)
+        return type("I", (), {"output_image": type("O", (), {"data": "out"})()})()
 
-    fake_provider(monkeypatch, handler)
+    fake_provider(monkeypatch, None)
+    fake_gemini(monkeypatch, create)
     r = c.post("/render", headers=H, files={"image": ("a.jpg", jpeg())}, data={"prompt": "cozy"})
     assert r.json() == {"image_base64": "out"}
-    assert b"1024x1536" in sent["body"] and b"Style: cozy" in sent["body"]  # portrait in, portrait out
+    assert sent["response_format"]["aspect_ratio"] == "2:3"  # portrait in, portrait out
+    assert "Style: cozy" in sent["input"][0]["text"]
 
 
 def test_render_provider_error(monkeypatch):
-    fake_provider(monkeypatch, lambda req: httpx.Response(400, json={"error": "nope"}))
+    async def create(**kw):
+        raise RuntimeError("bad key")
+
+    fake_provider(monkeypatch, None)
+    fake_gemini(monkeypatch, create)
     r = c.post("/render", headers=H, files={"image": ("a.jpg", jpeg())})
     assert r.status_code == 502
 
@@ -59,3 +70,17 @@ def test_products_dedup(monkeypatch):
     fake_provider(monkeypatch, lambda req: httpx.Response(200, json={"shopping_results": [item]}))
     products = c.post("/vibe/products", headers=H, json=main.MOCK_STYLE.model_dump()).json()["products"]
     assert [p["product_url"] for p in products] == ["https://x/1"]
+
+
+def test_non_ascii_secret_is_401():
+    assert c.get("/health", headers={"X-App-Secret": "é".encode("latin-1")}).status_code == 401
+
+
+def test_mock_products_have_unique_urls():
+    products = c.post("/vibe/products", headers=H, json=main.MOCK_STYLE.model_dump()).json()["products"]
+    assert len({p["product_url"] for p in products}) == len(products)
+
+
+def test_products_provider_down(monkeypatch):
+    fake_provider(monkeypatch, lambda req: httpx.Response(401, json={"error": "bad key"}))
+    assert c.post("/vibe/products", headers=H, json=main.MOCK_STYLE.model_dump()).status_code == 502

@@ -1,3 +1,4 @@
+import ImageIO
 import PhotosUI
 import SwiftUI
 
@@ -18,7 +19,7 @@ struct VibeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 picker
-                if let error = model.error { errorCard(error) }
+                if let error = model.error { errorCard(error) { model.retryAnalyze() } }
                 if model.inspiration != nil { styleSection }
                 if model.style != nil {
                     renderSection
@@ -29,12 +30,20 @@ struct VibeView: View {
         }
         .navigationTitle("Vibe")
         .navigationBarTitleDisplayMode(.inline)
-        .task { if let preset, model.inspiration == nil { await model.start(with: preset) } }
+        .onAppear { if let preset, model.inspiration == nil { model.begin(with: preset) } }
+        .onDisappear { model.cancel() }
         .onChange(of: pick) {
-            guard let pick else { return }
+            guard let item = pick else { return }
+            pick = nil   // so picking the same photo again still fires
             Task {
-                if let data = try? await pick.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                    await model.start(with: image)
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self),
+                          let image = await Task.detached(operation: { downsampled(data) }).value else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    model.begin(with: image)
+                } catch {
+                    model.fail("Couldn't open that photo. Try another one.")
                 }
             }
         }
@@ -69,7 +78,7 @@ struct VibeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(style.styleName).font(.title2.bold())
                 HStack(spacing: 6) {
-                    ForEach(style.palette, id: \.self) { hex in
+                    ForEach(Array(style.palette.enumerated()), id: \.offset) { _, hex in
                         Circle().fill(Color(hex: hex)).frame(width: 28, height: 28)
                             .overlay(Circle().stroke(.separator))
                             .accessibilityLabel(hex)
@@ -137,10 +146,13 @@ private struct ProductCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            AsyncImage(url: product.imageURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Color.secondary.opacity(0.15)
+            AsyncImage(url: product.imageURL) { phase in
+                switch phase {
+                case .success(let image): image.resizable().scaledToFill()
+                case .failure: Image(systemName: "photo").foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.secondary.opacity(0.15))
+                default: Color.secondary.opacity(0.15)
+                }
             }
             .frame(width: 150, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -170,18 +182,36 @@ final class VibeModel {
     private(set) var products: Result<[ShopProduct], Error>?
     private(set) var error: String?
 
+    /// The current pick's run. A newer pick cancels it so its results can't land under the new photo.
+    private var run: Task<Void, Never>?
+
     init(snapshot: UIImage, projectID: UUID?) {
         self.snapshot = snapshot.croppedToRenderAspect()
         self.projectID = projectID
     }
 
-    func start(with image: UIImage) async {
+    func begin(with image: UIImage) {
+        run?.cancel()
+        run = Task { await start(with: image) }
+    }
+
+    func retryAnalyze() {
+        if let inspiration { begin(with: inspiration) }
+    }
+
+    func cancel() { run?.cancel() }
+
+    func fail(_ message: String) { error = message }
+
+    private func start(with image: UIImage) async {
         inspiration = image
         style = nil; render = nil; products = nil; error = nil
         do {
-            style = try await APIClient.shared.analyzeVibe(image)
+            let analyzed = try await APIClient.shared.analyzeVibe(image)
+            guard !Task.isCancelled else { return }
+            style = analyzed
         } catch {
-            self.error = error.localizedDescription
+            if !Task.isCancelled && !(error is CancellationError) { self.error = error.localizedDescription }
             return
         }
         async let r: Void = rerender()
@@ -192,18 +222,33 @@ final class VibeModel {
     func rerender() async {
         guard let style else { return }
         render = nil
+        let result: Result<UIImage, Error>
         do {
-            render = .success(try await APIClient.shared.render(snapshot, prompt: style.renderPrompt, styleRef: inspiration))
+            result = .success(try await APIClient.shared.render(snapshot, prompt: style.renderPrompt, styleRef: inspiration))
         } catch {
-            render = .failure(error)
+            result = .failure(error)
         }
+        if !Task.isCancelled, style == self.style { render = result }
     }
 
     func reloadProducts() async {
         guard let style else { return }
         products = nil
-        do { products = .success(try await APIClient.shared.products(for: style)) } catch { products = .failure(error) }
+        let result: Result<[ShopProduct], Error>
+        do { result = .success(try await APIClient.shared.products(for: style)) } catch { result = .failure(error) }
+        if !Task.isCancelled, style == self.style { products = result }
     }
+}
+
+/// Decodes a picked photo at <= 2048 px, so a 48 MP HEIC doesn't stall the UI or the upload resize.
+private func downsampled(_ data: Data, maxPixel: Int = 2048) -> UIImage? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+              kCGImageSourceCreateThumbnailFromImageAlways: true,
+              kCGImageSourceCreateThumbnailWithTransform: true,
+              kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+          ] as CFDictionary) else { return nil }
+    return UIImage(cgImage: image)
 }
 
 private extension Color {

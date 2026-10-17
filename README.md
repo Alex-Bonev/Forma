@@ -77,10 +77,13 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
 MOCK=1 .venv/bin/fastapi dev main.py     # local server on :8000
 ```
 
-Deploy: `vercel` from `backend/` (preview), `vercel --prod` (live). Set env vars from `.env.example`.
+Deploy: `vercel` from `backend/` (preview), `vercel --prod` (live). Copy the variables from `.env.example` into Vercel,
+then set `MOCK=0`, the real provider keys, and a fresh `APP_SHARED_SECRET` (`openssl rand -hex 32`).
+With `MOCK=0` the backend refuses every request until `APP_SHARED_SECRET` is set.
 Vercel caps request and response bodies at 4.5 MB: send JPEG snapshots, never USDZ files.
-Providers: OpenAI Image API edits (`/render`), Claude (`/vibe/analyze`), SerpAPI Google Shopping (`/vibe/products`).
-With `MOCK=0`, an endpoint whose key is missing returns 501. Keys live only in Vercel env vars, never in the app.
+Providers: Gemini image editing (`/render`, Interactions API), Claude (`/vibe/analyze`), SerpAPI Google Shopping (`/vibe/products`).
+With `MOCK=0`, an endpoint whose key is missing returns 501. Provider keys live only in Vercel env vars, never in the app.
+The app holds `APP_SHARED_SECRET`, which anyone with the build can read: it is an access gate, not a secret. Rotate it after the demo.
 
 App side: without config the app calls `http://127.0.0.1:8000` (works from the Simulator against a local backend).
 To use the deployed backend, create the gitignored `RoomVibe/Core/Networking/APIConfig.json`:
@@ -88,6 +91,8 @@ To use the deployed backend, create the gitignored `RoomVibe/Core/Networking/API
 ```json
 {"baseURL": "https://<project>.vercel.app", "secret": "<APP_SHARED_SECRET>"}
 ```
+
+If the app still calls 127.0.0.1, the file did not decode: check it is valid JSON (the Xcode console logs the error).
 
 Before going on stage: open `https://<project>.vercel.app/health` once to wake the function.
 
@@ -103,5 +108,6 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
 - Custom orbit camera: drag empty space to orbit, drag an object to move it, pinch to zoom, twist to rotate the selection.
 - Placements clamp to the room's bounding rectangle, not the exact wall outline.
 - Make it real (`Features/Render/`) and vibe mode (`Features/Vibe/`) are built and tested in Simulator against `MOCK=1`.
-  The Designer button is B's: on tap, call `captureDesignerSnapshot()`, then show `RenderView(snapshot:projectID:)` in a sheet.
+  The Designer button is B's: on tap, `guard let snap = captureDesignerSnapshot()`, then show
+  `RenderView(snapshot: snap, projectID:)` in a sheet. Capture before presenting the sheet, or the sheet is captured.
 - Not built yet: AR view, generic furniture USDZ swap.

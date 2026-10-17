@@ -13,6 +13,7 @@ func captureDesignerSnapshot() -> UIImage? {
         .flatMap(\.windows)
         .first(where: \.isKeyWindow) else { return nil }
     let target = largestMetalView(in: window) ?? window
+    guard target.bounds.width > 0, target.bounds.height > 0 else { return nil }
     let format = UIGraphicsImageRendererFormat()
     format.opaque = true
     return UIGraphicsImageRenderer(bounds: target.bounds, format: format).image { _ in

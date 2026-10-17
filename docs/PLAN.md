@@ -107,12 +107,19 @@ Fallbacks: bundled demo data if a scan fails; cached render if Wi-Fi fails; scre
 |---|---|---|---|
 | 1 | Teammates' GitHub usernames (to add as collaborators) | Alex | Now |
 | 2 | Which teammate is B (has LiDAR) and which is C? | Team | H0 |
-| 3 | Image provider for `/render`: needs image-to-image or structure-conditioned editing (keeps layout). Any sponsor credits? | C, confirm with team | H2 — **proposed: OpenAI Image API edits, `IMAGE_MODEL=gpt-image-2` (cheapest edit model measured, ~$0.01–0.05/image). Swap model via env if sponsor credits favor another.** |
-| 4 | LLM for vibe analysis and shopping/product search API | C | H24 — **proposed: Claude (`claude-opus-5-5`, structured output) + SerpAPI Google Shopping.** |
-| 5 | Who owns the Vercel account + where keys are shared (not in git) | C | H6 — **open: C deploys from `backend/`; keys live only in Vercel env vars.** |
+| 3 | Image provider for `/render`: needs image-to-image or structure-conditioned editing (keeps layout). Any sponsor credits? | C, confirm with team | H2 |
+| 4 | LLM for vibe analysis and shopping/product search API | C | H24 |
+| 5 | Who owns the Vercel account + where keys are shared (not in git) | C | H6 |
 | 6 | Judging criteria / required sponsor tech that should be visible in the demo | Alex | H2 |
 | 7 | App name/branding final? ("RoomVibe" assumed) | Team | H20 |
 | 8 | Venue Wi-Fi reliability — decides how much we lean on cached AI results | Alex | H34 |
+
+C's proposals (not yet confirmed by the team):
+
+- **#3:** Gemini image editing (Interactions API), `IMAGE_MODEL=gemini-nano-banana-2.1` (~$0.034/image at 1K, no free tier).
+  Check current pricing on the provider page before relying on it.
+- **#4:** Claude (`claude-opus-5-5`, structured output) for vibe analysis, SerpAPI Google Shopping for products.
+- **#5:** still open. C deploys from `backend/`; provider keys live only in Vercel env vars.
 
 ## 9. Rules for Claude Code sessions (all three of us)
 

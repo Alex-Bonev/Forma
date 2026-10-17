@@ -1,9 +1,10 @@
+import CryptoKit
 import SwiftUI
 
 /// "Make it real": sends a Designer snapshot to /render and shows a before/after slider.
-/// B presents this from the Designer: on tap, `captureDesignerSnapshot()`, then a sheet with
-/// `RenderView(snapshot:projectID:)`.
-/// Vibe mode reuses it with a style prompt and the inspiration image.
+/// B presents this from the Designer: on tap, `guard let snap = captureDesignerSnapshot()`, then a sheet with
+/// `RenderView(snapshot: snap, projectID:)`.
+/// Vibe mode reuses its BeforeAfterSlider and calls APIClient.render directly.
 struct RenderView: View {
     @State private var model: RenderModel
     @Environment(\.dismiss) private var dismiss
@@ -54,7 +55,7 @@ struct RenderView: View {
                 }
         case .done(let after, let isStale):
             VStack(spacing: 10) {
-                BeforeAfterSlider(before: model.snapshot, after: after)
+                BeforeAfterSlider(before: isStale ? model.staleBefore ?? model.snapshot : model.snapshot, after: after)
                 if isStale {
                     Label("Offline: showing the last render of this room", systemImage: "clock.arrow.circlepath")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -87,38 +88,60 @@ final class RenderModel {
     let prompt: String
     let styleRef: UIImage?
     private(set) var phase: Phase = .loading
+    /// The snapshot the cached render was made from, so a stale slider compares the same room.
+    private(set) var staleBefore: UIImage?
 
     init(snapshot: UIImage, projectID: UUID?, prompt: String, styleRef: UIImage?) {
         self.snapshot = snapshot.croppedToRenderAspect()
         self.projectID = projectID
         self.prompt = prompt
         self.styleRef = styleRef
+        cacheURL = Self.cacheURL(projectID: projectID, prompt: prompt, styleRef: styleRef)
     }
 
     var result: UIImage? {
         if case .done(let image, _) = phase { image } else { nil }
     }
 
-    /// Last successful render per room (and per style), used when the network fails.
-    private var cacheURL: URL? {
+    /// Last successful render per room (and per style prompt + reference image), used when the network fails.
+    private let cacheURL: URL?
+
+    private static func cacheURL(projectID: UUID?, prompt: String, styleRef: UIImage?) -> URL? {
         guard let projectID else { return nil }
-        let hash = prompt.utf8.reduce(UInt64(5381)) { $0 &* 33 &+ UInt64($1) }   // stable across launches
-        let name = prompt.isEmpty ? "render.jpg" : "render-\(hash % 1_000_000).jpg"
-        return ProjectStore.projectDir(projectID).appending(path: name)
+        var key = Data(prompt.utf8)
+        if let ref = styleRef?.uploadJPEG() { key.append(ref) }
+        let name = key.isEmpty ? "render" : "render-" + SHA256.hash(data: key).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return ProjectStore.projectDir(projectID).appending(path: "\(name).jpg")
     }
+
+    private var beforeURL: URL? { cacheURL?.deletingPathExtension().appendingPathExtension("before.jpg") }
 
     func run() async {
         phase = .loading
         do {
             let image = try await APIClient.shared.render(snapshot, prompt: prompt, styleRef: styleRef)
-            if let cacheURL { try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic) }
+            if let cacheURL, let beforeURL {
+                try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)
+                try? snapshot.jpegData(compressionQuality: 0.8)?.write(to: beforeURL, options: .atomic)
+            }
             phase = .done(image, isStale: false)
         } catch {
-            if let cacheURL, let data = try? Data(contentsOf: cacheURL), let cached = UIImage(data: data) {
+            if Self.isNetworkFailure(error), let cacheURL, let data = try? Data(contentsOf: cacheURL),
+               let cached = UIImage(data: data) {
+                staleBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
                 phase = .done(cached, isStale: true)
             } else {
                 phase = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    /// Only these fall back to the cache; a server error is shown as is so it gets fixed, not hidden.
+    private static func isNetworkFailure(_ error: Error) -> Bool {
+        switch error as? APIError {
+        case .offline, .timeout, .network: true
+        default: false
         }
     }
 }

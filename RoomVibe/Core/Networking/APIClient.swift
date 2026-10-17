@@ -12,10 +12,12 @@ struct APIConfig: Codable {
     var secret: String
 
     static let current: APIConfig = {
-        if let url = Bundle.main.url(forResource: "APIConfig", withExtension: "json"),
-           let data = try? Data(contentsOf: url),
-           let config = try? JSONDecoder().decode(APIConfig.self, from: data) {
-            return config
+        if let url = Bundle.main.url(forResource: "APIConfig", withExtension: "json") {
+            do {
+                return try JSONDecoder().decode(APIConfig.self, from: Data(contentsOf: url))
+            } catch {
+                print("APIConfig.json is invalid, falling back to localhost: \(error)")   // else this fails silently
+            }
         }
         return APIConfig(baseURL: URL(string: "http://127.0.0.1:8000")!, secret: "")
     }()
@@ -48,15 +50,36 @@ struct ShopProduct: Codable, Hashable, Identifiable {
         case title, price, retailer
         case imageURL = "imageUrl", productURL = "productUrl"   // after convertFromSnakeCase
     }
+
+    /// The backend sends "" for a missing thumbnail. Only web links are accepted, since they go straight to openURL.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        price = try c.decode(String.self, forKey: .price)
+        retailer = try c.decode(String.self, forKey: .retailer)
+        imageURL = try c.decodeIfPresent(String.self, forKey: .imageURL).flatMap(URL.init(string:))
+        guard let url = URL(string: try c.decode(String.self, forKey: .productURL)),
+              ["http", "https"].contains(url.scheme?.lowercased()) else {
+            throw DecodingError.dataCorruptedError(forKey: .productURL, in: c, debugDescription: "not a web link")
+        }
+        productURL = url
+    }
+}
+
+/// Decodes an element or nil, so one bad item doesn't fail the whole list.
+private struct Lossy<T: Decodable>: Decodable {
+    var value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
 enum APIError: LocalizedError {
-    case offline, timeout, server(Int, String), badResponse
+    case offline, timeout, network(String), server(Int, String), badResponse
 
     var errorDescription: String? {
         switch self {
         case .offline: "You're offline. Check Wi-Fi and try again."
         case .timeout: "The AI took too long. Try again."
+        case .network(let detail): "Network error: \(detail)"
         case .server(let code, let detail): "Server error \(code): \(detail)"
         case .badResponse: "The server sent something unexpected."
         }
@@ -109,12 +132,12 @@ final class APIClient {
     }
 
     func products(for style: VibeStyle) async throws -> [ShopProduct] {
-        struct Products: Decodable { var products: [ShopProduct] }
+        struct Products: Decodable { var products: [Lossy<ShopProduct>] }
         var req = request("vibe/products")
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try Self.encoder.encode(style)
-        return try await send(req, as: Products.self).products
+        return try await send(req, as: Products.self).products.compactMap(\.value)
     }
 
     // MARK: Plumbing
@@ -135,10 +158,12 @@ final class APIClient {
             case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost,
                  .dataNotAllowed:
                 throw APIError.offline
-            default: throw e
+            case .cancelled: throw CancellationError()
+            default: throw APIError.network(e.localizedDescription)
             }
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
+        if http.statusCode == 504 { throw APIError.timeout }   // provider or Vercel function timed out
         guard http.statusCode == 200 else {
             let detail = (try? JSONDecoder().decode(ErrorDetail.self, from: data))?.detail ?? "no details"
             throw APIError.server(http.statusCode, detail)
