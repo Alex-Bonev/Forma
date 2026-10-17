@@ -1,3 +1,5 @@
 fastapi
 python-multipart
 httpx
+anthropic
+pillow
