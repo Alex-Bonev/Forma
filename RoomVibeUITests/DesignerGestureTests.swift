@@ -94,6 +94,23 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
     }
 
+    /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
+    func testMarkedItemSuggestion() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        sleep(2)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.80, dy: 0.565)).tap()
+        let use = app.buttons["Use Plant"]
+        XCTAssertTrue(use.waitForExistence(timeout: 3), "marked item should offer its Vision suggestion")
+        XCUIScreen.main.screenshot().attach(named: "after-suggestion", to: self)
+        use.tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
+    }
+
     func testRenameObject() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo"]

@@ -301,24 +301,30 @@ struct DesignerView: View {
                     .transition(.opacity)
             }
             if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
-                // Marked during the scan and classified by Vision (SceneClassifier): one tap to the catalog item.
-                if let c = CatalogItem.item(room.objects[i].attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) }) {
-                    HStack(spacing: 12) {
-                        Text("Looks like a \(c.name)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Use \(c.name)", systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
-                            .buttonStyle(.borderedProminent)
-                    }
-                    .padding(.horizontal)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                // Title row: what's selected, plus the Vision suggestion for marked items (SceneClassifier).
+                let suggestion = CatalogItem.item(room.objects[i].attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) })
                 HStack(spacing: 12) {
-                    Text(room.objects[i].label == RoomModel.markedLabel ? "Marked Item"
-                         : "Scanned \(room.objects[i].label.capitalized)")
-                        .font(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(room.objects[i].label == RoomModel.markedLabel ? "Marked Item"
+                             : "Scanned \(room.objects[i].label.capitalized)")
+                            .font(.subheadline.weight(.semibold))
+                        if let suggestion {
+                            Text("Looks like a \(suggestion.name)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .lineLimit(1)
                     Spacer()
+                    if let suggestion {
+                        Button("Use \(suggestion.name)", systemImage: suggestion.symbol) {
+                            Task { await replaceRoomObject(i, catalog: suggestion) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                HStack(spacing: 14) {
                     Menu {
                         if !store.objects.isEmpty {
                             Section("Your scans") {
@@ -330,7 +336,8 @@ struct DesignerView: View {
                                 Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
                             }
                         }
-                    } label: { Label("Replace", systemImage: "arrow.triangle.2.circlepath") }
+                    } label: { Image(systemName: "arrow.triangle.2.circlepath") }
+                        .accessibilityLabel("Replace")
                     Button { Task { await editRoomObject(i, room: room) } } label: { Image(systemName: "slider.horizontal.3") }
                         .accessibilityLabel("Edit size and height")
                     if Capabilities.canScanObject {
@@ -341,8 +348,8 @@ struct DesignerView: View {
                         .accessibilityLabel("Hide")
                     Button("Done") { selectedRoomObject = nil }
                 }
+                .font(.title3)
                 .buttonStyle(.bordered)
-                .padding(.horizontal)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if selected == nil, let hidden = project.hiddenRoomObjects, !hidden.isEmpty {
                 Button("Show \(hidden.count) hidden scanned item\(hidden.count == 1 ? "" : "s")") { restoreHidden() }
