@@ -27,3 +27,25 @@ targets:
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_STYLE: Automatic
+  RoomVibeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [RoomVibeUITests]
+    dependencies:
+      - target: RoomVibe
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        PRODUCT_BUNDLE_IDENTIFIER: $(RV_BUNDLE_PREFIX).roomvibe.uitests
+schemes:
+  RoomVibe:
+    build:
+      targets:
+        RoomVibe: all
+        RoomVibeUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [RoomVibeUITests]
