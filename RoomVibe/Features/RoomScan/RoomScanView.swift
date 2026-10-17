@@ -15,6 +15,7 @@ struct RoomScanView: View {
     @State private var confirmDiscard = false
     @State private var name = ""
     @State private var error: String?
+    @State private var saving = false
 
     var body: some View {
         ZStack {
@@ -43,7 +44,7 @@ struct RoomScanView: View {
         .onChange(of: scanner?.error) { _, new in if let new { error = new } }
         .alert("Name this room", isPresented: $naming) {
             TextField("Living Room", text: $name)
-            Button("Save") { DispatchQueue.main.async { save() } }
+            Button("Save") { Task { await save() } }
             Button("Cancel", role: .cancel) {}
         }
         .alert("Scan failed", isPresented: .constant(error != nil)) {
@@ -110,6 +111,7 @@ struct RoomScanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(saving)   // finish classification takes up to ~1.5 s
                 .padding(.horizontal, 24).padding(.bottom, 24)
                 .sensoryFeedback(.success, trigger: scanner.phase)
             }
@@ -117,20 +119,32 @@ struct RoomScanView: View {
         .animation(.spring(duration: 0.3, bounce: 0), value: scanner.phase)
     }
 
-    private func save() {
-        guard let room = scanner?.result else { return }
+    private func save() async {
+        guard !saving, let room = scanner?.result else { return }
+        saving = true
+        defer { saving = false }
         var model = RoomModel(room)
-        model.objects += RoomModel.markedItems(scanner?.markers ?? [], walls: model.walls)
+        let markers = scanner?.markers ?? []
+        model.objects += zip(RoomModel.markedItems(markers.map(\.point), walls: model.walls), markers).map { box, m in
+            var box = box
+            if let s = m.suggestion { box.attributes = ["Vision.\(s.vision)", "Suggest.\(s.catalog)"] }
+            return box
+        }
         // Photos are in the raw ARSession world frame, so match against walls before axisAligned().
         // VERIFY on device: CapturedRoom transforms share the ARSession world frame (no re-anchoring after processing).
         let photos = scanner?.photos
         let paint = photos.flatMap { RoomPhotos.wallColor(walls: model.walls, photos: $0.shots) }
+        let walls = model.walls, shots = photos?.shots.map { ($0.photo, $0.jpeg) } ?? []
         model = model.axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.
         guard !model.walls.isEmpty else {
             error = "No walls were detected. Point at every wall while scanning."
             return
         }
+        // Brick walls / wood floor from the photos (Vision, on device, off main).
+        let finishes = await Task.detached(priority: .userInitiated) {
+            SceneClassifier.finishes(walls: walls, photos: shots)
+        }.value
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             var project = try store.addRoom(name: trimmed.isEmpty ? "Room" : trimmed, model: model) { dir in
@@ -140,8 +154,10 @@ struct RoomScanView: View {
                 try? room.export(to: dir.appending(path: "room.usdz"))
                 try? photos?.write(to: dir)   // nice-to-have: never fail the scan over photos
             }
-            if let paint {
-                project.wallFinish = Finish.paintID(paint)
+            let wall = finishes.brickWalls ? "brick" : paint.map(Finish.paintID)
+            if wall != nil || finishes.woodFloor {
+                if let wall { project.wallFinish = wall }
+                if finishes.woodFloor { project.floorFinish = "oak" }
                 store.update(project)
             }
             dismiss()
@@ -215,8 +231,9 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
         view.captureSession.stop()
     }
 
-    /// World points the user tapped during the scan (things RoomPlan doesn't detect).
-    private(set) var markers: [SIMD3<Float>] = []
+    /// A point the user tapped during the scan (something RoomPlan doesn't detect) and what Vision thinks it is.
+    struct Marker { var point: SIMD3<Float>; var suggestion: SceneClassifier.Suggestion? }
+    private(set) var markers: [Marker] = []
     private(set) var markMissed = false
 
     /// Raycast from a tap on the capture view into the AR scene (RoomPlan exposes its ARSession).
@@ -232,7 +249,16 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
         guard let hit = session.raycast(query).first else { markMissed = true; return }
         markMissed = false
         let t = hit.worldTransform.columns.3
-        markers.append([t.x, t.y, t.z])
+        markers.append(Marker(point: [t.x, t.y, t.z]))
+        // Classify a square around the tap. Keep only the pixel buffer, not the ARFrame (ARKit recycles frames).
+        // VERIFY on device: the crop frames the tapped thing and the portrait orientation reads upright.
+        let i = markers.count - 1, buffer = frame.capturedImage, camera = frame.camera.transform
+        Task.detached(priority: .userInitiated) {
+            let suggestion = SceneClassifier.crop(buffer, around: imagePoint).flatMap {
+                SceneClassifier.suggestion(SceneClassifier.classify($0, orientation: SceneClassifier.orientation(camera: camera)))
+            }
+            await MainActor.run { self.markers[i].suggestion = suggestion }
+        }
     }
 
     /// Stop without processing: the scan is being thrown away.

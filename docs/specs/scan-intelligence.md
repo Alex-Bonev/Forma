@@ -67,3 +67,48 @@ Richer answers (style, exact product) belong to David's backend vision LLM, not 
 - The existing UI tests pass (`xcodebuild test -scheme RoomVibe`).
 - Nothing touches the network.
 - Unverified on-device behavior is marked `// VERIFY on device`.
+
+## As built (scan-intel branch)
+
+Changes from the requirements above, and why:
+- **Suggestion threshold is 0.25, not 0.3.** Floor lamps scored 0.28 and 0.34 on the Mac. A wrong guess costs one ignorable button.
+- **Only the centered square of each crop is classified.** On a Mac M5, a 1:2 input took 19 ms and a square took 6.6 ms, so Vision appears to tile non-square inputs. Wall boxes and the floor's bottom third are therefore sampled at their middle.
+- **Finish classification has a 1.2 s deadline.** Photos are visited even-then-odd, so a run cut short on a slow device still covers the whole room.
+- **Wall crops** use the wall's middle, inset 15% horizontally and 20% vertically as in `wallRGB`. A wall is skipped when a corner is behind the camera or when it covers under 10% of the frame. There is no occlusion test.
+- **Floor** uses the bottom third of photos pitched more than ~20° down. The "bottom" follows image orientation, which comes from gravity in the camera frame (portrait = `.right`).
+- **Self-check** (`scripts/scene_check/main.swift`) also runs Vision on the bundled textures and runs `finishes()` end to end on 40 brick photos (timing).
+
+### Mapping (Vision identifier → `CatalogItem.id`)
+
+Scores are from Mac runs (`VNClassifyImageRequest`, macOS 26, M5) on CC0 Wikimedia Commons photos, 4 per query. Each line gives the score of the mapped label, or the image's top label when it missed.
+
+| Vision | Catalog | Evidence |
+|---|---|---|
+| `trash_can` | trash | 0.88, 0.89, 0.61; 1 miss (photo was mostly a car) |
+| `plant`, `decorative_plant` | plant | 0.79, 0.33, 0.85, 0.42 |
+| `lamp` | floor_lamp | 0.28, 0.34; 2 misses (sculptural lamps read as `statue`) |
+| `sofa` | sofa | 0.82, 0.65, plus `chair` 0.69 on a third sofa photo |
+| `chair`, `folding_chair`, `chair_other` | chair | 0.46, 0.44, 0.40, 0.97 |
+| `swivel_chair` | desk_chair | not tested |
+| `stool`, `table` | side_table | `stool` 0.60 on 1 of 4; side-table photos read as chair/stool ~0.2 |
+| `bench` | bench | 0.90, 0.82, 0.90, 0.95 |
+| `television`, `computer_monitor` | tv | 0.82, 0.44, 0.70; 1 read as `cabinet` 0.32 |
+| `bookshelf` | bookshelf | 0.74 (on a "desk" photo of shelving) |
+| `cabinet` | cabinet | 0.14, 0.28, 0.14 (mostly under the threshold); desks also read as `cabinet` ~0.7 |
+| `desk` | desk | never fired on 4 desk photos |
+| `bed` | bed | 0.70 on 1 of 4 |
+| `cardboard_box`, `carton`, `crate`, `basket_container`, `luggage` | box | box 0.18, 0.10, 0.31, 0.73; luggage 0.24 |
+
+Left out:
+- `armchair`: it equals `chair` on every chair photo.
+- `textile`: 0.40–0.66 on boxes, beds and suitcases, so it is no evidence of a rug.
+- Traffic cones: nothing fired (top label `bell` 0.43), as expected.
+
+Textures (512 px):
+
+| Texture | Result |
+|---|---|
+| brick | `brick` 0.96 → Brick |
+| `finish_wood_floor` | `wood_processed` 0.69 → Oak |
+| plank flooring | 0.23 (under 0.3 full-frame; 0.71 as a center crop) |
+| plaster, beige, marble, concrete | nothing above 0.2 |
