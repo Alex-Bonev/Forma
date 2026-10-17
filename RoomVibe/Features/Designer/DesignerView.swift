@@ -289,7 +289,9 @@ struct DesignerView: View {
             }
             if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
                 HStack(spacing: 12) {
-                    Text("Scanned \(room.objects[i].label.capitalized)").font(.subheadline.weight(.semibold))
+                    Text(room.objects[i].label == RoomModel.markedLabel ? "Marked Item"
+                         : "Scanned \(room.objects[i].label.capitalized)")
+                        .font(.subheadline.weight(.semibold))
                     Spacer()
                     Menu {
                         if !store.objects.isEmpty {

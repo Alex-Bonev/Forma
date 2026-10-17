@@ -1,5 +1,6 @@
 import SwiftUI
 import RoomPlan
+import ARKit
 import simd
 
 /// Full-screen RoomPlan capture: scan -> Done -> Apple's processed preview -> Save + name -> Designer.
@@ -22,6 +23,11 @@ struct RoomScanView: View {
                 RoomCaptureRepresentable(view: scanner.view)
                     .id(ObjectIdentifier(scanner))
                     .ignoresSafeArea()
+                    // Tap anything RoomPlan doesn't recognize to mark it (saved as a "marked item").
+                    .onTapGesture(coordinateSpace: .local) { p in
+                        if scanner.phase == .scanning { scanner.mark(at: p) }
+                    }
+                    .sensoryFeedback(.impact(weight: .medium), trigger: scanner.markers.count)
                 controls(scanner)
             }
         }
@@ -73,8 +79,17 @@ struct RoomScanView: View {
 
             switch scanner.phase {
             case .scanning:
-                Text("Move slowly around the room. Point at every wall and piece of furniture.")
-                    .scanCaption()
+                VStack(spacing: 8) {
+                    if !scanner.markers.isEmpty || scanner.markMissed {
+                        Text(scanner.markMissed ? "No surface there. Try again closer."
+                                                : "\(scanner.markers.count) item\(scanner.markers.count == 1 ? "" : "s") marked")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    Text("Move slowly around the room. Tap anything it misses to mark it.")
+                        .scanCaption()
+                }
             case .processing:
                 HStack(spacing: 10) {
                     ProgressView()
@@ -96,7 +111,9 @@ struct RoomScanView: View {
 
     private func save() {
         guard let room = scanner?.result else { return }
-        let model = RoomModel(room).axisAligned()
+        var model = RoomModel(room)
+        model.objects += RoomModel.markedItems(scanner?.markers ?? [], walls: model.walls)
+        model = model.axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.
         guard !model.walls.isEmpty else {
             error = "No walls were detected. Point at every wall while scanning."
@@ -174,6 +191,26 @@ final class RoomScanner: NSObject, @preconcurrency RoomCaptureViewDelegate {
     func stop() {
         phase = .processing
         view.captureSession.stop()
+    }
+
+    /// World points the user tapped during the scan (things RoomPlan doesn't detect).
+    private(set) var markers: [SIMD3<Float>] = []
+    private(set) var markMissed = false
+
+    /// Raycast from a tap on the capture view into the AR scene (RoomPlan exposes its ARSession).
+    /// VERIFY on device: CapturedRoom transforms share this ARSession's world frame.
+    func mark(at point: CGPoint) {
+        let session = view.captureSession.arSession
+        guard let frame = session.currentFrame, view.bounds.width > 0 else { return }
+        let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
+        // View point -> normalized image coordinates (inverse of the camera image's display transform).
+        let normalized = CGPoint(x: point.x / view.bounds.width, y: point.y / view.bounds.height)
+        let imagePoint = normalized.applying(frame.displayTransform(for: orientation, viewportSize: view.bounds.size).inverted())
+        let query = frame.raycastQuery(from: imagePoint, allowing: .estimatedPlane, alignment: .any)
+        guard let hit = session.raycast(query).first else { markMissed = true; return }
+        markMissed = false
+        let t = hit.worldTransform.columns.3
+        markers.append([t.x, t.y, t.z])
     }
 
     /// Stop without processing: the scan is being thrown away.

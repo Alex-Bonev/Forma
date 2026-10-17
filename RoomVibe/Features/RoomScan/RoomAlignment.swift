@@ -1,6 +1,20 @@
 import simd
 
 extension RoomModel {
+    static let markedLabel = "marked item"
+
+    /// Boxes for points the user marked during the scan: 35 cm square, from the floor up to the tapped point.
+    static func markedItems(_ points: [SIMD3<Float>], walls: [Box]) -> [Box] {
+        guard !points.isEmpty else { return [] }
+        let floorY = walls.map { $0.columns[3].y - $0.dimensions.y / 2 }.min() ?? (points.map(\.y).min() ?? 0)
+        return points.map { p in
+            let h = max(p.y - floorY, 0.15)
+            var t = matrix_identity_float4x4
+            t.columns.3 = [p.x, floorY + h / 2, p.z, 1]
+            return Box(label: markedLabel, dimensions: [0.35, h, 0.35], transform: t)
+        }
+    }
+
     /// RoomPlan's world heading is wherever the phone faced when the scan started, so walls are rarely
     /// axis-aligned. Rotate the whole room about Y so the longest wall runs along X: then the axis-aligned
     /// bounds RoomBuilder computes (size label, floor, drag clamp, zoom) match the real room.

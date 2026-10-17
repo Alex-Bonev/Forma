@@ -188,6 +188,7 @@ enum RoomBuilder {
         case "bed": UIColor(red: 0.6, green: 0.7, blue: 0.6, alpha: 1)
         case "storage": UIColor(red: 0.78, green: 0.74, blue: 0.68, alpha: 1)
         case "television": UIColor(white: 0.2, alpha: 1)
+        case RoomModel.markedLabel: UIColor.systemOrange.withAlphaComponent(0.85)
         default: UIColor(white: 0.75, alpha: 1)
         }
     }

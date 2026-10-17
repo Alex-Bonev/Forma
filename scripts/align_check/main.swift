@@ -28,3 +28,8 @@ precondition(room.objects[0].attributes == ["SofaType.lShaped"], "attributes kep
 let fo = room.floorOutline!
 precondition(abs(fo.map(\.x).max()! - 2.5) < 1e-4 && abs(fo.map(\.z).max()! - 2) < 1e-4, "outline aligned \(fo)")
 print("align_check OK", size)
+
+// Marked items: floor-to-tap boxes (floor from wall bottoms).
+let marks = RoomModel.markedItems([[1, 0.8, 1]], walls: walls)
+precondition(marks.count == 1 && abs(marks[0].dimensions.y - 0.8) < 1e-5 && abs(marks[0].columns[3].y - 0.4) < 1e-5, "marked box \(marks)")
+print("marked items OK")
