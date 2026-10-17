@@ -11,22 +11,39 @@ struct ObjectScanView: View {
     @Environment(\.dismiss) private var dismiss
     // Created once on appear: a @State default would build a new ObjectCaptureSession on every parent re-render.
     @State private var model: ObjectScanModel?
+    @State private var confirmDiscard = false
+    @State private var saveError: String?
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let model {
                 ObjectScanContent(model: model) { object in
-                    try? store.addObject(object)
-                    dismiss()
+                    do {
+                        try store.addObject(object)
+                        dismiss()
+                    } catch {
+                        saveError = error.localizedDescription
+                    }
                 }
                 .sensoryFeedback(.success, trigger: model.phase == .done)
             }
         }
+        .environment(\.colorScheme, .dark)   // camera UI: legible chrome over any feed
         .overlay(alignment: .topLeading) {
-            Button(model?.phase == .done ? "Discard" : "Cancel") { model?.cancel(); dismiss() }
-                .buttonStyle(.bordered).tint(.white).padding()
+            ScanChromeButton(title: closeTitle) {
+                // Minutes of capture/reconstruction are at stake: confirm before throwing them away.
+                if isInvested { confirmDiscard = true } else { model?.cancel(); dismiss() }
+            }
+            .padding()
+            .environment(\.colorScheme, .dark)
         }
+        .confirmationDialog("Discard this scan?", isPresented: $confirmDiscard, titleVisibility: .visible) {
+            Button("Discard Scan", role: .destructive) { model?.cancel(); dismiss() }
+        }
+        .alert("Couldn't save", isPresented: .constant(saveError != nil)) {
+            Button("OK") { saveError = nil }
+        } message: { Text(saveError ?? "") }
         .onAppear {
             guard model == nil else { return }
             let m = ObjectScanModel()
@@ -35,6 +52,21 @@ struct ObjectScanView: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    private var isInvested: Bool {
+        switch model?.phase {
+        case .reconstructing, .done: true
+        default: false
+        }
+    }
+
+    private var closeTitle: String {
+        switch model?.phase {
+        case .done: "Discard"
+        case .failed: "Close"
+        default: "Cancel"
+        }
     }
 }
 
@@ -54,14 +86,13 @@ private struct ObjectScanContent: View {
             }
         case .reconstructing(let fraction, let remaining):
             VStack(spacing: 14) {
-                ProgressView(value: fraction).frame(maxWidth: 240).tint(.white)
+                ProgressView(value: fraction).frame(maxWidth: 240)
                 Text("Building 3D model… \(Int(fraction * 100))%")
                     .font(.headline).monospacedDigit()
                 Text(remaining.map { "About \(Duration.seconds($0).formatted(.units(allowed: [.minutes, .seconds], width: .wide, maximumUnitCount: 1))) left. Keep the app open." }
                      ?? "This takes a few minutes. Keep the app open.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            .foregroundStyle(.white)
             .padding()
         case .done:
             VStack(spacing: 20) {
@@ -93,7 +124,6 @@ private struct ObjectScanContent: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
             }
-            .foregroundStyle(.white)
             .quickLookPreview($previewURL)
         case .failed(let message):
             ContentUnavailableView {
@@ -105,7 +135,6 @@ private struct ObjectScanContent: View {
                     Button("Try Again") { model.retryReconstruction() }.buttonStyle(.borderedProminent)
                 }
             }
-            .foregroundStyle(.white)
         }
     }
 }
@@ -144,7 +173,13 @@ private struct CaptureOverlay: View {
                 passComplete
             } else {
                 VStack(spacing: 14) {
-                    if let instruction { Text(instruction).font(.footnote.weight(.medium)).multilineTextAlignment(.center) }
+                    if let instruction {
+                        Text(instruction)
+                            .font(.footnote.weight(.medium))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
                     actions
                 }
                 .padding(.horizontal, 24).padding(.bottom, 32)
@@ -178,11 +213,12 @@ private struct CaptureOverlay: View {
             }
         case .capturing:
             // Finishing before one full pass gives a poor model; still allowed for demos under time pressure.
-            Button("Finish Early") { session.finish() }
+            let short = Self.minShots - session.numberOfShotsTaken
+            Button(short > 0 ? "\(short) more photos to finish" : "Finish Early") { session.finish() }
                 .buttonStyle(.bordered).controlSize(.large)
-                .disabled(session.numberOfShotsTaken < Self.minShots)
+                .disabled(short > 0)
         case .initializing, .finishing:
-            ProgressView().tint(.white)
+            ProgressView()
         default:
             EmptyView()
         }
@@ -192,7 +228,9 @@ private struct CaptureOverlay: View {
     private var passComplete: some View {
         VStack(spacing: 12) {
             Text("Pass \(pass) complete").font(.headline)
-            Text("More passes from different heights improve detail. Flip the object to capture its bottom.")
+            Text(session.feedback.contains(.objectNotFlippable)
+                 ? "This object shouldn't be flipped. Another pass from a lower or higher angle adds detail."
+                 : "Another pass from a different height adds detail. Flip the object to capture its bottom.")
                 .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if pass < 3 {
                 HStack(spacing: 12) {
@@ -200,7 +238,7 @@ private struct CaptureOverlay: View {
                     if !session.feedback.contains(.objectNotFlippable) {
                         Button("Flip Object") { pass += 1; detectionFailed = false; session.beginNewScanPassAfterFlip() }
                     }
-                    Button("Scan Again") { pass += 1; session.beginNewScanPass() }
+                    Button("Another Pass") { pass += 1; session.beginNewScanPass() }
                 }
                 .buttonStyle(.bordered)
             }
@@ -227,7 +265,6 @@ private struct CaptureOverlay: View {
         if f.contains(.objectTooFar) { return "Move closer." }
         if f.contains(.outOfFieldOfView) { return "Keep the object in frame." }
         if f.contains(.objectNotDetected) { return "Can't find the object. Center it in the circle." }
-        if f.contains(.objectNotFlippable) { return "This object may not be flippable. Scan it again without flipping." }
         if f.contains(.overCapturing) { return "Enough photos here. Move to a new angle." }
         return nil
     }
@@ -248,6 +285,7 @@ final class ObjectScanModel {
     private var photogrammetry: PhotogrammetrySession?
     private var saved = false
     private var cancelled = false
+    private var reconstructionFailed = false   // only reconstruction errors are retryable
 
     private var dir: URL { ProjectStore.objectDir(id) }
     private var images: URL { dir.appending(path: "Images/") }
@@ -255,8 +293,8 @@ final class ObjectScanModel {
     var modelURL: URL { dir.appending(path: Self.modelName) }
 
     var canRetryReconstruction: Bool {
-        session == nil && photogrammetry == nil
-            && ((try? FileManager.default.contentsOfDirectory(atPath: images.path(percentEncoded: false)))?.isEmpty == false)
+        reconstructionFailed && session == nil && photogrammetry == nil
+            && FileManager.default.fileExists(atPath: images.path(percentEncoded: false))
     }
 
     func start() {
@@ -287,7 +325,7 @@ final class ObjectScanModel {
                     // Release the capture session (camera, GPU, memory) before reconstruction. This loop must
                     // end too, or its `session` reference keeps it alive.
                     self.session = nil
-                    Task { await self.reconstruct() }
+                    if cancelled { cleanUp() } else { Task { await self.reconstruct() } }
                     return
                 case .failed(let error):
                     self.session = nil
@@ -308,7 +346,9 @@ final class ObjectScanModel {
     }
 
     func retryReconstruction() {
-        Task { await reconstruct() }   // same checkpoint dir: PhotogrammetrySession resumes where it can
+        guard canRetryReconstruction else { return }
+        phase = .reconstructing(0, nil)   // synchronously, so a double tap can't start a second session
+        Task { await reconstruct() }      // same checkpoint dir: PhotogrammetrySession resumes where it can
     }
 
     func scannedObject(named name: String) -> ScannedObject {
@@ -322,7 +362,9 @@ final class ObjectScanModel {
     }
 
     private func reconstruct() async {
+        guard !cancelled else { return cleanUp() }
         phase = .reconstructing(0, nil)
+        reconstructionFailed = false
         defer { photogrammetry = nil }
         do {
             var config = PhotogrammetrySession.Configuration()
@@ -339,18 +381,19 @@ final class ObjectScanModel {
                 case .requestProgressInfo(_, let info):
                     if case .reconstructing(let f, _) = phase { phase = .reconstructing(f, info.estimatedRemainingTime) }
                 case .requestError(_, let error):
+                    reconstructionFailed = true
                     phase = .failed(error.localizedDescription)
                 case .processingCancelled:
                     cleanUp()
                     return
                 case .processingComplete:
-                    if case .reconstructing = phase { await finishModel() }
+                    if cancelled { cleanUp() } else if case .reconstructing = phase { await finishModel() }
                     return
                 default: break
                 }
             }
         } catch {
-            if cancelled { cleanUp() } else { phase = .failed(error.localizedDescription) }
+            if cancelled { cleanUp() } else { reconstructionFailed = true; phase = .failed(error.localizedDescription) }
         }
     }
 

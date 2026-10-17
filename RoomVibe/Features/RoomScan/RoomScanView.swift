@@ -6,9 +6,11 @@ struct RoomScanView: View {
     var onSaved: (Project) -> Void
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
-    // Created once on appear: a @State default would build a new RoomCaptureView on every parent re-render.
+    // Created on appear (and on "Scan Again"): a @State default would build a new RoomCaptureView
+    // on every parent re-render.
     @State private var scanner: RoomScanner?
     @State private var naming = false
+    @State private var confirmDiscard = false
     @State private var name = ""
     @State private var error: String?
 
@@ -16,59 +18,68 @@ struct RoomScanView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let scanner {
-                RoomCaptureRepresentable(view: scanner.view).ignoresSafeArea()
+                RoomCaptureRepresentable(view: scanner.view)
+                    .id(ObjectIdentifier(scanner))
+                    .ignoresSafeArea()
                 controls(scanner)
             }
         }
+        .environment(\.colorScheme, .dark)   // camera UI: legible chrome over any feed
         .onAppear {
-            guard scanner == nil else { return }
-            let s = RoomScanner()
-            scanner = s
-            s.start()
+            if scanner == nil { startScanner() }
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear {
             scanner?.cancel()
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .onChange(of: scanner?.error) { _, new in error = new }
+        .onChange(of: scanner?.error) { _, new in if let new { error = new } }
         .alert("Name this room", isPresented: $naming) {
             TextField("Living Room", text: $name)
             Button("Save") { DispatchQueue.main.async { save() } }
             Button("Cancel", role: .cancel) {}
         }
         .alert("Scan failed", isPresented: .constant(error != nil)) {
-            Button("OK") { dismiss() }
+            Button("Scan Again") { error = nil; startScanner() }
+            Button("Close", role: .cancel) { error = nil; dismiss() }
         } message: { Text(error ?? "") }
+        .confirmationDialog("Discard this scan?", isPresented: $confirmDiscard, titleVisibility: .visible) {
+            Button("Discard Scan", role: .destructive) { dismiss() }
+        }
+    }
+
+    private func startScanner() {
+        scanner?.cancel()
+        let s = RoomScanner()
+        scanner = s
+        s.start()
     }
 
     @ViewBuilder private func controls(_ scanner: RoomScanner) -> some View {
         VStack {
             HStack {
-                Button(scanner.result == nil ? "Cancel" : "Discard") { dismiss() }
+                ScanChromeButton(title: scanner.result == nil ? "Cancel" : "Discard") {
+                    if scanner.result == nil { dismiss() } else { confirmDiscard = true }
+                }
                 Spacer()
                 if scanner.phase == .scanning {
-                    Button("Done") { scanner.stop() }.bold()
+                    ScanChromeButton(title: "Done", prominent: true) { scanner.stop() }
                 }
             }
-            .buttonStyle(.bordered)
-            .tint(.white)
             .padding()
 
             Spacer()
 
             switch scanner.phase {
             case .scanning:
-                hint("Move slowly around the room. Point at every wall and piece of furniture.")
+                Text("Move slowly around the room. Point at every wall and piece of furniture.")
+                    .scanCaption()
             case .processing:
                 HStack(spacing: 10) {
-                    ProgressView().tint(.white)
+                    ProgressView()
                     Text("Building your room…")
                 }
-                .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(.bottom, 40)
+                .scanCaption()
             case .review:
                 Button { naming = true } label: {
                     Label("Save Room", systemImage: "checkmark").frame(maxWidth: .infinity)
@@ -82,27 +93,19 @@ struct RoomScanView: View {
         .animation(.spring(duration: 0.3, bounce: 0), value: scanner.phase)
     }
 
-    private func hint(_ text: String) -> some View {
-        Text(text)
-            .font(.footnote.weight(.medium))
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(.horizontal, 24).padding(.bottom, 40)
-    }
-
     private func save() {
         guard let room = scanner?.result else { return }
         let model = RoomModel(room).axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.
         guard !model.walls.isEmpty else {
-            error = "No walls were detected. Try scanning again and point at every wall."
+            error = "No walls were detected. Point at every wall while scanning."
             return
         }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let project = try store.addRoom(name: name.trimmingCharacters(in: .whitespaces).isEmpty ? "Room" : name,
-                                            model: model) { dir in
+            let project = try store.addRoom(name: trimmed.isEmpty ? "Room" : trimmed, model: model) { dir in
                 // Raw RoomPlan output kept for later (model substitution, sharing, QuickLook).
+                // Note: these are in RoomPlan's original frame; room.json is rotated by axisAligned().
                 try JSONEncoder().encode(room).write(to: dir.appending(path: "captured.json"))
                 try? room.export(to: dir.appending(path: "room.usdz"))
             }
@@ -111,6 +114,37 @@ struct RoomScanView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+// MARK: Shared camera-screen chrome (room + object scan)
+
+/// Text button on a material capsule: readable over bright walls and dark rooms alike.
+struct ScanChromeButton: View {
+    let title: String
+    var prominent = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.body.weight(prominent ? .semibold : .regular))
+                .padding(.horizontal, 16).padding(.vertical, 9)
+                .background(.ultraThinMaterial, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension View {
+    /// Instruction / status text floating over the camera feed.
+    func scanCaption() -> some View {
+        font(.footnote.weight(.medium))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.horizontal, 24).padding(.bottom, 32)
     }
 }
 

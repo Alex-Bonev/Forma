@@ -18,8 +18,8 @@ for b in room.walls {
     for p in [c + x, c - x] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
 }
 let size = SIMD2(hi.x - lo.x, hi.z - lo.z)
-assert(abs(size.x - 5) < 1e-3 && abs(size.y - 4) < 1e-3, "footprint \(size)")
+precondition(abs(size.x - 5) < 1e-3 && abs(size.y - 4) < 1e-3, "footprint \(size)")
 let s = room.objects[0].columns
-assert(abs(s[0].z) < 1e-4 && abs(s[3].x - 1) < 1e-4 && abs(s[3].z) < 1e-4, "sofa \(s)")
-assert(abs(room.walls[0].columns[3].y - 1.25) < 1e-5, "height kept")
+precondition(abs(s[0].z) < 1e-4 && abs(s[3].x - 1) < 1e-4 && abs(s[3].z) < 1e-4, "sofa \(s)")
+precondition(abs(room.walls[0].columns[3].y - 1.25) < 1e-5, "height kept")
 print("align_check OK", size)
