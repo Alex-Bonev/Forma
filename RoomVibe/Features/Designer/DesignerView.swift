@@ -10,8 +10,16 @@ struct DesignerView: View {
     @State private var roomSize: SIMD2<Float> = .zero
     @State private var placed: [UUID: Entity] = [:]   // placement id -> entity
     @State private var selected: UUID?
-    @State private var dragOffset: SIMD3<Float>?
+    @State private var camera = PerspectiveCamera()
+    @State private var orbit = Orbit()
+    @State private var viewSize: CGSize = .zero
+    @State private var dragMode: DragMode?
+    @State private var zoomStart: Float?
+    @State private var twistStart: simd_quatf?
     @State private var lowWalls = false
+
+    struct Orbit { var azimuth: Float = 0.55; var elevation: Float = 0.85; var distance: Float = 8 }
+    enum DragMode { case orbit(Orbit), move(UUID, SIMD3<Float>) }
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
 
@@ -43,17 +51,15 @@ struct DesignerView: View {
             sun.shadow = DirectionalLightComponent.Shadow()
             sun.look(at: .zero, from: [2, 5, 3], relativeTo: nil)
             scene.addChild(sun)
+            scene.addChild(camera)
             content.add(scene)
             rebuildRoom(room)
-            // 3/4 overhead "dollhouse" start; orbit controls take over from here.
-            let camera = PerspectiveCamera()
-            let d = max(roomSize.x, roomSize.y) * 1.6 + 1.5
-            camera.look(at: .zero, from: [d * 0.5, d, d * 0.8], relativeTo: nil)
-            scene.addChild(camera)
-            content.cameraTarget = scene
+            orbit.distance = zoomRange.lowerBound * 1.8
+            updateCamera()
             for p in project.placements { await spawn(p) }
         }
-        .realityViewCameraControls(.orbit)
+        .ignoresSafeArea(edges: .bottom)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
         .overlay(alignment: .topLeading) {
             Text(String(format: "%.1f × %.1f m", roomSize.x, roomSize.y))
                 .font(.footnote.weight(.semibold)).monospacedDigit()
@@ -62,30 +68,115 @@ struct DesignerView: View {
                 .padding()
         }
         .gesture(dragGesture)
-        .simultaneousGesture(SpatialTapGesture().targetedToAnyEntity().onEnded { v in
-            selected = placementID(of: v.entity)
-        })
-        .ignoresSafeArea(edges: .bottom)
+        .simultaneousGesture(pinchGesture)
+        .simultaneousGesture(twistGesture)
+        .simultaneousGesture(SpatialTapGesture().onEnded { v in selected = hitPlacement(at: v.location) })
     }
 
-    // Drag on a placed object: slide it along the floor, keeping the grab offset.
+    // MARK: Gestures
+    // Own orbit camera instead of .realityViewCameraControls: the built-in controls swallow every
+    // touch (objects could not be dragged) and let you zoom through the walls.
+
+    /// One finger: starts on an object -> slide it on the floor (keeping the grab offset); else orbit.
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 4).targetedToAnyEntity()
+        DragGesture(minimumDistance: 2)
             .onChanged { v in
-                guard let id = placementID(of: v.entity), let e = placed[id],
-                      // Floor plane = identity transform (y-up normal at y = 0).
-                      // VERIFY: unproject treats planeTransform's Y axis as the normal, as ARView does.
-                      let hit = v.unproject(v.location, from: .local, to: .scene, ontoPlane: matrix_identity_float4x4)
-                else { return }
-                selected = id
-                let point = SIMD3(hit.x, 0, hit.z)
-                if dragOffset == nil { dragOffset = e.position - point }
-                e.position = clamp(point + (dragOffset ?? .zero))
+                if dragMode == nil {
+                    if let id = hitPlacement(at: v.startLocation), let e = placed[id],
+                       let start = floorPoint(at: v.startLocation) {
+                        dragMode = .move(id, e.position - start)
+                        selected = id
+                    } else {
+                        dragMode = .orbit(orbit)
+                    }
+                }
+                switch dragMode {
+                case .move(let id, let offset):
+                    if let p = floorPoint(at: v.location) { placed[id]?.position = clamp(p + offset) }
+                case .orbit(let start):
+                    orbit.azimuth = start.azimuth - Float(v.translation.width) * 0.008
+                    orbit.elevation = min(max(start.elevation + Float(v.translation.height) * 0.005, 0.25), 1.5)
+                    updateCamera()
+                case nil: break
+                }
             }
             .onEnded { _ in
-                dragOffset = nil
-                commit()
+                if case .move = dragMode { commit() }
+                dragMode = nil
             }
+    }
+
+    private var pinchGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { v in
+                if zoomStart == nil { zoomStart = orbit.distance }
+                let d = zoomStart! / Float(v.magnification)
+                orbit.distance = min(max(d, zoomRange.lowerBound), zoomRange.upperBound)
+                updateCamera()
+            }
+            .onEnded { _ in zoomStart = nil }
+    }
+
+    /// Two-finger twist rotates the selected object around Y.
+    private var twistGesture: some Gesture {
+        RotateGesture()
+            .onChanged { v in
+                guard let selected, let e = placed[selected] else { return }
+                if twistStart == nil { twistStart = e.orientation }
+                e.orientation = simd_quatf(angle: -Float(v.rotation.radians), axis: [0, 1, 0]) * twistStart!
+            }
+            .onEnded { _ in
+                if twistStart != nil { commit() }
+                twistStart = nil
+            }
+    }
+
+    // MARK: Camera math
+
+    /// Never closer than the room needs to stay in view, never so far it becomes a speck.
+    private var zoomRange: ClosedRange<Float> {
+        let size = max(roomSize.x, roomSize.y, 2)
+        return (size * 0.6 + 1)...(size * 3 + 3)
+    }
+
+    private func updateCamera() {
+        let o = orbit
+        let dir = SIMD3(cos(o.elevation) * sin(o.azimuth), sin(o.elevation), cos(o.elevation) * cos(o.azimuth))
+        camera.look(at: .zero, from: dir * o.distance, relativeTo: nil)
+    }
+
+    /// World-space ray through a view point, from the camera's pose and vertical field of view.
+    private func ray(at point: CGPoint) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
+        let w = Float(viewSize.width), h = Float(max(viewSize.height, 1))
+        let t = tan(camera.camera.fieldOfViewInDegrees * .pi / 360)
+        let local = normalize(SIMD3((2 * Float(point.x) / w - 1) * t * w / h, (1 - 2 * Float(point.y) / h) * t, -1))
+        return (camera.position(relativeTo: nil), camera.orientation(relativeTo: nil).act(local))
+    }
+
+    private func floorPoint(at point: CGPoint) -> SIMD3<Float>? {
+        let (o, d) = ray(at: point)
+        guard d.y < -0.01 else { return nil }
+        let p = o + d * (-o.y / d.y)
+        return [p.x, 0, p.z]
+    }
+
+    /// Nearest placed object whose (padded) bounding box the ray passes through.
+    private func hitPlacement(at point: CGPoint) -> UUID? {
+        let (o, d) = ray(at: point)
+        var best: (id: UUID, t: Float)?
+        for (id, e) in placed {
+            let b = e.visualBounds(relativeTo: e)
+            let lo = b.min - 0.1, hi = b.max + 0.1   // fat-finger padding
+            let ro = e.convert(position: o, from: nil), rd = e.convert(direction: d, from: nil)
+            var tmin: Float = 0, tmax = Float.greatestFiniteMagnitude
+            for i in 0..<3 {
+                var t0 = (lo[i] - ro[i]) / rd[i], t1 = (hi[i] - ro[i]) / rd[i]
+                if t0 > t1 { swap(&t0, &t1) }
+                tmin = max(tmin, t0); tmax = min(tmax, t1)
+            }
+            if tmin <= tmax, tmin < best?.t ?? .greatestFiniteMagnitude { best = (id, tmin) }
+        }
+        return best?.id
     }
 
     @ViewBuilder private func bottomPanel(_ project: Project) -> some View {
@@ -180,15 +271,6 @@ struct DesignerView: View {
             project.placements[i].yRotation = q.angle * (q.axis.y < 0 ? -1 : 1)
         }
         store.update(project)
-    }
-
-    private func placementID(of entity: Entity) -> UUID? {
-        var e: Entity? = entity
-        while let cur = e {
-            if let id = UUID(uuidString: cur.name), placed[id] != nil { return id }
-            e = cur.parent
-        }
-        return nil
     }
 
     // ponytail: clamps to the room's bounding rectangle, not the actual wall polygon (L-shaped rooms leak).

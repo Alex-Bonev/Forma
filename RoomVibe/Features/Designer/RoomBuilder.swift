@@ -100,7 +100,7 @@ enum RoomBuilder {
         return chair
     }
 
-    /// Placed object: model sits on y = 0, centered, with a collision box so gestures hit it.
+    /// Placed object: model sits on y = 0, centered. Hit testing is done by DesignerView's own ray math.
     static func placedEntity(for object: ScannedObject, url: URL?) async -> Entity {
         var model: Entity = demoChair()
         if let url, let loaded = try? await Entity(contentsOf: url) { model = loaded }
@@ -108,8 +108,6 @@ enum RoomBuilder {
         model.position -= [b.center.x, b.min.y, b.center.z]
         let container = Entity()
         container.addChild(model)
-        container.components.set(CollisionComponent(shapes: [.generateBox(size: b.extents).offsetBy(translation: [0, b.extents.y / 2, 0])]))
-        container.components.set(InputTargetComponent())
         return container
     }
 }
