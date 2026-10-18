@@ -93,12 +93,20 @@ RENDER_RULES = (
     "of the floor, stays plain background: never extend the room or add rooms, halls or doors there. Keep the wall and floor finishes described below. Remove all text "
     "labels. No people, no text, no watermark."
 )
+# Vibe mode restyles on purpose (style words and/or an inspiration image): the faithful rules would fight it.
+RESTYLE_RULES = (
+    "Keep the room shape and every wall, window and door exactly where it is. Furniture in image 1 is a "
+    "simplified stand-in: keep each piece's type, footprint, height, position and facing, restyled to the style "
+    "below. Keep empty floor mostly empty; small decor that fits the style is fine. Remove all text labels. "
+    "No people, no text, no watermark."
+)
 MAX_PHOTOS = 3
 MAX_LAYOUT = 2000
 
 
 def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_style_ref: bool, photos: int = 0) -> str:
-    parts = [RENDER_VIEWS[view], RENDER_RULES]
+    restyle = bool(style) or has_style_ref
+    parts = [RENDER_VIEWS[view], RESTYLE_RULES if restyle else RENDER_RULES]
     if layout:
         parts.append(f"Room layout, from the room scan: {layout[:MAX_LAYOUT]}")
     n = 2

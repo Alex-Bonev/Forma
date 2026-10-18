@@ -34,6 +34,10 @@ Renders were more elaborate than the real room. Causes:
     - Add nothing that isn't in image 1.
     - Ignore clutter and people in the photos.
 
+- **Vibe mode** (style words and/or `style_ref`) uses `RESTYLE_RULES` instead: same layout, restyled looks.
+  Faithful rules apply only to a plain Make it real.
+- Shopped products (`Placement.product`, from Vibe) are named by their listing title in the layout.
+
 ## Checks
 
 - `backend/test_main.py::test_render_scan_photos`: image numbering, the 3-photo cap and the rules text.

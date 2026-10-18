@@ -15,7 +15,8 @@ enum RenderInputs {
         for p in project.placements {
             let base: (name: String, size: SIMD3<Float>)
             if let item = CatalogItem.item(p.catalogItem) {
-                base = (item.name.lowercased(), item.size)
+                // A shopped product (Vibe) is named by its listing so the model can match the real piece.
+                base = (p.product.map { "\($0.title) (\(item.name.lowercased()))" } ?? item.name.lowercased(), item.size)
                 standIns.insert(p.id)
             } else if let o = objects.first(where: { $0.id == p.objectID }) {
                 base = (o.name, o.boundingBox)

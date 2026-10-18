@@ -99,6 +99,8 @@ def test_render_scan_photos(monkeypatch):
     text = sent["input"][0]["text"]
     assert "Images 3 to 5 are real photos" in text and "Add nothing that is not in image 1" in text
     assert len(sent["input"]) == 1 + 2 + 3  # prompt, snapshot + map, photos capped at 3
+    assert "Be faithful" not in main.render_prompt("cutaway", "", "japandi", False, False)  # vibe restyle
+    assert "Be faithful" not in main.render_prompt("cutaway", "", "", False, True)
     one = main.render_prompt("cutaway", "", "", False, False, 1)
     assert "Image 2 is a real photo" in one
 
