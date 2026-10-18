@@ -190,8 +190,10 @@ final class APIClient {
 
     /// `layout`: LayoutDescription text. `view`: "cutaway" (dollhouse angle) or "interior" (low camera).
     /// `structure`: optional flat-color map of the same view, sent as PNG so its colors stay exact.
+    /// `products`: shopped products' photos with their listing names, product 1 first (the backend numbers them).
     func render(_ image: UIImage, prompt: String = "", layout: String = "", view: String = "cutaway",
-                structure: UIImage? = nil, styleRef: UIImage? = nil, photos: [UIImage] = []) async throws -> UIImage {
+                structure: UIImage? = nil, styleRef: UIImage? = nil,
+                products: [(name: String, image: UIImage)] = []) async throws -> UIImage {
         struct Rendered: Decodable { var imageBase64: String }
         var form = Multipart()
         try form.addImage("image", image)
@@ -200,7 +202,10 @@ final class APIClient {
         form.addField("view", view)
         if let structure { try form.addImage("structure", structure, png: true) }
         if let styleRef { try form.addImage("style_ref", styleRef) }
-        for p in photos { try form.addImage("photos", p) }   // real scan photos: ground truth for the room's look
+        for p in products {   // same order for both fields: the backend pairs them by position
+            try form.addImage("products", p.image)
+            form.addField("product_names", p.name)
+        }
         let out = try await send(form.request(request("render")), as: Rendered.self)
         guard let data = Data(base64Encoded: out.imageBase64), let result = UIImage(data: data) else {
             throw APIError.badResponse
@@ -353,7 +358,12 @@ extension UIImage {
         format.scale = 1
         format.opaque = true
         return UIGraphicsImageRenderer(size: target, format: format)
-            .image { _ in draw(in: CGRect(origin: .zero, size: target)) }
+            .image { ctx in
+                // White under transparent pixels (product PNGs); an opaque renderer would leave them black.
+                UIColor.white.setFill()
+                ctx.fill(CGRect(origin: .zero, size: target))
+                draw(in: CGRect(origin: .zero, size: target))
+            }
             .jpegData(compressionQuality: quality)
     }
 }

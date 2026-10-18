@@ -105,6 +105,40 @@ def test_render_scan_photos(monkeypatch):
     assert "Image 2 is a real photo" in one
 
 
+def test_render_product_photos(monkeypatch):
+    sent = {}
+
+    async def create(**kw):
+        sent.update(kw)
+        return type("I", (), {"output_image": type("O", (), {"data": "out"})()})()
+
+    fake_provider(monkeypatch, None)
+    fake_gemini(monkeypatch, create)
+    files = [("image", ("a.jpg", jpeg())), ("structure", ("s.png", jpeg(), "image/png"))]
+    files += [("photos", (f"p{i}.jpg", jpeg(300, 200), "image/jpeg")) for i in range(2)]
+    files += [("products", (f"q{i}.jpg", jpeg(200, 200), "image/jpeg")) for i in range(6)]
+    names = {"product_names": ["Oak Lounge Chair", " Paper\n Lamp "]}   # fewer names than photos
+    r = c.post("/render", headers=H, files=files, data=names)
+    assert r.status_code == 200
+    text = sent["input"][0]["text"]
+    assert len(sent["input"]) == 1 + 2 + 2 + 3  # prompt, snapshot + map, 2 scan photos, products capped at 3
+    assert "Images 5 to 7 are product photos" in text
+    assert "Image 5 is product 1 (Oak Lounge Chair)." in text and "Image 6 is product 2 (Paper Lamp)." in text
+    assert "Image 7 is product 3 (a shopped product)." in text
+    assert "its color in the structure map" in text and "except the numbered products" in text
+    plain = main.render_prompt("cutaway", "", "", True, False, 3)
+    assert "is product 1" not in plain and "except the numbered" not in plain  # no product images, no list
+    restyle = main.render_prompt("cutaway", "", "japandi", False, True, 0, ["Sofa"])
+    assert "Image 3 is a product photo" in restyle and "Image 3 is product 1 (Sofa)." in restyle
+    assert "structure map" not in restyle
+
+
+def test_render_products_count_toward_upload_cap():
+    half = b"x" * (main.MAX_UPLOAD // 2 + 1)
+    r = c.post("/render", headers=H, files=[("image", ("a.jpg", half)), ("products", ("q.jpg", half))])
+    assert r.status_code == 413
+
+
 def test_render_combined_upload_cap():
     half = b"x" * (main.MAX_UPLOAD // 2 + 1)
     r = c.post("/render", headers=H, files={"image": ("a.jpg", half), "structure": ("s.png", half)})

@@ -15,12 +15,7 @@ struct RenderView: View {
 
     /// `camera`: the Designer camera at capture time. With it, a structure map of the same view is sent too,
     /// and a low camera starts in Photo mode.
-    /// `fresh`: generate from this snapshot now; false opens the room's last render (and generates only if there is none).
-    private let fresh: Bool
-
-    init(snapshot: UIImage, projectID: UUID? = nil, camera: RenderCamera? = nil, prompt: String = "", styleRef: UIImage? = nil,
-         fresh: Bool = true) {
-        self.fresh = fresh
+    init(snapshot: UIImage, projectID: UUID? = nil, camera: RenderCamera? = nil, prompt: String = "", styleRef: UIImage? = nil) {
         _model = State(initialValue: RenderModel(snapshot: snapshot, projectID: projectID, camera: camera, prompt: prompt,
                                                  styleRef: styleRef))
     }
@@ -96,8 +91,8 @@ struct RenderView: View {
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
                 model.setRoom(project: project, room: room, objects: store.objects)
             }
-            // The room's last render opens instantly; "Render again" (toolbar) makes a new one.
-            if fresh || !model.showSaved() { model.start() }
+            // The room's last render shows right away; ↻ (toolbar) renders this view again.
+            if !model.showSaved() { model.start() }
         }
         .onDisappear { model.cancel() }
         .sensoryFeedback(trigger: model.result != nil) { _, done in done ? .success : nil }
@@ -123,7 +118,8 @@ struct RenderView: View {
                             .buttonStyle(PillButtonStyle(filled: false))
                             .frame(maxWidth: 200)
                     } else if let at = model.savedAt {
-                        Text("Last render · \(at.formatted(.relative(presentation: .named)))").font(.forma(11)).foregroundStyle(Theme.muted)
+                        Text("Last render · \(at.formatted(.relative(presentation: .named))) · ↻ to redo")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
                     } else {
                         Text("Drag the divider to compare").font(.forma(11)).foregroundStyle(Theme.muted)
                     }
@@ -194,17 +190,33 @@ final class RenderModel {
     /// LayoutDescription of the room, filled in by RenderView before the first run.
     private(set) var layout = ""
     private var room: (model: RoomModel, placements: [Placement], objects: [ScannedObject])?
+    private var standIns: Set<UUID> = []
+    private var finishes = ""
+    /// Shopped placements in the room (RenderInputs.scene); the first 3 with a photo become product 1, 2, 3.
+    private var shopped: [(id: UUID, product: ShopProduct)] = []
+    /// The numbered products. Fixed on the first run (after any downloads), like `structure`: the layout, the
+    /// map and the upload must agree on what product N is, so a photo that arrives later isn't added.
+    private var products: [(id: UUID, name: String, image: UIImage)]?
     /// Computed once on the first run; the same for both view modes.
     private var structure: StructureMap.Output?
     var view = View.cutaway
     private(set) var phase: Phase = .loading
-    /// Snapshot the shown saved render was made from (offline fallback or reopened last render), else nil.
+    /// Snapshot the shown saved render was made from (reopened last render or offline fallback), else nil.
     private(set) var savedBefore: UIImage?
     /// When the shown saved render was made; nil once a fresh one is shown.
     private(set) var savedAt: Date?
     /// Called after the render cache is written or pruned: those files live in the room's folder, outside the
     /// store, so sync would otherwise not see them until the next unrelated change. Set by RenderView.
     @ObservationIgnored var onFilesChanged: (() -> Void)?
+
+    /// Shows the room's last render, if any. Returns false when there is none.
+    func showSaved() -> Bool {
+        guard let cacheURL, let data = try? Data(contentsOf: cacheURL), let image = UIImage(data: data) else { return false }
+        savedBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
+        savedAt = (try? FileManager.default.attributesOfItem(atPath: cacheURL.path(percentEncoded: false)))?[.modificationDate] as? Date
+        phase = .done(image, isStale: false)
+        return true
+    }
 
     init(snapshot: UIImage, projectID: UUID?, camera: RenderCamera? = nil, prompt: String, styleRef: UIImage?) {
         self.snapshot = snapshot.croppedToRenderAspect()
@@ -216,18 +228,40 @@ final class RenderModel {
         self.styleRef = styleRef
     }
 
-    /// Describes the room as the Designer shows it (RenderInputs.scene) and picks scan photos as ground truth.
+    /// Describes the room as the Designer shows it (RenderInputs.scene).
     func setRoom(project: Project, room: RoomModel, objects: [ScannedObject]) {
         let s = RenderInputs.scene(project: project, room: room, objects: objects)
         self.room = (s.room, s.placements, s.objects)
-        layout = LayoutDescription.text(room: s.room, placements: s.placements, objects: s.objects,
-                                        finishes: RenderInputs.finishes(project), standIns: s.standIns)
-        // Opt-in: photos make looks truer but tempt the model to copy furniture the 3D model doesn't have.
-        photos = UserDefaults.standard.bool(forKey: RenderInputs.usePhotosKey) ? RenderInputs.photos(projectID: project.id) : []
+        standIns = s.standIns
+        finishes = RenderInputs.finishes(project)
+        shopped = s.shopped
+        products = nil
+        structure = nil   // drawn with the product colors
+        layout = describe(products: [])
     }
 
-    /// Real photos of the room from the scan (≤ 3), sent so the render matches how the room really looks.
-    private(set) var photos: [UIImage] = []
+    private func describe(products: [UUID]) -> String {
+        guard let room else { return "" }
+        return LayoutDescription.text(room: room.model, placements: room.placements, objects: room.objects,
+                                      finishes: finishes, standIns: standIns, products: products)
+    }
+
+    /// Product photos (ProductPhotos), fetching missing ones in parallel (≤ ~10 s), then numbers the first 3 that
+    /// loaded; the layout is rebuilt with those numbers.
+    private func loadProducts() async {
+        guard products == nil, let projectID else { return }
+        let shopped = shopped
+        await withTaskGroup(of: Void.self) { group in
+            for s in shopped { group.addTask { await ProductPhotos.cache(s.product, placement: s.id, project: projectID) } }
+        }
+        guard !Task.isCancelled else { return }
+        let loaded = shopped.compactMap { s in
+            ProductPhotos.load(placement: s.id, project: projectID).map { (s.id, String(s.product.title.prefix(60)), $0) }
+        }
+        products = Array(loaded.prefix(StructureMap.Kind.products.count))
+        layout = describe(products: products?.map(\.id) ?? [])
+    }
+
 
     var isLoading: Bool { if case .loading = phase { true } else { false } }
 
@@ -249,14 +283,6 @@ final class RenderModel {
         return ProjectStore.projectDir(projectID).appending(path: "render-latest.jpg")
     }
 
-    /// Shows the saved render, if any. Returns false when there is none.
-    func showSaved() -> Bool {
-        guard let cacheURL, let data = try? Data(contentsOf: cacheURL), let image = UIImage(data: data) else { return false }
-        savedBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
-        savedAt = (try? FileManager.default.attributesOfItem(atPath: cacheURL.path(percentEncoded: false)))?[.modificationDate] as? Date
-        phase = .done(image, isStale: false)
-        return true
-    }
 
     private var beforeURL: URL? { cacheURL?.deletingPathExtension().appendingPathExtension("before.jpg") }
 
@@ -283,10 +309,14 @@ final class RenderModel {
         let view = view, cacheURL = cacheURL, beforeURL = beforeURL
         phase = .loading
         do {
+            await loadProducts()   // before the structure map: it colors the products the layout numbers
+            try Task.checkCancellation()
+            let products = products ?? []
             if structure == nil, let camera, let room {
                 // ~0.1–2.5 s of ray casting; keep it off the main actor.
                 let job = Task.detached(priority: .userInitiated) {
-                    StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera)
+                    StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera,
+                                        products: products.map(\.id))
                 }
                 structure = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
             }
@@ -294,7 +324,7 @@ final class RenderModel {
             let fullLayout = [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
             let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: fullLayout, view: view.rawValue,
                                                         structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef,
-                                                        photos: photos)
+                                                        products: products.map { ($0.name, $0.image) })
             if let cacheURL, let beforeURL {
                 let dir = cacheURL.deletingLastPathComponent()
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

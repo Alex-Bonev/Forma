@@ -55,8 +55,7 @@ struct HomeView: View {
                     RoomDetailView(projectID: id, added: added).navigationTransition(.zoom(sourceID: id, in: zoom))
                 case .object(let id, let picks):
                     ObjectDetailView(objectID: id, picks: picks).navigationTransition(.zoom(sourceID: id, in: zoom))
-                case .designer(let id, let opensCatalog, let framing):
-                    DesignerView(projectID: id, opensCatalog: opensCatalog, opensFraming: framing)
+                case .designer(let id, let opensCatalog): DesignerView(projectID: id, opensCatalog: opensCatalog)
                 case .newVibe(let applyTo): CreateVibeView(applyTo: applyTo)
                 case .vibe(let id): VibeDetailView(vibeID: id)
                 } }
