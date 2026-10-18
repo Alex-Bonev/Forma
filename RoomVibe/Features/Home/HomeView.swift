@@ -86,8 +86,7 @@ struct HomeView: View {
 
     private var header: some View {
         HStack {
-            Text("forma").font(.forma(24, bold: true, relativeTo: .largeTitle)).tracking(-0.7)
-                .foregroundStyle(Theme.ink)
+            HStack(spacing: 10) { Logo(size: 22); Wordmark(size: 24) }
             Spacer()
             Menu {
                 Button("Load Demo Data", systemImage: "shippingbox") {

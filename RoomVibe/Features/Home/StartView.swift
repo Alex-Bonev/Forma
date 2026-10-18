@@ -9,8 +9,7 @@ struct StartView: View {
         VStack(spacing: 0) {
             Spacer()
             Logo(size: 112)
-            Text("forma").font(.forma(56, bold: true, relativeTo: .largeTitle)).tracking(14)
-                .foregroundStyle(Theme.ink).padding(.top, 40).padding(.leading, 14)
+            Wordmark(size: 56).padding(.top, 40)
             Text("Scan a room. Scan an object.\nSee if it fits.")
                 .font(.forma(14)).multilineTextAlignment(.center).foregroundStyle(Theme.ink)
                 .lineSpacing(6).padding(.top, 28)

@@ -56,17 +56,43 @@ struct DesignerView: View {
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
 
+    /// Designer snapshot handed to the photoreal render sheet.
+    private struct RenderShot: Identifiable {
+        let id = UUID()
+        let image: UIImage
+        let camera: RenderCamera
+    }
+    @State private var renderShot: RenderShot?
+
+    /// Capture before presenting: the snapshot and the camera must describe the same frame.
+    private func makeItReal() {
+        guard let image = captureDesignerSnapshot() else { return }
+        let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
+                               verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
+                               viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
+        renderShot = RenderShot(image: image, camera: cam)
+    }
+
     var body: some View {
+        stack.sheet(item: $renderShot) { shot in
+            RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera)
+        }
+    }
+
+    @ViewBuilder private var stack: some View {
         if let project, let room = store.room(for: project), style == .card {
             realityView(project: project, room: room)
                 .overlay(alignment: .topTrailing) {
-                    Button { onExpand?() } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
-                            .frame(width: 44, height: 44)
-                            .background(Theme.ground.opacity(0.85), in: Circle())
+                    HStack(spacing: 8) {
+                        MakeItRealButton(action: makeItReal)
+                        Button { onExpand?() } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+                                .frame(width: 44, height: 44)
+                                .background(Theme.ground.opacity(0.85), in: Circle())
+                        }
+                        .accessibilityLabel("Fullscreen")
                     }
-                    .accessibilityLabel("Fullscreen")
                     .padding(12)
                 }
                 .overlay(alignment: .bottom) { HintPill("Drag to orbit · Pinch to zoom").padding(.bottom, 12) }
@@ -93,6 +119,11 @@ struct DesignerView: View {
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
                 }
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
+                .overlay(alignment: .topLeading) {
+                    // Under the back button (Paper E); icon-only while the Objects panel is open (E2/E3).
+                    MakeItRealButton(compact: showObjects, action: makeItReal)
+                        .padding(.leading, 16).padding(.top, 8 + 44 + 12)
+                }
                 .overlay(alignment: .trailing) {
                     if showObjects { objectsPanel(project).transition(.move(edge: .trailing).combined(with: .opacity)) }
                 }

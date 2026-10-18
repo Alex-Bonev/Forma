@@ -9,6 +9,8 @@ enum Theme {
     static let hairline = Color(hex: 0xE9DFD2)
     static let sage = Color(hex: 0x8A9577)
     static let onSage = Color(hex: 0xFBF8F3)   // text/icons on sage: never dark
+    static let sageDeep = Color(hex: 0x6F7F62)   // sparkle on the Make it real pill
+    static let sand = Color(hex: 0xEFE6DA)       // Make it real pill fill
     static let wood = Color(hex: 0x4A3828)
     static let tiles = [Color(hex: 0xDADCCF), Color(hex: 0xE6DCCF), Color(hex: 0xE9DFD2)]
 
