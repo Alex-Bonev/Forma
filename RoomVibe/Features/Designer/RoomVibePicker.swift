@@ -22,21 +22,34 @@ struct RoomVibeControl<Leading: View>: View {
     private var applied: SavedVibe? { project?.vibeID.flatMap(library.vibe) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                leading
-                pill
-            }
-            .overlay(alignment: .bottomLeading) {
-                // Floats above the pill without widening the row it sits in.
-                if opensUp && showMenu {
-                    menu.fixedSize().offset(y: -52)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomLeading)))
-                }
-            }
-            if !opensUp && showMenu { menu.transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading))) }
+        HStack(spacing: 8) {
+            leading
+            pill
         }
-        .animation(.spring(duration: 0.25, bounce: 0), value: showMenu)
+        // A huge clear scrim behind the pill: tap outside only closes, the layout never moves.
+        .background {
+            if showMenu {
+                Color.black.opacity(0.001).frame(width: 4000, height: 4000)
+                    .onTapGesture { showMenu = false }
+            }
+        }
+        .overlay(alignment: opensUp ? .bottomLeading : .topLeading) {
+            if showMenu {
+                VibeDropdownMenu(
+                    header: "VIBE FOR \((project?.name ?? "ROOM").uppercased())",
+                    selected: applied?.id,
+                    clearTitle: applied != nil ? "Remove vibe from room" : nil,
+                    onSelect: { apply($0); showMenu = false },
+                    onClear: { apply(nil); showMenu = false },
+                    onNew: { showMenu = false; newVibe() }
+                )
+                .frame(width: 280)
+                .offset(y: opensUp ? -52 : 52)
+                .transition(.scale(scale: 0.96, anchor: opensUp ? .bottomLeading : .topLeading).combined(with: .opacity))
+            }
+        }
+        .zIndex(showMenu ? 1 : 0)
+        .animation(.spring(duration: 0.28, bounce: 0.12), value: showMenu)
         .onChange(of: compact) { showMenu = false }
     }
 
@@ -49,8 +62,7 @@ struct RoomVibeControl<Leading: View>: View {
                     SwatchDots(colors: Array(applied.colors.prefix(3)), size: 12)
                     if !compact {
                         Text(applied.name).font(.forma(12, bold: true)).foregroundStyle(ink).lineLimit(1)
-                        Image(systemName: showMenu != opensUp ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .bold)).foregroundStyle(ink)
+                        chevron
                     }
                 } else {
                     Image(systemName: "swatchpalette").font(.system(size: compact ? 18 : 15, weight: .semibold))
@@ -58,8 +70,7 @@ struct RoomVibeControl<Leading: View>: View {
                     if !compact {
                         Text("Vibe").font(.forma(12, bold: true)).foregroundStyle(ink)
                         if !library.vibes.isEmpty {
-                            Image(systemName: showMenu != opensUp ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 11, weight: .bold)).foregroundStyle(ink)
+                            chevron
                         }
                     }
                 }
@@ -74,42 +85,9 @@ struct RoomVibeControl<Leading: View>: View {
         .accessibilityIdentifier("roomVibe")
     }
 
-    private var menu: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(library.vibes) { vibe in
-                Button { apply(vibe.id); showMenu = false } label: {
-                    VibeRow(vibe: vibe, tile: 36).overlay(alignment: .trailing) {
-                        if vibe.id == applied?.id { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.muted) }
-                    }
-                    .padding(8)
-                    .background(vibe.id == applied?.id ? Theme.sand : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("vibeOption")
-            }
-            Theme.hairline.frame(height: 1).padding(.vertical, 4)
-            Button { showMenu = false; newVibe() } label: {
-                menuRow("plus", "New vibe", bold: true)
-            }
-            .accessibilityIdentifier("newRoomVibe")
-            if applied != nil {
-                Button { apply(nil); showMenu = false } label: { menuRow("xmark", "Remove", bold: false) }
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(10)
-        .frame(width: 280)
-        .background(Theme.ground, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.15), radius: 16, y: 6)
-    }
-
-    private func menuRow(_ icon: String, _ title: String, bold: Bool) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 14, weight: .semibold)).frame(width: 36, height: 36)
-            Text(title).font(.forma(12, bold: bold))
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(bold ? Theme.ink : Theme.muted).padding(.horizontal, 8).contentShape(Rectangle())
+    private var chevron: some View {
+        Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(ink)
+            .rotationEffect(.degrees(showMenu ? 180 : 0))
     }
 
     private func apply(_ id: UUID?) {
@@ -119,22 +97,4 @@ struct RoomVibeControl<Leading: View>: View {
     }
 
     private func newVibe() { router.path.append(.newVibe(applyTo: projectID)) }
-}
-
-/// Tile, name and tag line for one vibe.
-private struct VibeRow: View {
-    let vibe: SavedVibe
-    let tile: CGFloat
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VibeTile(vibe: vibe, corner: 10).frame(width: tile, height: tile)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(vibe.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
-                Text((vibe.mood.prefix(1) + vibe.materials.prefix(1)).joined(separator: " · "))
-                    .font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-    }
 }

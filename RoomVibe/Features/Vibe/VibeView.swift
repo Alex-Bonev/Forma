@@ -22,6 +22,9 @@ struct VibeView: View {
     @State private var cartFrame: CGRect = .zero
     /// Adds whose square is still in the air: the cart count lags the real one by this much.
     @State private var landing = 0
+    @State private var pickedVibeID: UUID?
+    @State private var showVibeMenu = false
+    @State private var pulse = 0
     @State private var flight: Flight?
     private let preset: UIImage?
 
@@ -48,12 +51,19 @@ struct VibeView: View {
             VStack(alignment: .leading, spacing: 20) {
                 input
                 if let error = model.error { errorCard(error) { model.retryAnalyze() } }
-                if model.started { styleSection }
+                if model.started { styleSection.transition(sectionTransition) }
                 if model.style != nil {
-                    renderSection
-                    if model.shopRows != nil || model.shopError != nil { shoppingSection } else { productsSection }
+                    renderSection.transition(sectionTransition)
+                    if model.shopRows != nil || model.shopError != nil {
+                        shoppingSection.transition(sectionTransition)
+                    } else {
+                        productsSection.transition(sectionTransition)
+                    }
                 }
             }
+            .animation(sectionSpring, value: model.started)
+            .animation(sectionSpring, value: model.style != nil)
+            .animation(sectionSpring, value: model.shopRows != nil)
             .padding(.vertical, 16)
         }
         .scrollIndicators(.hidden)
@@ -70,8 +80,7 @@ struct VibeView: View {
             // Slot stays once the room has items, so the flying square has a steady target.
             if cartCount > 0 {
                 ToolbarItem(placement: .topBarTrailing) {
-                    CartButton(count: cartCount - landing, size: 44, fill: Theme.sand, ink: Theme.ink,
-                               stroke: Theme.sage, lineWidth: 1.5) { showCart = true }
+                    CartButton(count: cartCount - landing, size: 44, plain: true) { showCart = true }
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cartFrame = $0 }
                 }
             }
@@ -116,6 +125,12 @@ struct VibeView: View {
         }
     }
 
+    private var sectionSpring: Animation? { reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.1) }
+    private var sectionTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+    }
+    private var menuSpring: Animation? { reduceMotion ? nil : .spring(duration: 0.28, bounce: 0.12) }
+
     private var room: Project? { store.projects.first { $0.id == model.projectID } }
 
     /// The room owns the budget (nil = no limit). The demo run never writes it.
@@ -132,7 +147,34 @@ struct VibeView: View {
         Task { await model.applyBudget(usd) }
     }
     /// The room's saved vibe, unless the user set it aside for this screen.
-    private var roomVibe: SavedVibe? { useRoomVibe ? room?.vibeID.flatMap(library.vibe) : nil }
+    private var roomVibe: SavedVibe? {
+        if let pickedVibeID, let vibe = library.vibe(pickedVibeID) { return vibe }   // this run only, never saved to the room
+        return useRoomVibe ? room?.vibeID.flatMap(library.vibe) : nil
+    }
+
+    private func setVibeMenu(_ open: Bool) { withAnimation(menuSpring) { showVibeMenu = open } }
+
+    /// Expands the vibe dropdown in place under a header; the fields below slide down instead of being covered.
+    private func withVibeMenu(_ header: some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            if showVibeMenu {
+                VibeDropdownMenu(header: "SHOP FROM", selected: roomVibe?.id,
+                                 clearTitle: roomVibe != nil ? "Describe a different look" : nil,
+                                 newTitle: "",   // no route to the new-vibe flow from inside this sheet
+                                 onSelect: { id in pickedVibeID = id; setVibeMenu(false) },
+                                 onClear: { useRoomVibe = false; pickedVibeID = nil; setVibeMenu(false) },
+                                 onNew: { setVibeMenu(false) })
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var vibeChevron: some View {
+        Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.muted)
+            .rotationEffect(.degrees(showVibeMenu ? 180 : 0))
+            .animation(menuSpring, value: showVibeMenu)
+    }
 
     private var canStart: Bool {
         roomVibe != nil || photo != nil || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -169,24 +211,37 @@ struct VibeView: View {
 
     /// The room's saved vibe as the input; x sets it aside for a one-off photo or description.
     private func vibeHeader(_ vibe: SavedVibe) -> some View {
-        HStack(spacing: 14) {
-            VibeTile(vibe: vibe, corner: 16).frame(width: 64, height: 64)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(vibe.name).font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink).lineLimit(2)
-                Text("\(room?.name ?? "This room")'s vibe").font(.forma(11)).foregroundStyle(Theme.muted)
+        withVibeMenu(HStack(spacing: 14) {
+            HStack(spacing: 14) {
+                VibeTile(vibe: vibe, corner: 16).frame(width: 64, height: 64)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(vibe.name).font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink).lineLimit(2)
+                    Text(pickedVibeID == nil ? "\(room?.name ?? "This room")'s vibe" : "Picked for this run")
+                        .font(.forma(11)).foregroundStyle(Theme.muted)
+                }
+                vibeChevron
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            Button { useRoomVibe = false } label: {
+            .contentShape(Rectangle())
+            .onTapGesture { setVibeMenu(!showVibeMenu) }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityIdentifier("vibeHeaderDropdown")
+            Button { useRoomVibe = false; pickedVibeID = nil } label: {
                 Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
                     .frame(width: 32, height: 32).background(Theme.sand, in: Circle())
                     .frame(width: 44, height: 44).contentShape(Rectangle())
             }
             .accessibilityLabel("Use another look")
-        }
+        })
         .accessibilityIdentifier("roomVibeInput")
     }
 
     private var freeHeader: some View {
+        withVibeMenu(freeHeaderRow)
+    }
+
+    private var freeHeaderRow: some View {
         HStack(alignment: .top, spacing: 14) {
             PhotosPicker(selection: $pick, matching: .images) {
                 Group {
@@ -208,7 +263,10 @@ struct VibeView: View {
             }
             .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
             VStack(alignment: .leading, spacing: 4) {
-                Text("Describe a vibe").font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
+                HStack(spacing: 8) {
+                    Text("Describe a vibe").font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
+                    vibeChevron
+                }
                     // Hidden stage trigger (kept in Release): long-press the title on a fresh screen to show the
                     // bundled demo result.
                     .onLongPressGesture(minimumDuration: 0.8) {
@@ -217,6 +275,10 @@ struct VibeView: View {
                 Text("A photo, words, or both.")
                     .font(.forma(11)).foregroundStyle(Theme.muted)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { setVibeMenu(!showVibeMenu) }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityIdentifier("vibeHeaderDropdown")
             Spacer(minLength: 0)
             if photo != nil {
                 Button { photo = nil } label: {
@@ -348,15 +410,18 @@ struct VibeView: View {
                         .map { BudgetBar.Segment(id: "\(row.id)-\($0.id)", label: row.query.capitalized, amount: $0.priceUSD ?? 0) }
                 }, onChange: { showBudgetSheet = true })
                 .padding(.horizontal, 24)
+                .transition(sectionTransition)
             }
             addAllButton
             if let error = model.shopError {
                 errorCard(error.localizedDescription) { model.retryProducts() }
             }
             ForEach(model.shopRows ?? []) { row in
-                shopRow(row)
+                shopRow(row).transition(sectionTransition)
             }
         }
+        .animation(sectionSpring, value: showsSummary)
+        .animation(sectionSpring, value: model.shopRows?.count)
     }
 
     private var shopFinished: Bool { !(model.shopRows ?? []).contains { $0.status == .running } }
@@ -383,6 +448,10 @@ struct VibeView: View {
             .disabled(missing.isEmpty)
             .opacity(missing.isEmpty ? 0.4 : 1)
             .accessibilityIdentifier("addAllPicks")
+            .keyframeAnimator(initialValue: 1.0, trigger: pulse) { view, scale in view.scaleEffect(scale) } keyframes: { _ in
+                KeyframeTrack { SpringKeyframe(1.05, duration: 0.15); SpringKeyframe(1, duration: 0.25) }
+            }
+            .onAppear { if !reduceMotion { pulse += 1 } }   // once, when the picks arrive
             .padding(.horizontal, 24)
         }
     }
@@ -566,6 +635,8 @@ private struct SmallPillStyle: ButtonStyle {
             .background(filled ? Theme.sage : .clear, in: Capsule())
             .overlay { if !filled { Capsule().strokeBorder(Theme.ink, lineWidth: 1) } }
             .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.spring(duration: 0.2, bounce: 0), value: configuration.isPressed)
             .padding(.vertical, 5)   // 34 pt pill, 44 pt hit target
             .contentShape(Rectangle())
     }
@@ -604,6 +675,7 @@ private struct ProductCard: View {
     /// Gets the photo's global frame, where the add-to-cart square lifts off.
     var onAdd: ((CGRect) -> Void)? = nil
     @State private var imageFrame: CGRect = .zero
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -639,7 +711,14 @@ private struct ProductCard: View {
             }
             HStack(spacing: 6) {
                 if let onAdd {
-                    Button { onAdd(imageFrame) } label: { Text(added ? "Added" : "Add").frame(maxWidth: .infinity) }
+                    Button { onAdd(imageFrame) } label: {
+                        ZStack {
+                            Text("Add").opacity(added ? 0 : 1)
+                            Text("Added").opacity(added ? 1 : 0)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: added)
+                    }
                         .buttonStyle(SmallPillStyle())
                         .disabled(added)
                         .accessibilityLabel(added ? "Added to room" : "Add to room")
