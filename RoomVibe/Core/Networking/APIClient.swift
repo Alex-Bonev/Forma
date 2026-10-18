@@ -30,6 +30,16 @@ struct VibeStyle: Codable, Hashable {
     var furnitureTypes: [String]
     var decorItems: [String]
     var searchQueries: [String]
+    // Optional so an older backend's Style still decodes; nil fields are left out when sent back.
+    var roomType: String?
+    var budgetUsd: Double?
+    var shoppingList: [ShoppingItem]?
+
+    struct ShoppingItem: Codable, Hashable {
+        var category: String   // a CatalogItem id, or "decor"
+        var query: String
+        var maxPriceUsd: Double?
+    }
 
     /// Text handed to /render so the restyled room matches the analyzed look.
     var renderPrompt: String {
@@ -44,11 +54,15 @@ struct ShopProduct: Codable, Hashable, Identifiable {
     var imageURL: URL?
     var productURL: URL
     var retailer: String
+    // Set by the shopping agents (/vibe/shop), not by quick search.
+    var priceUSD: Double?
+    var category: String?
+    var dimensionsCm: [Double]?   // [width, height, depth]
     var id: URL { productURL }
 
     enum CodingKeys: String, CodingKey {
-        case title, price, retailer
-        case imageURL = "imageUrl", productURL = "productUrl"   // after convertFromSnakeCase
+        case title, price, retailer, category, dimensionsCm
+        case imageURL = "imageUrl", productURL = "productUrl", priceUSD = "priceUsd"   // after convertFromSnakeCase
     }
 
     /// The backend sends "" for a missing thumbnail. Only web links are accepted, since they go straight to openURL.
@@ -58,11 +72,48 @@ struct ShopProduct: Codable, Hashable, Identifiable {
         price = try c.decode(String.self, forKey: .price)
         retailer = try c.decode(String.self, forKey: .retailer)
         imageURL = try c.decodeIfPresent(String.self, forKey: .imageURL).flatMap(URL.init(string:))
+        priceUSD = try c.decodeIfPresent(Double.self, forKey: .priceUSD)
+        category = try c.decodeIfPresent(String.self, forKey: .category)
+        dimensionsCm = try c.decodeIfPresent([Double].self, forKey: .dimensionsCm).flatMap { $0.count == 3 ? $0 : nil }
         guard let url = URL(string: try c.decode(String.self, forKey: .productURL)),
               ["http", "https"].contains(url.scheme?.lowercased()) else {
             throw DecodingError.dataCorruptedError(forKey: .productURL, in: c, debugDescription: "not a web link")
         }
         productURL = url
+    }
+}
+
+/// A started /vibe/shop run: poll `job` with `APIClient.pollShopping`.
+struct ShopJob: Decodable, Hashable {
+    var job: String
+    var items: [Item]
+    struct Item: Decodable, Hashable { var category: String; var query: String }
+}
+
+/// One poll of /vibe/shop/{job}. `chosen` and `totalUsd` arrive once every item has finished.
+struct ShopStatus: Decodable {
+    var done: Bool
+    var budgetUsd: Double?
+    var items: [Item]
+    var chosen: [URL]?
+    var totalUsd: Double?
+
+    struct Item: Decodable {
+        enum Status: String, Decodable { case running, done, failed }
+        var category: String
+        var query: String
+        var status: Status
+        var products: [ShopProduct]
+
+        enum CodingKeys: String, CodingKey { case category, query, status, products }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            category = try c.decode(String.self, forKey: .category)
+            query = try c.decode(String.self, forKey: .query)
+            status = (try? c.decode(Status.self, forKey: .status)) ?? .failed
+            products = try c.decode([Lossy<ShopProduct>].self, forKey: .products).compactMap(\.value)
+        }
     }
 }
 
@@ -131,9 +182,11 @@ final class APIClient {
         return result
     }
 
-    func analyzeVibe(_ image: UIImage) async throws -> VibeStyle {
+    /// Either an inspiration photo, a description (which may state a budget), or both.
+    func analyzeVibe(_ image: UIImage?, prompt: String = "") async throws -> VibeStyle {
         var form = Multipart()
-        try form.addImage("image", image)
+        if let image { try form.addImage("image", image) }
+        if !prompt.isEmpty { form.addField("prompt", prompt) }
         return try await send(form.request(request("vibe/analyze")), as: VibeStyle.self)
     }
 
@@ -144,6 +197,20 @@ final class APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try Self.encoder.encode(style)
         return try await send(req, as: Products.self).products.compactMap(\.value)
+    }
+
+    /// Starts one shopping agent per item of `style.shoppingList`. `budget` overrides the style's own.
+    func startShopping(_ style: VibeStyle, budget: Double? = nil) async throws -> ShopJob {
+        struct Body: Encodable { var style: VibeStyle; var budgetUsd: Double? }
+        var req = request("vibe/shop")
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try Self.encoder.encode(Body(style: style, budgetUsd: budget))
+        return try await send(req, as: ShopJob.self)
+    }
+
+    func pollShopping(_ job: ShopJob) async throws -> ShopStatus {
+        try await send(request("vibe/shop/\(job.job)"), as: ShopStatus.self)
     }
 
     // MARK: Plumbing
