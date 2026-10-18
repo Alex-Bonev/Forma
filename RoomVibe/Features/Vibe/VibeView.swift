@@ -267,10 +267,14 @@ struct VibeView: View {
     /// In one store update, so the Designer underneath spawns them together and spreads them over free floor.
     private func addToRoom(_ picks: [(product: ShopProduct, category: String)]) {
         guard let id = model.projectID, var project = store.projects.first(where: { $0.id == id }) else { return }
+        var added: [Placement] = []
         for pick in picks where !project.placements.contains(where: { $0.product?.productURL == pick.product.productURL }) {
-            project.placements.append(Placement.forProduct(pick.product, category: pick.product.category ?? pick.category))
+            added.append(Placement.forProduct(pick.product, category: pick.product.category ?? pick.category))
+            project.placements.append(added[added.count - 1])
         }
         store.update(project)
+        // Keep each listing photo now, while it's reachable; Make it real shows it to the image model.
+        Task { for p in added { if let product = p.product { await ProductPhotos.cache(product, placement: p.id, project: id) } } }
     }
 
     /// Read from the project, so it survives leaving and reopening this screen.

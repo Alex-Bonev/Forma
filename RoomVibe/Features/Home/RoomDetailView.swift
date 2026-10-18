@@ -158,6 +158,10 @@ struct RoomDetailView: View {
         next.placements = old.placements
         next.wallFinish = old.wallFinish
         next.floorFinish = old.floorFinish
+        // Shopped products' photos (ProductPhotos) live in the project folder, which delete(old) removes.
+        let photos = (from: ProjectStore.projectDir(old.id).appending(path: "products"),
+                      to: ProjectStore.projectDir(next.id).appending(path: "products"))
+        try? FileManager.default.copyItem(at: photos.from, to: photos.to)
         store.update(next)
         store.delete(old)
         router.path = router.path.map { $0 == .room(old.id) ? .room(next.id) : $0 }
