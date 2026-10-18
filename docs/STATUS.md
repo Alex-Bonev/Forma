@@ -57,7 +57,7 @@ Last updated: 2026-10-17, branch `a/grounded-render`. `main` has PRs #1–#16 me
    5. Demo phone: scan a room and an object, reinstall, check the library comes back.
    6. Merge `c/shopped-render` before the `c/supabase` PR, or expect conflicts in `ProjectStore.swift` and `DesignerView.swift`.
 
-   After step 2: the Simulator end-to-end check (a room and an object reach the tables and the bucket; an edit and a delete round-trip).
+   Done: the Simulator end-to-end check (rooms, an object and a vibe reached the tables and the bucket; a local rename, a cloud rename, a local delete, a cloud tombstone and a single-file delete all round-tripped).
 
 ## Unverified on device
 

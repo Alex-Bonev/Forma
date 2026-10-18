@@ -213,5 +213,5 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
   network comes back (not yet tested).
 - Vibe mode (`Features/Vibe/`) is built and was tested in the Simulator against `MOCK=1`, but nothing opens it.
 - Not built yet: AR view, generic furniture USDZ swap.
-- Cloud library: built and reviewed (rooms, objects, My Vibes, file deletes, backend token auth). Not yet tested end
-  to end against the real Supabase project: blocked until anonymous sign-ins are on (see "Cloud library" above).
+- Cloud library: built, reviewed and checked end to end in the Simulator against the real project (rooms, objects,
+  My Vibes, edits and deletes both ways, single-file deletes). Not yet tried on a device.

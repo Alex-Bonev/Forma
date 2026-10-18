@@ -1,6 +1,6 @@
 # Spec: Supabase as the app's data storage
 
-Status: **built; end-to-end check pending** (needs manual step 2). Owner: C (David). Branch `c/supabase`, off `main` at PR #21, then `main` at PR #23 (My Vibes) merged in.
+Status: **built and checked end to end** in the Simulator. Owner: C (David). Branch `c/supabase`, off `main` at PR #21, then `main` at PR #23 (My Vibes) merged in.
 
 ## Goal
 
@@ -79,7 +79,7 @@ Each task: an agent implements it, a second agent reviews the diff, findings are
    `VibeLibrary` gets ms-rounded stamps, pending deletes, `applyRemote` / `removeRemote` and `onChange`, like
    `ProjectStore`; CloudSync syncs vibes before rooms (a pulled room's `vibeID` then resolves). `-seedVibe` joins the
    task 3 guard. A vibe deleted elsewhere leaves `vibeID` on rooms here; lookups already treat it as no vibe.
-5. **Docs and end-to-end check.** *Docs done; end-to-end check pending manual step 2.* README storage map (this
+5. **Docs and end-to-end check.** *Done.* Simulator, 2026-10-18: rooms, an object and a vibe reached the tables and the bucket; a local rename, a cloud rename, a local delete, a cloud tombstone and a single-file delete all round-tripped. README storage map (this
    inventory), STATUS entry, and a Simulator run against the real project: a room and an object reach the tables and
    the bucket, an edit and a delete round-trip.
 

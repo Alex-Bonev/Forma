@@ -28,6 +28,8 @@ final class CloudSync {
     private var stateDirty = false   // a change not yet saved, or a save that failed
     private var badManifests = Set<UUID>()   // rows whose `files` did not decode, logged once
     private var badDocs = Set<UUID>()   // rows whose `doc` (or `room`) did not decode, logged once
+    /// Deletes this pass sent: the rows it read before sending still look live, and would pull the item back.
+    private var sentThisPass = Set<UUID>()
     /// True once a pass has completed: the cloud's rows are then known here. A failed pass (offline, signed out, a
     /// transient error) does not count, so first-launch seeding keeps waiting (up to its timeout) instead of adding a
     /// room the cloud may already hold.
@@ -143,6 +145,7 @@ final class CloudSync {
             state.bases[key] = nil
             stateDirty = true
         }
+        sentThisPass = []
         try await sendDeletes(projectRows: projectRows, objectRows: objectRows, vibeRows: vibeRows)
 
         // Vibes first, then objects: a pulled room's `vibeID` and placements reference them.
@@ -171,9 +174,11 @@ final class CloudSync {
         }
     }
 
-    /// Deleted here and not yet sent: the pass leaves it alone (the user may delete during a pass's awaits).
+    /// Deleted here and not yet sent, or sent during this pass: the pass leaves it alone (the user may delete during
+    /// a pass's awaits).
     private func deleting(_ id: UUID) -> Bool {
-        store.pendingDeletes.contains { $0.id == id } || vibes.pendingDeletes.contains { $0.id == id }
+        sentThisPass.contains(id)
+            || store.pendingDeletes.contains { $0.id == id } || vibes.pendingDeletes.contains { $0.id == id }
     }
 
     /// A row's state, as far as a delete of its item cares.
@@ -189,6 +194,7 @@ final class CloudSync {
                 }
                 try await sendDelete(Kind(delete.kind), delete.id, deletedAt: delete.deletedAt, remote: remote)
                 sent.insert(delete)
+                sentThisPass.insert(delete.id)
             }
         }
         if !sent.isEmpty { store.clearPendingDeletes(sent) }
@@ -199,6 +205,7 @@ final class CloudSync {
                 let remote: RemoteState? = vibeRows.first { $0.id == delete.id }.map { ($0.updatedAt, $0.deletedAt, $0.files) }
                 try await sendDelete(.vibe, delete.id, deletedAt: delete.deletedAt, remote: remote)
                 sentVibes.insert(delete)
+                sentThisPass.insert(delete.id)
             }
         }
         if !sentVibes.isEmpty { vibes.clearPendingDeletes(sentVibes) }
@@ -584,8 +591,9 @@ final class CloudSync {
     }
 
     /// The item's synced files, by path relative to its folder. room.json travels in the row; an object's
-    /// Images/ and Checkpoint/ are scan inputs, deleted once the model is built; a vibe's folder holds only its photos. nil when the folder is missing or
-    /// unreadable, or a file's attributes are: a partial listing would read as files deleted here.
+    /// Images/ and Checkpoint/ are scan inputs, deleted once the model is built; a vibe's folder holds only its photos. A missing folder is an
+    /// item with no files (the procedural Demo Chair): empty, which drops the base, so nothing reads as deleted here.
+    /// nil when the folder is unreadable, or a file's attributes are: a partial listing would read as files deleted here.
     static func manifest(of dir: URL, kind: Kind) -> Manifest? {
         let skipped: Set<String> = switch kind {
         case .project: ["room.json"]
@@ -595,7 +603,8 @@ final class CloudSync {
         let fm = FileManager.default
         let root = dir.path(percentEncoded: false)
         var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: root, isDirectory: &isDir), isDir.boolValue, fm.isReadableFile(atPath: root),
+        guard fm.fileExists(atPath: root, isDirectory: &isDir) else { return [:] }
+        guard isDir.boolValue, fm.isReadableFile(atPath: root),
               let walk = fm.enumerator(atPath: root) else { return nil }
         var out = Manifest()
         while let path = walk.nextObject() as? String {
