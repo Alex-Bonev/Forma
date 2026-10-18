@@ -69,24 +69,27 @@ final class VibeShoppingTests: XCTestCase {
     /// Plan -> place -> Make it real: a shopped product goes to /render with its photo (mock echoes the snapshot).
     func testMakeItRealRendersWithAShoppedProduct() {
         let app = startVibe("Cozy japandi nook")
-        let addButton = app.buttons["Add to room"].firstMatch
+        let addButton = app.buttons["Add to room"].firstMatch, added = app.buttons["Added to room"].firstMatch
         XCTAssertTrue(addButton.waitForExistence(timeout: 20))
-        if !addButton.isHittable { app.swipeUp() }
-        addButton.tap()
-        XCTAssertTrue(app.buttons["Added to room"].firstMatch.waitForExistence(timeout: 5))
+        // A tap while the list is still scrolling can miss: retry until the card says Added.
+        for _ in 0..<3 where !added.exists {
+            if !addButton.isHittable { app.swipeUp(); sleep(1) }
+            if addButton.isHittable { addButton.tap() }
+            _ = added.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(added.exists)
         sleep(3)   // the listing photo is cached in the background (ProductPhotos)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Close"].tap()
 
-        let makeItReal = app.buttons["Make it real"].firstMatch
-        XCTAssertTrue(makeItReal.waitForExistence(timeout: 5))
-        makeItReal.tap()
-        XCTAssertTrue(app.buttons["Share…"].waitForExistence(timeout: 30), "the render should finish")
+        generate(app)
+        XCTAssertTrue(app.buttons["Image"].waitForExistence(timeout: 30), "the render should finish")
         XCTAssertFalse(app.staticTexts["Couldn't render"].exists)
         app.buttons["Close"].tap()
 
         // The demo room persists across launches: remove the shopped sofa again.
         if !app.buttons["Add object"].waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
+        sleep(1)   // the panel slides in: a tap mid-slide can land on the row's eye button instead
         app.staticTexts["Sofa"].firstMatch.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3))
         app.buttons["Remove"].tap()

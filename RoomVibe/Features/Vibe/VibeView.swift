@@ -31,11 +31,22 @@ struct VibeView: View {
                     if model.shopRows != nil || model.shopError != nil { shoppingSection } else { productsSection }
                 }
             }
-            .padding(.vertical)
+            .padding(.vertical, 16)
         }
-        .navigationTitle("Vibe")
-        .navigationBarTitleDisplayMode(.inline)
+        .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
+        .background(Theme.ground.ignoresSafeArea())
+        .navigationTitle("Shop a vibe")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Theme.ground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Shop a vibe").font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+            }
+        }
+        .tint(Theme.ink)
+        .environment(\.colorScheme, .light)   // Paper is light-only
         .onAppear {
             if let preset, !model.started {
                 photo = preset
@@ -63,54 +74,69 @@ struct VibeView: View {
     private var canStart: Bool { photo != nil || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private var input: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 PhotosPicker(selection: $pick, matching: .images) {
                     Group {
                         if let photo {
                             Image(uiImage: photo).resizable().scaledToFill()
                         } else {
-                            Image(systemName: "photo.badge.plus").font(.title2)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(.quaternary)
+                            VStack(spacing: 4) {
+                                Image(systemName: "plus").font(.system(size: 16))
+                                Text("Photo").font(.forma(10))
+                            }
+                            .foregroundStyle(Theme.wood)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Theme.sand)
                         }
                     }
-                    .frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
                 }
                 .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Describe a vibe, add a photo, or both").font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Describe a vibe").font(.system(size: 26, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
                         // Hidden stage trigger (kept in Release): long-press the title on a fresh screen to show the
                         // bundled demo result.
                         .onLongPressGesture(minimumDuration: 0.8) {
                             if !model.started, let demo = VibeDemo.load() { prompt = demo.prompt; model.showDemo(demo) }
                         }
-                    Text("We'll restyle your room and send agents to shop for real pieces.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("Add a photo, words, or both. We restyle your room and agents shop real stores for it.")
+                        .font(.forma(11)).foregroundStyle(Theme.muted)
                 }
                 Spacer(minLength: 0)
                 if photo != nil {
-                    Button { photo = nil } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove photo")
+                    Button { photo = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
+                            .frame(width: 32, height: 32).background(Theme.sand, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())   // 44 pt hit target
+                    }
+                    .accessibilityLabel("Remove photo")
                 }
             }
-            TextField("Cozy reading nook, warm wood, under $800", text: $prompt, axis: .vertical)
+            TextField("", text: $prompt, prompt: Text("Cozy reading nook, warm wood, under $800").foregroundStyle(Theme.muted),
+                      axis: .vertical)
+                .font(.forma(12)).foregroundStyle(Theme.ink)
                 .lineLimit(1...4)
-                .textFieldStyle(.roundedBorder)
+                .padding(16)
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.hairline))
                 .focused($promptFocused)
                 .submitLabel(.go)
                 .onSubmit(start)
                 .accessibilityIdentifier("vibePrompt")
             Button(action: start) {
-                Label(model.started ? "Find a new vibe" : "Find my vibe", systemImage: "sparkles").frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                    Text(model.started ? "Find a new vibe" : "Find my vibe")
+                }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PillButtonStyle())
             .disabled(!canStart)
+            .opacity(canStart ? 1 : 0.4)
             .accessibilityIdentifier("vibeStart")
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
+        .padding(.horizontal, 24)
     }
 
     private func start() {
@@ -121,67 +147,100 @@ struct VibeView: View {
 
     @ViewBuilder private var styleSection: some View {
         if let style = model.style {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(style.styleName).font(.title2.bold())
-                if model.isDemo {
-                    Text("Saved demo result").font(.caption2).foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your vibe").font(.forma(11)).foregroundStyle(Theme.muted)
+                    Text(style.styleName).font(.system(size: 30, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
+                    if model.isDemo {
+                        Text("Saved demo result").font(.forma(10)).foregroundStyle(Theme.muted)
+                    }
                 }
-                HStack(spacing: 6) {
-                    ForEach(Array(style.palette.enumerated()), id: \.offset) { _, hex in
-                        Circle().fill(Color(hex: hex)).frame(width: 28, height: 28)
-                            .overlay(Circle().stroke(.separator))
+                HStack(spacing: 8) {
+                    ForEach(Array(style.palette.prefix(5).enumerated()), id: \.offset) { _, hex in
+                        RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: hex)).frame(height: 40)
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.ink.opacity(0.08)))
                             .accessibilityLabel(hex)
                     }
                 }
-                Text((style.materials + style.decorItems).joined(separator: " · "))
-                    .font(.footnote).foregroundStyle(.secondary)
+                let tags = style.materials + style.decorItems
+                if !tags.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(Array(tags.enumerated()), id: \.offset) { _, tag in
+                            Text(tag).font(.forma(11)).foregroundStyle(Theme.wood)
+                                .padding(.horizontal, 12).frame(height: 28)
+                                .background(Theme.sand, in: Capsule())
+                        }
+                    }
+                }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
         } else if model.error == nil {
-            Label("Reading the vibe…", systemImage: "sparkles").padding(.horizontal)
-                .symbolEffect(.pulse)
+            HStack(spacing: 10) {
+                ProgressView().tint(Theme.sage)
+                Text("Reading the vibe…").font(.forma(12)).foregroundStyle(Theme.muted)
+            }
+            .padding(.horizontal, 24)
         }
     }
 
     @ViewBuilder private var renderSection: some View {
-        if model.isDemo {   // no live render for the saved result: show the room as it is
-            Image(uiImage: model.snapshot).resizable().scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
-        } else {
-            liveRenderSection
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Your room, restyled").font(.forma(13, bold: true)).foregroundStyle(Theme.ink).padding(.horizontal, 24)
+            if model.isDemo {   // no live render for the saved result: show the room as it is
+                Image(uiImage: model.snapshot).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .padding(.horizontal, 24)
+            } else {
+                liveRenderSection
+            }
         }
     }
 
     @ViewBuilder private var liveRenderSection: some View {
         switch model.render {
         case .some(.success(let image)):
-            BeforeAfterSlider(before: model.snapshot, after: image)
+            BeforeAfterSlider(before: model.snapshot, after: image).padding(.horizontal, 8)   // + its own 16
         case .some(.failure(let error)):
             errorCard(error.localizedDescription) { await model.rerender() }
         case nil:
             Image(uiImage: model.snapshot).resizable().scaledToFit().blur(radius: 6).opacity(0.6)
-                .overlay { ProgressView("Restyling your room…").padding().background(.regularMaterial, in: Capsule()) }
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
+                .overlay {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Theme.sage)
+                        Text("Restyling your room…").font(.forma(12)).foregroundStyle(Theme.ink)
+                    }
+                    .padding(.horizontal, 18).frame(height: 44)
+                    .background(Theme.ground, in: Capsule())
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.horizontal, 24)
         }
     }
 
     @ViewBuilder private var shoppingSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Shop the look").font(.headline)
-                if let budget = model.budgetUSD {
-                    if let total = model.totalUSD, !model.chosen.isEmpty {
-                        Text("Picks marked \"Fits budget\" total \(usd(total)) of your \(usd(budget)).")
-                    } else {
-                        Text("Budget \(usd(budget)).")
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Shop the look").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                    Spacer()
+                    if let rows = model.shopRows, rows.contains(where: { $0.status == .running }) {
+                        Text("\(rows.filter { $0.status != .running }.count) of \(rows.count) agents done")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
                     }
                 }
-                Text("Agents browse real stores. Prices exclude shipping and tax.")
+                Group {
+                    if let budget = model.budgetUSD {
+                        if let total = model.totalUSD, !model.chosen.isEmpty {
+                            Text("Picks marked \"Fits budget\" total \(usd(total)) of your \(usd(budget)).")
+                        } else {
+                            Text("Budget \(usd(budget)).")
+                        }
+                    }
+                    Text("Agents browse real stores. Prices exclude shipping and tax.")
+                }
+                .font(.forma(11)).foregroundStyle(Theme.muted)
             }
-            .font(.footnote).foregroundStyle(.secondary)
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
             addAllButton
             if let error = model.shopError {
                 errorCard(error.localizedDescription) { model.retryProducts() }
@@ -208,27 +267,29 @@ struct VibeView: View {
                 Label(missing.isEmpty ? "All picks are in your room"
                       : missing.count == all.count ? "Add all \(all.count) picks to room" : "Add the other \(missing.count) picks",
                       systemImage: missing.isEmpty ? "checkmark" : "plus")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PillButtonStyle())
             .disabled(missing.isEmpty)
+            .opacity(missing.isEmpty ? 0.4 : 1)
             .accessibilityIdentifier("addAllPicks")
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
         }
     }
 
     private func shopRow(_ row: VibeModel.ShopRow) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(row.query.capitalized).font(.subheadline.bold())
-                if row.status == .running { ProgressView().controlSize(.small) }
-                Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            let products = row.products.isEmpty ? (try? row.quick?.get()) ?? [] : row.products
+            HStack(spacing: 8) {
+                Text(row.query.capitalized).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                Spacer(minLength: 8)
                 if row.status == .running {
-                    Text("Agent shopping…").font(.caption).foregroundStyle(.secondary)
+                    ProgressView().controlSize(.small).tint(Theme.sage)
+                    Text("Agent shopping…").font(.forma(11)).foregroundStyle(Theme.muted)
+                } else if !products.isEmpty {
+                    Text(products.count == 1 ? "1 find" : "\(products.count) finds").font(.forma(11)).foregroundStyle(Theme.muted)
                 }
             }
-            .padding(.horizontal)
-            let products = row.products.isEmpty ? (try? row.quick?.get()) ?? [] : row.products
+            .padding(.horizontal, 24)
             if !products.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
@@ -238,23 +299,25 @@ struct VibeView: View {
                                         onAdd: model.projectID == nil ? nil : { addToRoom(product, row: row) })
                         }
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 24)
                 }
             } else if row.status == .failed {
                 HStack {
                     Text(row.quickFailed ? "Nothing found." : "The agent couldn't find a match.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(.forma(11)).foregroundStyle(Theme.muted)
                     Spacer()
                     if row.quick == nil && row.quickLoading {
-                        ProgressView().controlSize(.small)
+                        ProgressView().controlSize(.small).tint(Theme.sage)
                     } else {
                         Button("Try quick search") { model.background { await model.quickSearch(row.id) } }
-                            .buttonStyle(.bordered).controlSize(.small)
+                            .buttonStyle(SmallPillStyle(filled: false))
                     }
                 }
-                .padding(.horizontal)
+                .padding(.horizontal, 24)
             }
         }
+        .padding(.top, 14)
+        .overlay(alignment: .top) { Theme.hairline.frame(height: 1).padding(.horizontal, 24) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("shopRow-\(row.id)-\(row.category)")
     }
@@ -284,35 +347,56 @@ struct VibeView: View {
     }
 
     @ViewBuilder private var productsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Shop the look").font(.headline).padding(.horizontal)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Shop the look").font(.forma(13, bold: true)).foregroundStyle(Theme.ink).padding(.horizontal, 24)
             switch model.products {
             case .some(.success(let products)) where products.isEmpty:
-                Text("No products found.").font(.footnote).foregroundStyle(.secondary).padding(.horizontal)
+                Text("No products found.").font(.forma(11)).foregroundStyle(Theme.muted).padding(.horizontal, 24)
             case .some(.success(let products)):
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
                         ForEach(products) { ProductCard(product: $0) }
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 24)
                 }
             case .some(.failure(let error)):
                 errorCard(error.localizedDescription) { model.retryProducts() }
             case nil:
-                ProgressView().frame(maxWidth: .infinity)
+                ProgressView().tint(Theme.sage).frame(maxWidth: .infinity)
             }
         }
     }
 
     private func errorCard(_ message: String, retry: (() async -> Void)? = nil) -> some View {
-        HStack {
-            Label(message, systemImage: "exclamationmark.triangle").font(.footnote)
-            Spacer()
-            if let retry { Button("Retry") { Task { await retry() } }.buttonStyle(.bordered) }
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 15)).foregroundStyle(Theme.terracotta)
+            Text(message).font(.forma(12)).foregroundStyle(Theme.ink)
+            Spacer(minLength: 8)
+            if let retry { Button("Retry") { Task { await retry() } }.buttonStyle(SmallPillStyle(filled: false)) }
         }
-        .padding(12)
-        .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
+        .padding(16)
+        .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.terracotta.opacity(0.35)))
+        .padding(.horizontal, 24)
+    }
+}
+
+/// Compact pill for row-level actions (Retry, Add, Open, Try quick search): sage filled, or a 1 pt ink outline.
+private struct SmallPillStyle: ButtonStyle {
+    var filled = true
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.forma(12, bold: true))
+            .lineLimit(1)
+            .foregroundStyle(filled ? Theme.onSage : Theme.ink)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 34)
+            .background(filled ? Theme.sage : .clear, in: Capsule())
+            .overlay { if !filled { Capsule().strokeBorder(Theme.ink, lineWidth: 1) } }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
+            .padding(.vertical, 5)   // 34 pt pill, 44 pt hit target
+            .contentShape(Rectangle())
     }
 }
 
@@ -323,49 +407,49 @@ private struct ProductCard: View {
     var onAdd: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             AsyncImage(url: product.imageURL) { phase in
                 switch phase {
                 case .success(let image): image.resizable().scaledToFill()
-                case .failure: Image(systemName: "photo").foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.secondary.opacity(0.15))
-                default: Color.secondary.opacity(0.15)
+                case .failure: Image(systemName: "photo").font(.system(size: 20)).foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.sand)
+                default: Theme.sand
                 }
             }
-            .frame(width: 150, height: 150)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(width: 156, height: 156)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
             .overlay(alignment: .topLeading) {
                 if fitsBudget {
-                    Label("Fits budget", systemImage: "checkmark.seal.fill").font(.caption2.bold())
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(.green, in: Capsule()).foregroundStyle(.white)
-                        .padding(6)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).accessibilityHidden(true)
+                        Text("Fits budget").font(.forma(10, bold: true))
+                    }
+                    .foregroundStyle(Theme.onSage)
+                    .padding(.horizontal, 8).frame(height: 22)
+                    .background(Theme.sage, in: Capsule())
+                    .padding(8)
                 }
             }
-            Text(product.title).font(.subheadline).lineLimit(2, reservesSpace: true)
-            HStack {
-                Text(product.price).font(.subheadline.bold())
-                Spacer()
-                Text(product.retailer).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(product.title).font(.forma(11)).foregroundStyle(Theme.ink).lineLimit(2, reservesSpace: true)
+            HStack(alignment: .firstTextBaseline) {
+                Text(product.price).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                Spacer(minLength: 6)
+                Text(product.retailer).font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1)
             }
             HStack(spacing: 6) {
                 if let onAdd {
-                    Button(action: onAdd) {
-                        Label(added ? "Added" : "Add", systemImage: added ? "checkmark" : "plus").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(added)
-                    .accessibilityLabel(added ? "Added to room" : "Add to room")
+                    Button(action: onAdd) { Text(added ? "Added" : "Add").frame(maxWidth: .infinity) }
+                        .buttonStyle(SmallPillStyle())
+                        .disabled(added)
+                        .accessibilityLabel(added ? "Added to room" : "Add to room")
                 }
-                Link(destination: product.productURL) {
-                    Label("Open", systemImage: "arrow.up.right.square").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
+                Link(destination: product.productURL) { Text("Open").frame(maxWidth: .infinity) }
+                    .buttonStyle(SmallPillStyle(filled: false))
+                    .accessibilityLabel("Open \(product.title)")
             }
-            .labelStyle(.titleOnly)
-            .controlSize(.small)
         }
-        .frame(width: 150)
+        .frame(width: 156)
     }
 }
 
