@@ -25,9 +25,8 @@ From Michelle (B), branch `b/forma-ui`. The Paper "forma" design is now in the a
    While the sheet is open, `RenderView` re-runs a failed or offline (cached) render when the device comes back
    online. The splash line is still cosmetic: the `/health` ping at launch (to wake the backend) runs once, no retry.
 3. **Style:** the Make it real sheet uses `Theme`, Space Mono, `PillButtonStyle` and a sage Dollhouse / Photo switch.
-   It is light-only now. The nav bar title stays "Make it real" (Alex's UI test in PR #9 looks it up).
-4. **Selection markers in the snapshot:** Alex's PR #9 (`a/render-clean`) clears them before capture. I left
-   `DesignerView` alone so the two branches do not conflict.
+   It is light-only now. The nav bar title stays "Make it real" (`testMakeItRealOpens` looks it up).
+4. **Selection markers in the snapshot:** cleared before capture by Alex's PR #9 (merged).
 
 ## Not touched
 
