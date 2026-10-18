@@ -107,10 +107,13 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
 - Scanning only runs on a LiDAR device; verify on the demo phone early.
 - Custom orbit camera: drag empty space to orbit, drag an object to move it, pinch to zoom, twist to rotate the selection.
 - Placements clamp to the room's bounding rectangle, not the exact wall outline.
-- Make it real (`Features/Render/`) and vibe mode (`Features/Vibe/`) are built and tested in Simulator against `MOCK=1`.
-  The Designer button is B's: on tap, `guard let snap = captureDesignerSnapshot()`, then show
-  `RenderView(snapshot: snap, projectID:, camera:)` in a sheet. Capture before presenting the sheet, or the sheet is captured.
-  `camera` is optional but makes renders keep the layout much better (a structure map of the same view is sent):
-  `RenderCamera(transform: camera.transformMatrix(relativeTo: nil), verticalFOV: camera.camera.fieldOfViewInDegrees,
-  viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)`, built at the same moment as the snapshot.
+- Make it real is wired end to end: the sand "Make it real" pill on Room detail and in the fullscreen Designer
+  (`DesignerView.makeItReal()`) snapshots the 3D view and its camera, then opens `RenderView` (`Features/Render/`),
+  which calls `/render` and shows a before/after slider with a Dollhouse / Photo switch.
+  Tested in the Simulator against `MOCK=1` (the mock echoes the snapshot back). Not yet tried against the real
+  Gemini backend on a device: that needs the Vercel deploy and `APIConfig.json` above.
+  The app pings `/health` once at launch to wake a cold Vercel function. An offline render shows the last cached
+  render of that room and view. While the sheet is open, a failed or cached render re-runs by itself when the
+  network comes back (not yet tested).
+- Vibe mode (`Features/Vibe/`) is built and was tested in the Simulator against `MOCK=1`, but nothing opens it.
 - Not built yet: AR view, generic furniture USDZ swap.
