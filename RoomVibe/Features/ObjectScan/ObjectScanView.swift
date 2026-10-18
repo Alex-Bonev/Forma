@@ -385,7 +385,7 @@ final class ObjectScanModel {
                     if case .reconstructing(let f, _) = phase { phase = .reconstructing(f, info.estimatedRemainingTime) }
                 case .requestError(_, let error):
                     reconstructionFailed = true
-                    phase = .failed(error.localizedDescription)
+                    phase = .failed(Self.message(for: error))
                 case .processingCancelled:
                     cleanUp()
                     return
@@ -396,8 +396,18 @@ final class ObjectScanModel {
                 }
             }
         } catch {
-            if cancelled { cleanUp() } else { reconstructionFailed = true; phase = .failed(error.localizedDescription) }
+            if cancelled { cleanUp() } else { reconstructionFailed = true; phase = .failed(Self.message(for: error)) }
         }
+    }
+
+    /// Apple's public errors read fine. Anything else (e.g. "CoreOC.PhotogrammetrySession.Error 6") is the engine
+    /// failing to match the photos into one shape, which retrying the same photos won't fix: say what scans well.
+    static func message(for error: Error) -> String {
+        if error is PhotogrammetrySession.Error { return error.localizedDescription }
+        let code = "(\((error as NSError).domain) \((error as NSError).code))"
+        return "These photos couldn't be matched into a 3D shape. See-through, mesh, very thin, shiny or plain black "
+            + "objects don't scan well. Try a solid, textured object in even light, circling it fully at two heights. "
+            + code
     }
 
     /// Thumbnail + real-world size, then drop the photos (only the USDZ is kept).
