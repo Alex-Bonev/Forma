@@ -5,7 +5,8 @@ import RealityKit
 /// Touch model (all on `TouchSurface`):
 /// - one finger on an object: slide it on the floor · one finger elsewhere: orbit (flick for momentum)
 /// - two fingers: pan · pinch: zoom · twist: rotate the selected object (or the view if none)
-/// - tap: select / deselect
+/// - tap: select (when nothing is selected) · tap empty space: deselect · long-press an object: select it
+/// - with a placement selected, a one-finger drag that starts on any object moves the selected one (never switches)
 struct DesignerView: View {
     /// `.card` is the small orbit-and-zoom preview on Room detail (no editing); `.full` is the editor.
     enum Style { case full, card }
@@ -336,8 +337,7 @@ struct DesignerView: View {
         h.oneFinger = { phase, location, delta, velocity in
             switch phase {
             case .began:
-                if let id = hitPlacement(at: location), !isLocked(id), let e = placed[id],
-                   let start = floorPoint(at: location) {
+                if let id = dragTarget(at: location), let e = placed[id], let start = floorPoint(at: location) {
                     moving = (id, e.position - start)
                     selected = id
                     e.scale = baseScale(id) * 1.04   // lifted while dragged
@@ -382,11 +382,39 @@ struct DesignerView: View {
             if phase == .ended { twistingObject = false }
         }
         h.tap = { location in
-            if let id = hitPlacement(at: location) { selected = id; lockMenuFor = id }
-            else if let i = hitRoomObject(at: location) { selected = nil; selectedRoomObject = i }
-            else { selected = nil; selectedRoomObject = nil }
+            let hit = hitPlacement(at: location, prefer: selected)
+            let hitRoom = hit == nil ? hitRoomObject(at: location) : nil
+            if hit == nil && hitRoom == nil {
+                selected = nil; selectedRoomObject = nil   // only a tap on nothing deselects
+            } else if selected == nil && selectedRoomObject == nil {
+                if let hit { selected = hit; lockMenuFor = hit } else { selectedRoomObject = hitRoom }
+            } else if let hit, hit == selected {
+                lockMenuFor = hit
+            }   // else: another object while one is selected; switching takes a long press
+        }
+        h.longPress = { location in
+            if let id = hitPlacement(at: location, prefer: selected) {
+                if selected != id { selected = id }
+            } else if let i = hitRoomObject(at: location) {
+                selected = nil; selectedRoomObject = i
+            } else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         }
         return h
+    }
+
+    /// What a one-finger drag starting at `point` moves. With a placement selected, only that one: a drag that starts
+    /// on or near any object moves it, so a neighbor under the finger can't take over. Scanned furniture selected:
+    /// nothing (they can't be dragged, and a drag never switches the selection). Nothing selected: the placement
+    /// under the finger. A drag on empty space orbits.
+    private func dragTarget(at point: CGPoint) -> UUID? {
+        if let selected {
+            guard !isLocked(selected),
+                  hitPlacement(at: point, prefer: selected) != nil || hitRoomObject(at: point) != nil else { return nil }
+            return selected
+        }
+        guard selectedRoomObject == nil, let id = hitPlacement(at: point), !isLocked(id) else { return nil }
+        return id
     }
 
     private func floorPoint(at point: CGPoint) -> SIMD3<Float>? {
@@ -395,13 +423,15 @@ struct DesignerView: View {
         return [p.x, 0, p.z]
     }
 
-    /// Nearest placed object whose (padded) bounding box the ray passes through.
-    private func hitPlacement(at point: CGPoint) -> UUID? {
+    /// Nearest placed object whose (padded) bounding box the ray passes through. `prefer` (the selection) wins
+    /// whenever the ray hits it, even behind another object, and gets a wider margin.
+    private func hitPlacement(at point: CGPoint, prefer: UUID? = nil) -> UUID? {
         guard let (o, d) = content?.ray(through: point, in: .local, to: .scene) else { return nil }
         var best: (id: UUID, t: Float)?
         for (id, e) in placed {
             let b = e.visualBounds(relativeTo: e)
-            let lo = b.min - 0.12, hi = b.max + 0.12   // fat-finger padding
+            let pad: Float = id == prefer ? 0.25 : 0.12   // fat-finger padding
+            let lo = b.min - pad / e.scale, hi = b.max + pad / e.scale
             let ro = e.convert(position: o, from: nil), rd = e.convert(direction: d, from: nil)
             var tmin: Float = 0, tmax = Float.greatestFiniteMagnitude
             for i in 0..<3 {
@@ -409,6 +439,7 @@ struct DesignerView: View {
                 if t0 > t1 { swap(&t0, &t1) }
                 tmin = max(tmin, t0); tmax = min(tmax, t1)
             }
+            if tmin <= tmax, id == prefer { return id }
             if tmin <= tmax, tmin < best?.t ?? .greatestFiniteMagnitude { best = (id, tmin) }
         }
         return best?.id
@@ -1292,36 +1323,62 @@ struct DesignerView: View {
         for p in snapshot.placements where placed[p.id] == nil { Task { await spawn(p) } }
     }
 
-    /// Selection marker: blue corner brackets around the object's bounds plus a soft disc on the floor.
-    /// Parented to the object so it follows drags; bar thickness divides out the object's scale.
+    /// Selection marker: bright corner brackets around the object's box, a solid ring and a tinted disc on the floor.
+    /// Parented to the object so it follows drags. Built in meters inside a container that divides out the object's
+    /// scale, so bars keep their thickness on stretched or resized items.
     private func highlight(_ e: Entity?) {
         highlighted?.findEntity(named: "selection")?.removeFromParent()
         highlighted = e
         guard let e else { return }
+        let s = e.scale
         let b = e.visualBounds(relativeTo: e)
-        let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
-        // Dashed ring, as in the design: a dash every other slot around the object.
-        let ring = Entity()
-        ring.name = "selection"
-        let dash = UnlitMaterial(color: UIColor(Theme.ink).withAlphaComponent(0.65))
-        let slots = 32
-        for k in stride(from: 0, to: slots, by: 2) {
-            let a = Float(k) / Float(slots) * 2 * .pi
-            let d = ModelEntity(mesh: .generateBox(size: [0.08, 0.004, 0.014]), materials: [dash])
-            d.position = [radius * cos(a), 0, radius * sin(a)]
-            d.orientation = simd_quatf(angle: -a - .pi / 2, axis: [0, 1, 0])   // along the tangent
-            ring.addChild(d)
+        let lo = b.min * s - 0.03, hi = b.max * s + 0.03, size = hi - lo
+        let mark = Entity()
+        mark.name = "selection"
+        mark.scale = 1 / s
+        let accent = UnlitMaterial(color: UIColor(Theme.selection))
+
+        // Corner brackets: three legs from each of the 8 corners, pointing inward.
+        let leg = min(0.3, size.min() * 0.4), bar: Float = 0.035
+        for corner in 0..<8 {
+            let c = SIMD3<Float>(corner & 1 == 0 ? lo.x : hi.x, corner & 2 == 0 ? lo.y : hi.y, corner & 4 == 0 ? lo.z : hi.z)
+            for axis in 0..<3 {
+                var extent = SIMD3<Float>(repeating: bar)
+                extent[axis] = leg
+                var inward = SIMD3<Float>.zero
+                inward[axis] = (c[axis] == lo[axis] ? 1 : -1) * (leg - bar) / 2
+                let piece = ModelEntity(mesh: .generateBox(size: extent), materials: [accent])
+                piece.position = c + inward
+                mark.addChild(piece)
+            }
         }
-        // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
-        ring.position = [b.center.x, (0.003 - e.position(relativeTo: scene).y) / e.scale.y, b.center.z]
-        e.addChild(ring)
-        // Pops in: a touch small and turned, then settles.
-        let rest = ring.transform
+
+        // On the floor: a solid ring and a translucent disc under the footprint.
+        let floorY = 0.004 - e.position(relativeTo: scene).y
+        let center = SIMD3<Float>((lo.x + hi.x) / 2, floorY, (lo.z + hi.z) / 2)
+        let radius = max(size.x, size.z) / 2 + 0.06
+        let segments = 48
+        for k in 0..<segments {
+            let a = Float(k) / Float(segments) * 2 * .pi
+            let seg = ModelEntity(mesh: .generateBox(size: [2 * .pi * radius / Float(segments) * 1.15, 0.008, 0.05]),
+                                  materials: [accent])
+            seg.position = center + [radius * cos(a), 0, radius * sin(a)]
+            seg.orientation = simd_quatf(angle: -a - .pi / 2, axis: [0, 1, 0])   // along the tangent
+            mark.addChild(seg)
+        }
+        var tint = UnlitMaterial(color: UIColor(Theme.selection))
+        tint.blending = .transparent(opacity: 0.25)
+        let disc = ModelEntity(mesh: .generateCylinder(height: 0.002, radius: radius), materials: [tint])
+        disc.position = center - [0, 0.002, 0]
+        mark.addChild(disc)
+        e.addChild(mark)
+
+        // Pops in: a touch large, then settles onto the object.
+        let rest = mark.transform
         var start = rest
-        start.scale = [0.8, 1, 0.8]
-        start.rotation = simd_quatf(angle: -0.4, axis: [0, 1, 0])
-        ring.transform = start
-        ring.move(to: rest, relativeTo: e, duration: 0.25, timingFunction: .easeOut)
+        start.scale = rest.scale * 1.12
+        mark.transform = start
+        mark.move(to: rest, relativeTo: e, duration: 0.22, timingFunction: .easeOut)
     }
 
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.

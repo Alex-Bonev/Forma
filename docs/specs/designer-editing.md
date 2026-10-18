@@ -7,8 +7,17 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
 ## Behavior
 
 - **Select:**
-  - Tap a placement (library scan or catalog item) or scanned RoomPlan furniture.
-  - A dashed floor ring shows the selection, and its row in the Objects panel opens.
+  - Tap a placement (library scan or catalog item) or scanned RoomPlan furniture, when nothing is selected.
+  - The selection is sticky:
+    - A tap on another object is ignored.
+    - Only a tap on empty space deselects.
+    - A long press (0.4 s, with a haptic) on another object switches to it.
+  - With a placement selected, a one-finger drag that starts on or near any object moves the selected one. The hit test prefers the selection, with a 25 cm margin. A drag on empty space orbits.
+  - Marker (`Theme.selection` blue):
+    - Corner brackets around the object's box.
+    - A solid floor ring and a tinted disc.
+    - Sizes divide out the object's scale.
+  - Selecting opens the item's row in the Objects panel.
   - Marked items are orange boxes created by tapping during a room scan.
 - **Selected row** (Objects panel): the item's name and size, then labeled actions. Hide is the eye on every row, not an action.
   - Placements: **Rotate** (22.5°), **Remove**, **Size**, **Scan real** (LiDAR only).

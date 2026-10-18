@@ -53,6 +53,44 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "after-orbit-zoom", to: self)
     }
 
+    /// With the chair selected: a tap on the sofa keeps the chair, a drag that starts on the sofa moves the chair,
+    /// and only a long press on the sofa switches the selection.
+    func testSelectionIsSticky() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        app.buttons["Close objects"].tap()   // full-size room: the sofa is clear of the chair
+        sleep(1)
+        saveShot("sticky-selected")
+        let sofa = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.41))
+        let chairAt = canvas.value as? String
+        XCTAssertTrue(chairAt?.hasPrefix("Demo Chair") ?? false, "\(chairAt ?? "-")")
+
+        sofa.tap()
+        sleep(1)
+        XCTAssertEqual(canvas.value as? String, chairAt, "a tap on another object keeps the selection")
+
+        sofa.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
+        sleep(1)
+        let moved = canvas.value as? String
+        XCTAssertTrue(moved?.hasPrefix("Demo Chair") ?? false, "drag kept the chair selected (\(moved ?? "-"))")
+        XCTAssertGreaterThan(x(moved), x(chairAt) + 0.2, "the drag moved the chair, not the sofa")
+
+        sofa.press(forDuration: 0.8)
+        sleep(1)
+        saveShot("sticky-switched")
+        XCTAssertFalse((canvas.value as? String)?.hasPrefix("Demo Chair") ?? false, "long press switches the selection")
+
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        sleep(1)
+        XCTAssertTrue((canvas.value as? String ?? "").isEmpty, "a tap on nothing deselects")
+    }
+
     func testCatalogAndScannedFurniture() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo"]
