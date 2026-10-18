@@ -2,11 +2,11 @@ import SwiftUI
 
 @main
 struct RoomVibeApp: App {
-    @State private var store = ProjectStore()
-    /// nil without a cloud config: the library then stays on this device.
+    @State private var store: ProjectStore
+    /// nil without a cloud config, and in UI-test runs: the library then stays on this device.
     @State private var sync: CloudSync?
     @Environment(\.scenePhase) private var scenePhase
-    @State private var vibeLibrary = VibeLibrary()
+    @State private var vibeLibrary: VibeLibrary
     @State private var connectivity = Connectivity()
     @AppStorage("forma.seenStart") private var seenStart = false
     @State private var splash = true
@@ -15,9 +15,17 @@ struct RoomVibeApp: App {
 
     init() {
         Theme.registerFonts()
+        // Built eagerly: State(initialValue:) takes a value. An App's init runs once per launch, so this loads the
+        // library once.
+        let store = ProjectStore(), vibes = VibeLibrary()
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-seedVibe") { vibeLibrary.seedForUITests() }
+        if ProcessInfo.processInfo.arguments.contains("-seedVibe") { vibes.seedForUITests() }
         #endif
+        _store = State(initialValue: store)
+        _vibeLibrary = State(initialValue: vibes)
+        // Made here rather than in a `.task`: HomeView's first-launch seeding must already see it, to wait for its
+        // first pass.
+        _sync = State(initialValue: CloudSync.isUITestRun ? nil : CloudSync(store: store, vibes: vibes))
     }
 
     var body: some Scene {
@@ -27,6 +35,7 @@ struct RoomVibeApp: App {
                     .environment(store)
                     .environment(vibeLibrary)
                     .environment(connectivity)
+                    .environment(\.cloudSync, sync)
                 if !skipIntro && !seenStart && !splash {
                     StartView { withAnimation(.easeOut(duration: 0.3)) { seenStart = true } }
                         .transition(.opacity)
@@ -42,8 +51,9 @@ struct RoomVibeApp: App {
             }
             .task {
                 // A pass now pulls rooms, objects and vibes from other sessions; later passes follow local changes.
-                if sync == nil { sync = CloudSync(store: store, vibes: vibeLibrary) }
-                sync?.schedule(after: .zero)
+                // Called directly, not scheduled: a save during the debounce would push the first pass back 2 s, and
+                // first-launch seeding waits on it.
+                await sync?.sync()
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { sync?.schedule(after: .zero) }   // back from the background: catch up
@@ -56,4 +66,9 @@ struct RoomVibeApp: App {
             }
         }
     }
+}
+
+extension EnvironmentValues {
+    /// The app's CloudSync; nil without a cloud config and in UI-test runs.
+    @Entry var cloudSync: CloudSync? = nil
 }

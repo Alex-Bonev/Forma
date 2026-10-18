@@ -28,7 +28,15 @@ final class CloudSync {
     private var stateDirty = false   // a change not yet saved, or a save that failed
     private var badManifests = Set<UUID>()   // rows whose `files` did not decode, logged once
     private var badDocs = Set<UUID>()   // rows whose `doc` (or `room`) did not decode, logged once
+    /// True once a pass has completed: the cloud's rows are then known here. A failed pass (offline, signed out, a
+    /// transient error) does not count, so first-launch seeding keeps waiting (up to its timeout) instead of adding a
+    /// room the cloud may already hold.
+    private(set) var firstPassDone = false
     private let log = Logger(subsystem: "RoomVibe", category: "CloudSync")
+
+    /// UI tests launch with `-demo`, `-fresh` or `-seedVibe`, then delete or replace the whole library: such a run
+    /// must never reach the cloud, or its deletes would go out as tombstones. The one definition the app checks.
+    nonisolated static let isUITestRun = !Set(ProcessInfo.processInfo.arguments).isDisjoint(with: ["-demo", "-fresh", "-seedVibe"])
     private static let stateURL = ProjectStore.root.appending(path: "sync-state.json")
 
     /// nil when the app has no cloud config: the library then stays on this device.
@@ -93,13 +101,25 @@ final class CloudSync {
         defer { running = false }
         repeat {
             again = false
-            do { try await pass() } catch is CancellationError {
+            do {
+                try await pass()
+                firstPassDone = true
+            } catch is CancellationError {
                 return
             } catch {
                 log.error("sync pass failed: \(error.localizedDescription, privacy: .public)")
                 return   // offline or signed out: the next trigger tries again
             }
         } while again
+    }
+
+    /// Waits until a pass has completed, or `timeout`, or the caller is cancelled. Lets first-launch seeding see
+    /// what the cloud already holds; the timeout keeps a slow network from holding it up for long.
+    func waitForFirstPass(timeout: Duration) async {
+        let deadline = ContinuousClock.now + timeout
+        while !firstPassDone, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     // MARK: Pass

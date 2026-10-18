@@ -99,5 +99,7 @@ Each task: an agent implements it, a second agent reviews the diff, findings are
 - A device clock more than 5 minutes fast keeps re-sending its items.
 - A file whose upload landed but whose row write failed stays in storage after a delete.
 - Each pass reads every row; fine for a demo-sized library.
+- First-launch dorm seeding waits up to 8 s for a completed sync pass. On a slower network, a reinstall can seed
+  the dorm and then pull the cloud's copy: two dorms, one to delete.
 - A delete on another install wins over file-only changes here (a newer thumbnail or render): file writes do not
   stamp the item, so they never beat real edits elsewhere.

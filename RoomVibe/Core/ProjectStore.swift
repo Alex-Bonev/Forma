@@ -14,7 +14,8 @@ final class ProjectStore {
     private(set) var pendingDeletes: [PendingDelete] = []
 
     /// With a cloud config, deletes are kept as pending until CloudSync sends them. Set before any delete can happen.
-    @ObservationIgnored var syncEnabled = APIConfig.current.cloud != nil
+    /// Off in UI-test runs, which delete the whole library.
+    @ObservationIgnored var syncEnabled = APIConfig.current.cloud != nil && !CloudSync.isUITestRun
     /// Called after every saved change, local or from the cloud (`remote`), and after `filesChanged`.
     @ObservationIgnored var onChange: ((_ remote: Bool) -> Void)?
 
