@@ -21,6 +21,20 @@ enum FloorClamp {
         return contains(pushed, outline) ? pushed : best.q + best.n * 0.01
     }
 
+    /// Moves `center` so all four footprint corners (± `half`, x/z) sit inside `outline`.
+    /// A center inside the room can still poke a wide object through an L-shaped room's inner corner.
+    static func clamp(footprint center: SIMD2<Float>, half: SIMD2<Float>, to outline: [SIMD2<Float>], wall: Float) -> SIMD2<Float> {
+        guard outline.count >= 3 else { return center }
+        var c = clamp(center, to: outline, inset: max(half.x, half.y) + wall)
+        for _ in 0..<3 {   // each pass fixes the worst corner; 3 covers a corner plus its two walls
+            let corners = [SIMD2(-half.x, -half.y), SIMD2(half.x, -half.y), SIMD2(half.x, half.y), SIMD2(-half.x, half.y)].map { c + $0 }
+            let moves = corners.map { clamp($0, to: outline, inset: wall) - $0 }
+            guard let worst = moves.max(by: { simd_length($0) < simd_length($1) }), simd_length(worst) > 1e-4 else { break }
+            c += worst
+        }
+        return c
+    }
+
     static func contains(_ p: SIMD2<Float>, _ poly: [SIMD2<Float>]) -> Bool {
         var inside = false
         var j = poly.count - 1
