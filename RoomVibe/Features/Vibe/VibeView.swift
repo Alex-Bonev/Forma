@@ -15,7 +15,23 @@ struct VibeView: View {
     @State private var photo: UIImage?
     @State private var prompt = ""
     @FocusState private var promptFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showCart = false
+    @State private var cartFrame: CGRect = .zero
+    /// Adds whose square is still in the air: the cart count lags the real one by this much.
+    @State private var landing = 0
+    @State private var flight: Flight?
     private let preset: UIImage?
+
+    private struct Flight: Identifiable {
+        let id = UUID()
+        let imageURL: URL?
+        let from: CGRect
+    }
+
+    private var cartCount: Int {
+        model.projectID == nil ? 0 : RoomCart.count(in: store.projects, room: model.projectID)
+    }
 
     /// `inspiration`: optional preset photo (e.g. a bundled demo image) that starts the flow immediately.
     init(snapshot: UIImage, projectID: UUID? = nil, inspiration: UIImage? = nil) {
@@ -47,7 +63,17 @@ struct VibeView: View {
             ToolbarItem(placement: .principal) {
                 Text("Shop a vibe").font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
             }
+            // Slot stays once the room has items, so the flying square has a steady target.
+            if cartCount > 0 {
+                ToolbarItem(placement: .topBarTrailing) {
+                    CartButton(count: cartCount - landing, size: 44, fill: Theme.sand, ink: Theme.ink,
+                               stroke: Theme.sage, lineWidth: 1.5) { showCart = true }
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cartFrame = $0 }
+                }
+            }
         }
+        .sheet(isPresented: $showCart) { CartSheet(projectID: model.projectID) }
+        .overlay { flightLayer }
         .tint(Theme.ink)
         .environment(\.colorScheme, .light)   // Paper is light-only
         .onAppear {
@@ -319,6 +345,39 @@ struct VibeView: View {
         }
     }
 
+    @ViewBuilder private var flightLayer: some View {
+        if let flight {
+            GeometryReader { geo in
+                let origin = geo.frame(in: .global).origin
+                FlyingSquare(imageURL: flight.imageURL,
+                             from: flight.from.offsetBy(dx: -origin.x, dy: -origin.y),
+                             to: cartFrame.offsetBy(dx: -origin.x, dy: -origin.y))
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .id(flight.id)
+        }
+    }
+
+    /// Flies the card's photo to the cart button; the cart count only rises on landing so its beam fires then.
+    private func addWithFlight(_ product: ShopProduct, row: VibeModel.ShopRow, from: CGRect) {
+        guard !reduceMotion, model.projectID != nil else { return addToRoom(product, row: row) }
+        landing += 1
+        addToRoom(product, row: row)
+        Task {
+            // First add: the button is only now entering the toolbar, so its frame lands a beat later.
+            var waited = 0
+            while cartFrame == .zero && waited < 10 { try? await Task.sleep(for: .milliseconds(50)); waited += 1 }
+            if cartFrame != .zero {
+                flight = Flight(imageURL: product.imageURL, from: from)
+                try? await Task.sleep(for: .milliseconds(440))
+                flight = nil
+            }
+            withAnimation(.spring(duration: 0.35, bounce: 0.3)) { landing -= 1 }
+        }
+    }
+
     private func shopRow(_ row: VibeModel.ShopRow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             let products = row.products.isEmpty ? (try? row.quick?.get()) ?? [] : row.products
@@ -339,7 +398,8 @@ struct VibeView: View {
                         ForEach(products) { product in
                             ProductCard(product: product, fitsBudget: model.chosen.contains(product.productURL),
                                         added: isInRoom(product),
-                                        onAdd: model.projectID == nil ? nil : { addToRoom(product, row: row) })
+                                        projectID: model.projectID, category: row.category,
+                                        onAdd: model.projectID == nil ? nil : { addWithFlight(product, row: row, from: $0) })
                         }
                     }
                     .padding(.horizontal, 24)
@@ -370,23 +430,14 @@ struct VibeView: View {
         addToRoom([(product, row.category)])
     }
 
-    /// In one store update, so the Designer underneath spawns them together and spreads them over free floor.
     private func addToRoom(_ picks: [(product: ShopProduct, category: String)]) {
-        guard let id = model.projectID, var project = store.projects.first(where: { $0.id == id }) else { return }
-        var added: [Placement] = []
-        for pick in picks where !project.placements.contains(where: { $0.product?.productURL == pick.product.productURL }) {
-            added.append(Placement.forProduct(pick.product, category: pick.product.category ?? pick.category))
-            project.placements.append(added[added.count - 1])
-        }
-        store.update(project)
-        // Keep each listing photo now, while it's reachable; Make it real shows it to the image model.
-        Task { for p in added { if let product = p.product { await ProductPhotos.cache(product, placement: p.id, project: id) } } }
+        guard let id = model.projectID else { return }
+        RoomCart.add(picks, to: id, store: store)
     }
 
     /// Read from the project, so it survives leaving and reopening this screen.
     private func isInRoom(_ product: ShopProduct) -> Bool {
-        store.projects.first { $0.id == model.projectID }?.placements
-            .contains { $0.product?.productURL == product.productURL } ?? false
+        RoomCart.contains(product, in: store.projects.first { $0.id == model.projectID })
     }
 
     @ViewBuilder private var productsSection: some View {
@@ -398,7 +449,7 @@ struct VibeView: View {
             case .some(.success(let products)):
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
-                        ForEach(products) { ProductCard(product: $0) }
+                        ForEach(products) { ProductCard(product: $0, category: $0.category ?? "") }
                     }
                     .padding(.horizontal, 24)
                 }
@@ -443,11 +494,39 @@ private struct SmallPillStyle: ButtonStyle {
     }
 }
 
+/// Paper "Add to cart" motion: x eases out, y eases in, so the square arcs into the cart while it shrinks and fades.
+private struct FlyingSquare: View {
+    let imageURL: URL?
+    let from: CGRect
+    let to: CGRect
+    @State private var x = false
+    @State private var y = false
+
+    var body: some View {
+        AsyncImage(url: imageURL) { phase in
+            if case .success(let image) = phase { image.resizable().scaledToFill() } else { Theme.sand }
+        }
+        .frame(width: 56, height: 56)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .scaleEffect(y ? 0.25 : 1)
+        .opacity(y ? 0.2 : 1)
+        .position(x: x ? to.midX : from.midX, y: y ? to.midY : from.midY)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.44)) { x = true }
+            withAnimation(.easeIn(duration: 0.44)) { y = true }
+        }
+    }
+}
+
 private struct ProductCard: View {
     let product: ShopProduct
     var fitsBudget = false
     var added = false
-    var onAdd: (() -> Void)? = nil
+    var projectID: UUID? = nil
+    var category = ""
+    /// Gets the photo's global frame, where the add-to-cart square lifts off.
+    var onAdd: ((CGRect) -> Void)? = nil
+    @State private var imageFrame: CGRect = .zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -462,6 +541,7 @@ private struct ProductCard: View {
             .frame(width: 156, height: 156)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { imageFrame = $0 }
             .overlay(alignment: .topLeading) {
                 if fitsBudget {
                     HStack(spacing: 4) {
@@ -482,12 +562,14 @@ private struct ProductCard: View {
             }
             HStack(spacing: 6) {
                 if let onAdd {
-                    Button(action: onAdd) { Text(added ? "Added" : "Add").frame(maxWidth: .infinity) }
+                    Button { onAdd(imageFrame) } label: { Text(added ? "Added" : "Add").frame(maxWidth: .infinity) }
                         .buttonStyle(SmallPillStyle())
                         .disabled(added)
                         .accessibilityLabel(added ? "Added to room" : "Add to room")
                 }
-                Link(destination: product.productURL) { Text("Open").frame(maxWidth: .infinity) }
+                NavigationLink {
+                    ProductDetailView(product: product, mode: .shopping(projectID: projectID, category: category))
+                } label: { Text("Open").frame(maxWidth: .infinity) }
                     .buttonStyle(SmallPillStyle(filled: false))
                     .accessibilityLabel("Open \(product.title)")
             }

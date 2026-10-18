@@ -6,15 +6,15 @@ From: Michelle (B). Written 2026-10-18.
 ## Where things stand
 
 - Shopping starts only at Room > Make it real > "Shop a vibe" (`RoomVibe/Features/Vibe/VibeView.swift`). Agents return products per item (title, price, retailer, `productURL`).
-- Each product card has **Add** (drops the product into the room as an object) and **Open** (the retailer's page in the browser).
-- Nothing remembers which products a user picked across screens. There is **no shopping list, no cart and no checkout**.
-- Paper frames "v2 · K · Shop" and "v2 · L · Cart" are an old generic catalog and cart (quantities, subtotal, delivery, Checkout). They do not match the agent flow and will be redrawn. Do not build them as drawn.
-- Paper frames "main · S1" to "S5" show what `VibeView` looks like today.
+- Each product card has **Add** (drops the product into the room as an object) and **Open** (the in-app product detail page, which has "Go to original listing").
+- **Built (UI):** the cart is every `Placement.product` across the rooms (`RoomCart`). `CartSheet` shows one room or all rooms, `ProductDetailView` shows a product, and cart icons sit in the fullscreen room, on Home and in Shop a vibe. See `docs/specs/cart.md`.
+- **Not built:** checkout (the button is disabled), scraped product details beyond what `ShopProduct` carries, a budget line in the cart, and syncing the cart. The cart is derived from placements, so it does not record which vibe a product came from.
+- Paper: K (Shop) is deleted. L, L2, PD1 and PD2 are the cart and product detail frames. "main · S1" to "S5" show `VibeView`.
 
 ## What needs building
 
-1. **A shopping list (cart) per room.** Persist the picks: product, retailer, price, `productURL`, which room and which vibe it came from. Survive app restarts. Decide with the Supabase work (`docs/specs/supabase-storage.md`) whether it syncs.
-2. **List UI.** Show each pick with its store, price and a total against the budget. Remove a pick. "Add" in `VibeView` should write to this list, not only to the room. The designs will come from Michelle in Paper.
+1. **Cart data, the rest of it.** The cart survives restarts because it lives on the placements. Still open: whether it syncs (`docs/specs/supabase-storage.md`), and whether to record the vibe a product came from.
+2. **Cart extras.** A budget line (the budget is not stored yet) and the backend fields for richer product details (description, material, color, stock, returns).
 3. **Checkout = dispatch agents.** The intent is that checkout sends a Browserbase agent to each retailer's site to buy the items there, instead of linking the user out. One agent run per retailer, with the picks for that store.
 
 ## Constraints for checkout (please read before building)

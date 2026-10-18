@@ -33,6 +33,7 @@ struct DesignerView: View {
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
     @State private var highlighted: Entity?
     @State private var showCatalog = false
+    @State private var showCart = false
     @State private var showAddChoice = false   // Add object: scan a physical object, or select a preset
     @State private var editing: UUID?   // placement open in the Size sheet; not tied to `selected`, which taps can change
     @State private var showPhotos = false
@@ -147,6 +148,7 @@ struct DesignerView: View {
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
                 .sheet(isPresented: $showAddChoice) { addChoiceSheet }
+                .sheet(isPresented: $showCart) { CartSheet(projectID: projectID) }
                 .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
                 .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
                     if let editing { editor(editing) }
@@ -180,7 +182,14 @@ struct DesignerView: View {
                                                  sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
                                 AddObjectButton(fill: lightBackdrop ? Theme.wood : Theme.sand,
                                                 ink: lightBackdrop ? Theme.ground : Theme.ink) { showAddChoice = true }
+                                let ink = lightBackdrop ? Theme.ground : Theme.ink
+                                let cartCount = RoomCart.count(in: store.projects, room: projectID)
+                                if cartCount > 0 {
+                                    CartButton(count: cartCount, size: 56, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                               ink: ink, stroke: ink.opacity(0.35), lineWidth: 1.5) { showCart = true }
+                                }
                             }
+                            .lineLimit(1).minimumScaleFactor(0.7)   // Make it real shrinks, never drops its label, when the cart button takes room
                             .padding(.horizontal, 16)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
