@@ -196,6 +196,7 @@ final class VibeShoppingTests: XCTestCase {
         generate(app)
         XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Drag the divider to compare"].exists)
+        saveShot("render-sheet")
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("compare"))
         image.tap()
         XCTAssertTrue(app.images["Render"].waitForExistence(timeout: 2))

@@ -7,6 +7,7 @@ struct RenderView: View {
     @State private var model: RenderModel
     @Environment(\.dismiss) private var dismiss
     @Environment(ProjectStore.self) private var store
+    @Environment(VibeLibrary.self) private var library
     @Environment(Connectivity.self) private var connectivity
     @State private var tab = Tab.compare
 
@@ -20,14 +21,30 @@ struct RenderView: View {
                                                  styleRef: styleRef))
     }
 
+    /// Next step after a render: restyle this view and shop real stores, starting from the room's vibe if it has one.
+    private var shopLink: some View {
+        let vibe = store.projects.first { $0.id == model.projectID }?.vibeID.flatMap(library.vibe)
+        return NavigationLink {
+            VibeView(snapshot: model.snapshot, projectID: model.projectID)
+        } label: {
+            Label(vibe.map { "Shop \($0.name)" } ?? "Shop a vibe", systemImage: "sparkles").lineLimit(1)
+        }
+        .buttonStyle(PillButtonStyle(filled: false))
+        .accessibilityIdentifier("openVibe")
+    }
+
     var body: some View {
         NavigationStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.ground.ignoresSafeArea())
                 .safeAreaInset(edge: .bottom) {
-                    if model.result != nil {
-                        TabPicker(selection: $tab).padding(.horizontal, 24).padding(.bottom, 8)
+                    if !model.isLoading {   // also after a failed render: shopping only needs the snapshot
+                        VStack(spacing: 10) {
+                            shopLink
+                            if model.result != nil { TabPicker(selection: $tab) }
+                        }
+                        .padding(.horizontal, 24).padding(.bottom, 8)
                     }
                 }
                 .navigationTitle("Make it real")
@@ -40,14 +57,6 @@ struct RenderView: View {
                     }
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") { dismiss() }.font(.forma(13)).foregroundStyle(Theme.ink)
-                    }
-                    ToolbarItem(placement: .topBarLeading) {
-                        NavigationLink {
-                            VibeView(snapshot: model.snapshot, projectID: model.projectID)
-                        } label: {
-                            Label("Shop a vibe", systemImage: "sparkles").font(.forma(13)).foregroundStyle(Theme.ink)
-                        }
-                        .accessibilityIdentifier("openVibe")
                     }
                     if model.result != nil, !model.isRunning {
                         ToolbarItem(placement: .primaryAction) {
