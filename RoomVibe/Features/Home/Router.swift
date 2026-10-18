@@ -5,6 +5,9 @@ enum Route: Hashable {
     case room(UUID, added: UUID? = nil)
     case object(UUID)
     case designer(UUID, opensCatalog: Bool = false)
+    /// `applyTo`: a room to link the vibe to once it is saved (from the room's add-a-vibe sheet).
+    case newVibe(applyTo: UUID? = nil)
+    case vibe(UUID)
 }
 
 @Observable final class Router {

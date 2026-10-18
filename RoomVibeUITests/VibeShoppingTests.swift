@@ -71,6 +71,7 @@ final class VibeShoppingTests: XCTestCase {
 
         // The 3D model also went into the object library: delete it there (Home, long-press, Delete).
         app.buttons["Close fullscreen"].tap()
+        app.openObjectsTab()
         let tile = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Linen Low Sofa 1")).firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 5))
         tile.press(forDuration: 1.0)

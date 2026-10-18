@@ -2,7 +2,9 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(ProjectStore.self) private var store
+    @Environment(VibeLibrary.self) private var library
     @State private var router = Router()
+    @State private var tab = HomeTab.rooms
     @State private var openedDemo = false
     @State private var scanningRoom = false
     @State private var scanningObject = false
@@ -18,26 +20,37 @@ struct HomeView: View {
         NavigationStack(path: $router.path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    header
-                    roomsSection
-                    objectsSection
+                    switch tab {
+                    case .rooms: roomsSection
+                    case .objects: objectsSection
+                    case .vibes: VibesTab().environment(router)
+                    }
                     if !Capabilities.canScanRoom {
                         Text("This device has no LiDAR. Scanning is off; use the demo data to explore.")
                             .font(.forma(11)).foregroundStyle(Theme.muted)
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 12)
+                .padding(.top, 24)
                 .padding(.bottom, 24)
             }
             .scrollIndicators(.hidden)
             .background(Theme.ground.ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    header.padding(.horizontal, 24).padding(.top, 12)
+                    HomeTabBar(selection: $tab, counts: [store.projects.count, store.objects.count, library.vibes.count])
+                }
+                .background(Theme.ground)
+            }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self) { route in
                 Group { switch route {
                 case .room(let id, let added): RoomDetailView(projectID: id, added: added)
                 case .object(let id): ObjectDetailView(objectID: id)
                 case .designer(let id, let opensCatalog): DesignerView(projectID: id, opensCatalog: opensCatalog)
+                case .newVibe(let applyTo): CreateVibeView(applyTo: applyTo)
+                case .vibe(let id): VibeDetailView(vibeID: id)
                 } }
                 .environment(router)
             }
@@ -111,7 +124,6 @@ struct HomeView: View {
     private var roomsSection: some View {
         let rooms = store.projects.filter { matches($0.name, roomQuery) }
         return VStack(alignment: .leading, spacing: 4) {
-            SectionHeader(title: "Rooms", count: store.projects.count).padding(.bottom, 4)
             if store.projects.count > 5 { SearchField(text: $roomQuery, prompt: "Search \(store.projects.count) rooms").padding(.bottom, 8) }
             if store.projects.isEmpty {
                 Text("No rooms yet. Scan one, or load the demo room.")
@@ -131,7 +143,6 @@ struct HomeView: View {
     private var objectsSection: some View {
         let objects = store.objects.filter { matches($0.name, objectQuery) }
         return VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Object library", count: store.objects.count)
             if store.objects.count > 6 { SearchField(text: $objectQuery, prompt: "Search \(store.objects.count) objects") }
             if store.objects.isEmpty {
                 Text("Scan a real object to place it in your rooms.")

@@ -141,10 +141,13 @@ struct DesignerView: View {
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
                 .overlay(alignment: .topLeading) {
                     // Under the back button (Paper E); icon-only while the Objects panel is open (E2/E3).
-                    MakeItRealButton(compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                     ink: lightBackdrop ? Theme.ground : Theme.ink,
-                                     sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
-                        .padding(.leading, 16).padding(.top, 8 + 44 + 12)
+                    RoomVibeControl(projectID: projectID, compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                    ink: lightBackdrop ? Theme.ground : Theme.ink) {
+                        MakeItRealButton(compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                         ink: lightBackdrop ? Theme.ground : Theme.ink,
+                                         sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
+                    }
+                    .padding(.leading, 16).padding(.top, 8 + 44 + 12)
                 }
                 .overlay(alignment: .trailing) {
                     if showObjects { objectsPanel(project).transition(.move(edge: .trailing).combined(with: .opacity)) }

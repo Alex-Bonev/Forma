@@ -3,19 +3,26 @@ import SwiftUI
 @main
 struct RoomVibeApp: App {
     @State private var store = ProjectStore()
+    @State private var vibeLibrary = VibeLibrary()
     @State private var connectivity = Connectivity()
     @AppStorage("forma.seenStart") private var seenStart = false
     @State private var splash = true
     /// UI tests and `-demo` skip the intro and open the demo room directly.
     private let skipIntro = ProcessInfo.processInfo.arguments.contains("-demo")
 
-    init() { Theme.registerFonts() }
+    init() {
+        Theme.registerFonts()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-seedVibe") { vibeLibrary.seedForUITests() }
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup {
             ZStack {
                 HomeView()
                     .environment(store)
+                    .environment(vibeLibrary)
                     .environment(connectivity)
                 if !skipIntro && !seenStart && !splash {
                     StartView { withAnimation(.easeOut(duration: 0.3)) { seenStart = true } }
