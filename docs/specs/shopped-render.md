@@ -64,8 +64,8 @@ photos in product order, and the backend writes "Image K is the product photo fo
 
 ### 3. Layout text (`Features/Render/RenderInputs.swift`, `LayoutDescription.swift`)
 
-- `RenderInputs.scene` also returns `shopped: [(id: UUID, title: String)]`, every shopped placement in placement
-  order. `run()` numbers the first 3 whose photo loads (section 5).
+- `RenderInputs.scene` also returns `shopped: [(id: UUID, product: ShopProduct)]`, every shopped placement in
+  placement order. `run()` numbers the first 3 whose photo loads (section 5).
 - `LayoutDescription.text` takes those numbered ids, so `run()` rebuilds the layout once the list is fixed.
 - Their layout entry reads: `<title> (product N: a new piece the user is buying; make it look exactly like its
   product photo, <w> m wide, …, <spot>)`. Other placements keep today's wording.
