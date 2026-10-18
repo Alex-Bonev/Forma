@@ -2,11 +2,15 @@ import ImageIO
 import PhotosUI
 import SwiftUI
 
-/// Vibe mode: pick an inspiration photo -> /vibe/analyze -> restyled render (/render with the style and the
-/// photo as reference) + shoppable products (/vibe/products). Pushed from RenderView's navigation stack.
+/// Vibe mode: an inspiration photo and/or a description -> /vibe/analyze -> restyled render (/render with the style
+/// and the photo as reference) + real products found by shopping agents (/vibe/shop), within the budget if one was
+/// given. Falls back to quick search (/vibe/products) per item. Pushed from RenderView's navigation stack.
 struct VibeView: View {
     @State private var model: VibeModel
     @State private var pick: PhotosPickerItem?
+    @State private var photo: UIImage?
+    @State private var prompt = ""
+    @FocusState private var promptFocused: Bool
     private let preset: UIImage?
 
     /// `inspiration`: optional preset photo (e.g. a bundled demo image) that starts the flow immediately.
@@ -18,19 +22,25 @@ struct VibeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                picker
+                input
                 if let error = model.error { errorCard(error) { model.retryAnalyze() } }
-                if model.inspiration != nil { styleSection }
+                if model.started { styleSection }
                 if model.style != nil {
                     renderSection
-                    productsSection
+                    if model.shopRows != nil || model.shopError != nil { shoppingSection } else { productsSection }
                 }
             }
             .padding(.vertical)
         }
         .navigationTitle("Vibe")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { if let preset, model.inspiration == nil { model.begin(with: preset) } }
+        .scrollDismissesKeyboard(.interactively)
+        .onAppear {
+            if let preset, !model.started {
+                photo = preset
+                model.begin(with: preset, prompt: "")
+            }
+        }
         .onDisappear { model.cancel() }
         .onChange(of: pick) {
             guard let item = pick else { return }
@@ -41,7 +51,7 @@ struct VibeView: View {
                           let image = await Task.detached(operation: { downsampled(data) }).value else {
                         throw CocoaError(.fileReadCorruptFile)
                     }
-                    model.begin(with: image)
+                    photo = image
                 } catch {
                     model.fail("Couldn't open that photo. Try another one.")
                 }
@@ -49,28 +59,58 @@ struct VibeView: View {
         }
     }
 
-    private var picker: some View {
-        PhotosPicker(selection: $pick, matching: .images) {
+    private var canStart: Bool { photo != nil || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private var input: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                if let inspiration = model.inspiration {
-                    Image(uiImage: inspiration).resizable().scaledToFill()
-                        .frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 8))
-                } else {
-                    Image(systemName: "photo.badge.plus").font(.title2).frame(width: 56, height: 56)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                PhotosPicker(selection: $pick, matching: .images) {
+                    Group {
+                        if let photo {
+                            Image(uiImage: photo).resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "photo.badge.plus").font(.title2)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(.quaternary)
+                        }
+                    }
+                    .frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
+                .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.inspiration == nil ? "Pick an inspiration photo" : "Pick another photo").font(.headline)
-                    Text("We'll restyle your room to match and find pieces to buy.")
+                    Text("Describe a vibe, add a photo, or both").font(.headline)
+                    Text("We'll restyle your room and send agents to shop for real pieces.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Spacer()
+                Spacer(minLength: 0)
+                if photo != nil {
+                    Button { photo = nil } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove photo")
+                }
             }
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            TextField("Cozy reading nook, warm wood, under $800", text: $prompt, axis: .vertical)
+                .lineLimit(1...4)
+                .textFieldStyle(.roundedBorder)
+                .focused($promptFocused)
+                .submitLabel(.go)
+                .onSubmit(start)
+                .accessibilityIdentifier("vibePrompt")
+            Button(action: start) {
+                Label(model.started ? "Find a new vibe" : "Find my vibe", systemImage: "sparkles").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canStart)
+            .accessibilityIdentifier("vibeStart")
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
+    }
+
+    private func start() {
+        guard canStart else { return }
+        promptFocused = false
+        model.begin(with: photo, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     @ViewBuilder private var styleSection: some View {
@@ -108,6 +148,68 @@ struct VibeView: View {
         }
     }
 
+    @ViewBuilder private var shoppingSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Shop the look").font(.headline)
+                if let budget = model.budgetUSD {
+                    if let total = model.totalUSD, !model.chosen.isEmpty {
+                        Text("Picks marked \"Fits budget\" total \(usd(total)) of your \(usd(budget)).")
+                    } else {
+                        Text("Budget \(usd(budget)).")
+                    }
+                }
+                Text("Agents browse real stores. Prices exclude shipping and tax.")
+            }
+            .font(.footnote).foregroundStyle(.secondary)
+            .padding(.horizontal)
+            if let error = model.shopError {
+                errorCard(error.localizedDescription) { await model.reloadProducts() }
+            }
+            ForEach(model.shopRows ?? []) { row in
+                shopRow(row)
+            }
+        }
+    }
+
+    private func shopRow(_ row: VibeModel.ShopRow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(row.query.capitalized).font(.subheadline.bold())
+                if row.status == .running { ProgressView().controlSize(.small) }
+                Spacer()
+                if row.status == .running {
+                    Text("Agent shopping…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal)
+            let products = row.products.isEmpty ? (try? row.quick?.get()) ?? [] : row.products
+            if !products.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(products) { ProductCard(product: $0, fitsBudget: model.chosen.contains($0.productURL)) }
+                    }
+                    .padding(.horizontal)
+                }
+            } else if row.status == .failed {
+                HStack {
+                    Text(row.quickFailed ? "Nothing found." : "The agent couldn't find a match.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Spacer()
+                    if row.quick == nil && row.quickLoading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Try quick search") { Task { await model.quickSearch(row.id) } }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("shopRow-\(row.category)")
+    }
+
     @ViewBuilder private var productsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Shop the look").font(.headline).padding(.horizontal)
@@ -143,6 +245,7 @@ struct VibeView: View {
 
 private struct ProductCard: View {
     let product: ShopProduct
+    var fitsBudget = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -156,6 +259,14 @@ private struct ProductCard: View {
             }
             .frame(width: 150, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(alignment: .topLeading) {
+                if fitsBudget {
+                    Label("Fits budget", systemImage: "checkmark.seal.fill").font(.caption2.bold())
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(.green, in: Capsule()).foregroundStyle(.white)
+                        .padding(6)
+                }
+            }
             Text(product.title).font(.subheadline).lineLimit(2, reservesSpace: true)
             HStack {
                 Text(product.price).font(.subheadline.bold())
@@ -177,10 +288,33 @@ final class VibeModel {
     let snapshot: UIImage
     let projectID: UUID?
     private(set) var inspiration: UIImage?
+    private(set) var prompt = ""
+    private(set) var started = false
     private(set) var style: VibeStyle?
     private(set) var render: Result<UIImage, Error>?
+    /// Quick search results, used when the backend's style has no shopping list.
     private(set) var products: Result<[ShopProduct], Error>?
+    /// Shopping agents: one row per shopping-list item, filled in as each agent finishes.
+    private(set) var shopRows: [ShopRow]?
+    private(set) var shopError: Error?
+    private(set) var chosen: Set<URL> = []
+    private(set) var budgetUSD: Double?
+    private(set) var totalUSD: Double?
     private(set) var error: String?
+
+    struct ShopRow: Identifiable {
+        let id: Int
+        var category: String
+        var query: String
+        var status: ShopStatus.Item.Status = .running
+        var products: [ShopProduct] = []
+        var quick: Result<[ShopProduct], Error>?
+        var quickLoading = false
+        var quickFailed: Bool { if case .some(.success(let p)) = quick { p.isEmpty } else { false } }
+    }
+
+    private static let pollInterval: Duration = .seconds(4)
+    private static let maxPollFailures = 3
 
     /// The current pick's run. A newer pick cancels it so its results can't land under the new photo.
     private var run: Task<Void, Never>?
@@ -190,24 +324,27 @@ final class VibeModel {
         self.projectID = projectID
     }
 
-    func begin(with image: UIImage) {
+    func begin(with image: UIImage?, prompt: String) {
         run?.cancel()
-        run = Task { await start(with: image) }
+        run = Task { await start(with: image, prompt: prompt) }
     }
 
     func retryAnalyze() {
-        if let inspiration { begin(with: inspiration) }
+        if started { begin(with: inspiration, prompt: prompt) }
     }
 
     func cancel() { run?.cancel() }
 
     func fail(_ message: String) { error = message }
 
-    private func start(with image: UIImage) async {
+    private func start(with image: UIImage?, prompt: String) async {
         inspiration = image
-        style = nil; render = nil; products = nil; error = nil
+        self.prompt = prompt
+        started = true
+        style = nil; render = nil; error = nil
+        resetShopping()
         do {
-            let analyzed = try await APIClient.shared.analyzeVibe(image)
+            let analyzed = try await APIClient.shared.analyzeVibe(image, prompt: prompt)
             guard !Task.isCancelled else { return }
             style = analyzed
         } catch {
@@ -233,11 +370,89 @@ final class VibeModel {
 
     func reloadProducts() async {
         guard let style else { return }
-        products = nil
+        if let list = style.shoppingList, !list.isEmpty {
+            await shop(style)
+            return
+        }
+        resetShopping()
         let result: Result<[ShopProduct], Error>
         do { result = .success(try await APIClient.shared.products(for: style)) } catch { result = .failure(error) }
         if !Task.isCancelled, style == self.style { products = result }
     }
+
+    private func resetShopping() {
+        products = nil; shopRows = nil; shopError = nil; chosen = []; budgetUSD = nil; totalUSD = nil
+    }
+
+    /// Starts the agents, then polls until every item has finished. Rows fill in as their agent finishes.
+    private func shop(_ style: VibeStyle) async {
+        resetShopping()
+        shopRows = (style.shoppingList ?? []).enumerated().map { ShopRow(id: $0.offset, category: $0.element.category,
+                                                                          query: $0.element.query) }
+        budgetUSD = style.budgetUsd
+        do {
+            let job = try await APIClient.shared.startShopping(style)
+            var failures = 0
+            while !Task.isCancelled, style == self.style {
+                let status: ShopStatus
+                do {
+                    status = try await APIClient.shared.pollShopping(job)
+                    failures = 0
+                } catch let error as APIError {
+                    // A dropped poll is fine; the agents keep running server side. Give up after a few in a row.
+                    failures += 1
+                    if failures >= Self.maxPollFailures { throw error }
+                    try await Task.sleep(for: Self.pollInterval)
+                    continue
+                }
+                guard !Task.isCancelled, style == self.style else { return }
+                apply(status)
+                if status.done { return }
+                try await Task.sleep(for: Self.pollInterval)
+            }
+        } catch {
+            if !Task.isCancelled && !(error is CancellationError), style == self.style { shopError = error }
+        }
+    }
+
+    private func apply(_ status: ShopStatus) {
+        guard var rows = shopRows else { return }
+        for (i, item) in status.items.enumerated() where i < rows.count {
+            rows[i].status = item.status
+            rows[i].products = item.products
+        }
+        shopRows = rows
+        budgetUSD = status.budgetUsd
+        chosen = Set(status.chosen ?? [])
+        totalUSD = status.totalUsd
+    }
+
+    /// Quick search (/vibe/products) for one item whose agent came back empty.
+    func quickSearch(_ id: Int) async {
+        guard var style, let row = shopRows?.first(where: { $0.id == id }) else { return }
+        let current = style
+        style.searchQueries = [row.query]
+        update(id) { $0.quickLoading = true; $0.quick = nil }
+        let result: Result<[ShopProduct], Error>
+        do { result = .success(try await APIClient.shared.products(for: style)) } catch { result = .failure(error) }
+        guard current == self.style else { return }
+        update(id) {
+            $0.quickLoading = false
+            $0.quick = result
+            if case .success(let p) = result, let cap = current.shoppingList?.first(where: { $0.query == row.query })?.maxPriceUsd {
+                $0.quick = .success(p.filter { ($0.priceUSD ?? 0) <= cap })   // keep only what fits that item's share
+            }
+        }
+    }
+
+    private func update(_ id: Int, _ change: (inout ShopRow) -> Void) {
+        guard let i = shopRows?.firstIndex(where: { $0.id == id }) else { return }
+        change(&shopRows![i])
+    }
+}
+
+private func usd(_ value: Double) -> String {
+    value.formatted(.currency(code: "USD").precision(.fractionLength(value.rounded() == value ? 0 : 2)))
 }
 
 /// Decodes a picked photo at <= 2048 px, so a 48 MP HEIC doesn't stall the UI or the upload resize.
