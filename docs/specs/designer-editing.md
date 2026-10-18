@@ -25,6 +25,7 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
   - Width / height / depth in 5 cm steps (`Placement.scale`). "Reset Size" returns to `Placement.fitScale` (the size it was fitted to from a scanned box), else the model's natural size.
   - Height above floor, 0–2.4 m (`Placement.position.y`), for wall-mounted items. "Put on Floor" resets it.
   - Scanned furniture: Edit converts it into a placement with the same model fitted to RoomPlan's box. The original is removed through `Project.removedRoomObjects` (never restored by the eye toggle).
+- **Bottom bar:** "Make it real", "Add object", and a cart icon once the room has a shopped product (it opens that room's cart, see `cart.md`).
 - **Create:** Objects panel > "Add object" → "Your scans" or the catalog ("Custom Box" first), then size it.
 - **Replace:**
   - Catalog items stretch to RoomPlan's measured box. Library scans keep real scale.

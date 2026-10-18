@@ -42,7 +42,7 @@ photos in product order, and the backend writes "Image K is the product photo fo
   - A stale demo file URL (old bundle path): retry `Bundle.main.url(forResource:withExtension:)` with its last
     path component. Without this, the lazy cache below fails after a reinstall.
   - Empty or missing `imageURL`: no photo.
-- Called right after "Add to room" / "Add all" (VibeView), and again lazily before a render for any missing file.
+- Called by `RoomCart.add` (from VibeView and ProductDetailView), and again lazily before a render for any missing file.
   Downloads run in parallel, so a render waits at most about 10 s.
 - `load(placement:, project:) -> UIImage?`.
 - Placement removal leaves the file. The project folder holds it, so deleting the project removes it.

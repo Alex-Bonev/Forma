@@ -14,6 +14,8 @@ struct HomeView: View {
     @State private var newName = ""
     @State private var roomQuery = ""
     @State private var objectQuery = ""
+    @State private var showCart = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum Rename { case room(Project), object(ScannedObject) }
     @Namespace private var zoom   // Home thumbnails zoom into their detail screens
@@ -73,12 +75,19 @@ struct HomeView: View {
                     }
                         .buttonStyle(PillButtonStyle(filled: false))
                         .disabled(!Capabilities.canScanObject)
+                    let cartCount = RoomCart.count(in: store.projects)
+                    if cartCount > 0 {
+                        CartButton(count: cartCount, size: 48, fill: .clear, ink: Theme.ink, stroke: Theme.ink, lineWidth: 1) { showCart = true }
+                            .transition(.scale.combined(with: .opacity))
+                    }
                 }
+                .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.15), value: RoomCart.count(in: store.projects) > 0)
                 .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
                 .background(Theme.ground.opacity(0.7))
                 .background(.ultraThinMaterial)
                 .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
             }
+            .sheet(isPresented: $showCart) { CartSheet(projectID: nil) }
             .fullScreenCover(isPresented: $scanningRoom) {
                 RoomScanView { project in router.path.append(.room(project.id)) }
             }

@@ -44,7 +44,7 @@ struct CreateVibeView: View {
         HStack {
             if phase != .finding {
                 Button(action: back) {
-                    Image(systemName: "chevron.left").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Image(systemName: "chevron.left").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.wood)
                         .frame(width: 40, height: 40).background(Theme.tiles[0], in: Circle())
                 }
                 .accessibilityLabel("Back")
@@ -170,8 +170,9 @@ struct CreateVibeView: View {
                 .frame(width: 132, height: 132)
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .padding(.bottom, 12)
-                Text("Finding your vibe").font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
-                Text("About 20 seconds").font(.forma(12)).foregroundStyle(Theme.muted)
+                Text("Finding your vibe").font(.forma(22, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
+                Text("Reading \(picks.count) photo\(picks.count == 1 ? "" : "s") for palette, materials and mood.\nThis takes about 20 seconds.")
+                    .font(.forma(12)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
                 GeometryReader { geo in
                     Capsule().fill(Theme.hairline)
                         .overlay(alignment: .leading) {

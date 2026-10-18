@@ -95,7 +95,7 @@ Check field names against the provider docs on the day you build. These were rea
   - Style section (exists).
   - Restyled render (exists).
   - A "Shopping" section with one row per shopping-list item. Each row shows a spinner while running, then product cards, or a failure with "Try quick search".
-- `ProductCard` gains an "Add to room" button next to Open. If the product is in `chosen`, it shows a "Fits budget" badge.
+- `ProductCard` has "Add" (becomes "Added") next to "Open". Open pushes the product detail page (see `cart.md`); the original listing is reached from there with "Go to original listing". If the product is in `chosen`, the card shows a "Fits budget" badge.
 - `APIClient`:
   - `analyzeVibe(image: UIImage?, prompt: String?)`.
   - `startShopping(_ style:) -> ShopJob`.
@@ -172,7 +172,7 @@ Check field names against the provider docs on the day you build. These were rea
 
 ## Non-goals
 
-- No purchasing, cart, login, or saved payment details. Agents only read public product pages.
+- No purchasing, login, or saved payment details. Agents only read public product pages. The cart is a read-only list of the products added to rooms (see `cart.md`); checkout is not built.
 - No Facebook Marketplace, through any path.
 - No currency other than USD; no shipping or tax estimates.
 
