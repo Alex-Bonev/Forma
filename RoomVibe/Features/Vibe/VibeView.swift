@@ -147,49 +147,73 @@ struct VibeView: View {
 
     @ViewBuilder private var styleSection: some View {
         if let style = model.style {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(style.styleName).font(.title2.bold())
-                if model.isDemo {
-                    Text("Saved demo result").font(.caption2).foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your vibe").font(.forma(11)).foregroundStyle(Theme.muted)
+                    Text(style.styleName).font(.system(size: 30, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
+                    if model.isDemo {
+                        Text("Saved demo result").font(.forma(10)).foregroundStyle(Theme.muted)
+                    }
                 }
-                HStack(spacing: 6) {
-                    ForEach(Array(style.palette.enumerated()), id: \.offset) { _, hex in
-                        Circle().fill(Color(hex: hex)).frame(width: 28, height: 28)
-                            .overlay(Circle().stroke(.separator))
+                HStack(spacing: 8) {
+                    ForEach(Array(style.palette.prefix(5).enumerated()), id: \.offset) { _, hex in
+                        RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: hex)).frame(height: 40)
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.ink.opacity(0.08)))
                             .accessibilityLabel(hex)
                     }
                 }
-                Text((style.materials + style.decorItems).joined(separator: " · "))
-                    .font(.footnote).foregroundStyle(.secondary)
+                let tags = style.materials + style.decorItems
+                if !tags.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(Array(tags.enumerated()), id: \.offset) { _, tag in
+                            Text(tag).font(.forma(11)).foregroundStyle(Theme.wood)
+                                .padding(.horizontal, 12).frame(height: 28)
+                                .background(Theme.sand, in: Capsule())
+                        }
+                    }
+                }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
         } else if model.error == nil {
-            Label("Reading the vibe…", systemImage: "sparkles").padding(.horizontal)
-                .symbolEffect(.pulse)
+            HStack(spacing: 10) {
+                ProgressView().tint(Theme.sage)
+                Text("Reading the vibe…").font(.forma(12)).foregroundStyle(Theme.muted)
+            }
+            .padding(.horizontal, 24)
         }
     }
 
     @ViewBuilder private var renderSection: some View {
-        if model.isDemo {   // no live render for the saved result: show the room as it is
-            Image(uiImage: model.snapshot).resizable().scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
-        } else {
-            liveRenderSection
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Your room, restyled").font(.forma(13, bold: true)).foregroundStyle(Theme.ink).padding(.horizontal, 24)
+            if model.isDemo {   // no live render for the saved result: show the room as it is
+                Image(uiImage: model.snapshot).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .padding(.horizontal, 24)
+            } else {
+                liveRenderSection
+            }
         }
     }
 
     @ViewBuilder private var liveRenderSection: some View {
         switch model.render {
         case .some(.success(let image)):
-            BeforeAfterSlider(before: model.snapshot, after: image)
+            BeforeAfterSlider(before: model.snapshot, after: image).padding(.horizontal, 8)   // + its own 16
         case .some(.failure(let error)):
             errorCard(error.localizedDescription) { await model.rerender() }
         case nil:
             Image(uiImage: model.snapshot).resizable().scaledToFit().blur(radius: 6).opacity(0.6)
-                .overlay { ProgressView("Restyling your room…").padding().background(.regularMaterial, in: Capsule()) }
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
+                .overlay {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Theme.sage)
+                        Text("Restyling your room…").font(.forma(12)).foregroundStyle(Theme.ink)
+                    }
+                    .padding(.horizontal, 18).frame(height: 44)
+                    .background(Theme.ground, in: Capsule())
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.horizontal, 24)
         }
     }
 
