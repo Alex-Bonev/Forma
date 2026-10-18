@@ -132,6 +132,19 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Demo Chair at") == true, "undo brings the chair back")
     }
 
+    /// Needs the mock backend for a result (`MOCK=1 uvicorn main:app`); the sheet opens either way.
+    func testMakeItRealOpens() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        sleep(2)
+        app.buttons["Make it real"].tap()
+        XCTAssertTrue(app.navigationBars["Make it real"].waitForExistence(timeout: 5))
+        sleep(6)
+        XCUIScreen.main.screenshot().attach(named: "make-it-real", to: self)
+    }
+
     func testRenameRoom() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
