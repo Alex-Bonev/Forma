@@ -80,6 +80,11 @@ struct VibeView: View {
                 .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Describe a vibe, add a photo, or both").font(.headline)
+                        // Hidden stage trigger (kept in Release): long-press the title on a fresh screen to show the
+                        // bundled demo result.
+                        .onLongPressGesture(minimumDuration: 0.8) {
+                            if !model.started, let demo = VibeDemo.load() { prompt = demo.prompt; model.showDemo(demo) }
+                        }
                     Text("We'll restyle your room and send agents to shop for real pieces.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -118,6 +123,9 @@ struct VibeView: View {
         if let style = model.style {
             VStack(alignment: .leading, spacing: 8) {
                 Text(style.styleName).font(.title2.bold())
+                if model.isDemo {
+                    Text("Saved demo result").font(.caption2).foregroundStyle(.tertiary)
+                }
                 HStack(spacing: 6) {
                     ForEach(Array(style.palette.enumerated()), id: \.offset) { _, hex in
                         Circle().fill(Color(hex: hex)).frame(width: 28, height: 28)
@@ -136,6 +144,16 @@ struct VibeView: View {
     }
 
     @ViewBuilder private var renderSection: some View {
+        if model.isDemo {   // no live render for the saved result: show the room as it is
+            Image(uiImage: model.snapshot).resizable().scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal)
+        } else {
+            liveRenderSection
+        }
+    }
+
+    @ViewBuilder private var liveRenderSection: some View {
         switch model.render {
         case .some(.success(let image)):
             BeforeAfterSlider(before: model.snapshot, after: image)
@@ -334,6 +352,8 @@ final class VibeModel {
     private(set) var budgetUSD: Double?
     private(set) var totalUSD: Double?
     private(set) var error: String?
+    /// Showing the bundled demo result (VibeDemo) instead of a live run.
+    private(set) var isDemo = false
 
     struct ShopRow: Identifiable {
         let id: Int
@@ -384,10 +404,41 @@ final class VibeModel {
 
     func fail(_ message: String) { error = message }
 
+    /// Shows a recorded run as if it had just finished. Used when the backend can't be reached on stage.
+    func showDemo(_ demo: VibeDemo) {
+        run?.cancel()
+        side.forEach { $0.cancel() }
+        side.removeAll()
+        inspiration = nil
+        prompt = demo.prompt
+        started = true
+        isDemo = true
+        error = nil
+        render = nil
+        style = demo.style
+        resetShopping()
+        shopRows = demo.status.items.enumerated().map { ShopRow(id: $0.offset, category: $0.element.category,
+                                                                 query: $0.element.query) }
+        apply(demo.status)
+    }
+
+    /// Network trouble that the bundled demo result should cover for. Bad input (4xx) still shows its error.
+    private func fallBackToDemo(after error: Error) -> Bool {
+        switch error as? APIError {
+        case .offline, .timeout: break
+        case .server(let code, _) where code >= 500: break
+        default: return false
+        }
+        guard let demo = VibeDemo.load() else { return false }
+        showDemo(demo)
+        return true
+    }
+
     private func start(with image: UIImage?, prompt: String) async {
         inspiration = image
         self.prompt = prompt
         started = true
+        isDemo = false
         style = nil; render = nil; error = nil
         resetShopping()
         do {
@@ -395,7 +446,9 @@ final class VibeModel {
             guard !Task.isCancelled else { return }
             style = analyzed
         } catch {
-            if !Task.isCancelled && !(error is CancellationError) { self.error = error.localizedDescription }
+            if !Task.isCancelled && !(error is CancellationError) && !fallBackToDemo(after: error) {
+                self.error = error.localizedDescription
+            }
             return
         }
         async let r: Void = rerender()
@@ -460,7 +513,8 @@ final class VibeModel {
                 try await Task.sleep(for: Self.pollInterval)
             }
         } catch {
-            if !Task.isCancelled && !(error is CancellationError), style == self.style {
+            if !Task.isCancelled && !(error is CancellationError), style == self.style, !isDemo,
+               !fallBackToDemo(after: error) {
                 shopError = error
                 if var rows = shopRows {   // no spinners left behind the error
                     for i in rows.indices where rows[i].status == .running { rows[i].status = .failed }
@@ -552,5 +606,32 @@ extension Placement {
             p.fitScale = p.scale
         }
         return p
+    }
+}
+
+/// A recorded Vibe run bundled with the app (DemoData/vibe_demo.json, written by scripts/record_vibe_demo.py).
+/// Product images are "bundle:<file>" and resolve to bundled JPEGs, so the demo works offline.
+struct VibeDemo: Decodable {
+    var prompt: String
+    var style: VibeStyle
+    var status: ShopStatus
+
+    static func load(bundle: Bundle = .main) -> VibeDemo? {
+        guard let url = bundle.url(forResource: "vibe_demo", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard var demo = try? decoder.decode(VibeDemo.self, from: data) else { return nil }
+        for i in demo.status.items.indices {
+            for j in demo.status.items[i].products.indices {
+                let product = demo.status.items[i].products[j]
+                if let image = product.imageURL, image.scheme == "bundle" {
+                    let file = image.absoluteString.dropFirst("bundle:".count)
+                    demo.status.items[i].products[j].imageURL = bundle.url(forResource: String(file.prefix { $0 != "." }),
+                                                                           withExtension: "jpg")
+                }
+            }
+        }
+        return demo
     }
 }
