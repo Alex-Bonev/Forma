@@ -43,17 +43,21 @@ struct Wordmark: View {
 /// `compact` is the icon-only circle used when the Objects panel covers the room.
 struct MakeItRealButton: View {
     var compact = false
+    /// Defaults are the sand pill; fullscreen passes inverted colors when the backdrop is light.
+    var fill = Theme.sand
+    var ink = Theme.ink
+    var sparkle = Theme.sageDeep
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").font(.system(size: compact ? 18 : 15, weight: .semibold)).foregroundStyle(Theme.sageDeep)
-                if !compact { Text("Make it real").font(.forma(12, bold: true)).foregroundStyle(Theme.ink) }
+                Image(systemName: "sparkles").font(.system(size: compact ? 18 : 15, weight: .semibold)).foregroundStyle(sparkle)
+                if !compact { Text("Make it real").font(.forma(12, bold: true)).foregroundStyle(ink) }
             }
             .padding(.horizontal, compact ? 0 : 16)
             .frame(width: compact ? 44 : nil, height: 44)
-            .background(Theme.sand, in: Capsule())
+            .background(fill, in: Capsule())
             .overlay(Capsule().strokeBorder(Theme.sage, lineWidth: 1.5))
         }
         .buttonStyle(PressStyle())

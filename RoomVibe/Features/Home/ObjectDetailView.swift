@@ -108,10 +108,12 @@ struct ObjectStage: View {
     @State private var distance: Float = 2.4
     @State private var dragStart: (Float, Float)?
     @State private var zoomStart: Float?
+    @State private var backdrop = Tone.backdrop(subjectLuminance: nil)
+    private var chrome: (fill: Color, ink: Color) { fullscreen ? Tone.chrome(on: backdrop) : (Theme.ground.opacity(0.9), Theme.ink) }
 
     var body: some View {
         ZStack {
-            if fullscreen { Color(hex: 0xE8DFD3).ignoresSafeArea() }
+            if fullscreen { backdrop.ignoresSafeArea() }
             ring
             RealityView { content in
                 content.camera = .virtual
@@ -149,15 +151,20 @@ struct ObjectStage: View {
                 .onEnded { _ in zoomStart = nil })
             .accessibilityLabel("\(object.name) 3D view")
         }
+        .task {
+            let url = store.modelURL(for: object)
+            let l = await Task.detached { url.flatMap(Tone.luminance(ofModelAt:)) }.value
+            backdrop = Tone.backdrop(subjectLuminance: l)
+        }
         .overlay(alignment: .topLeading) { if fullscreen { collapse } }
         .overlay(alignment: .topTrailing) {
             if fullscreen {
-                Text(object.name).font(.forma(12, bold: true)).foregroundStyle(Theme.ink)
-                    .padding(.horizontal, 14).frame(height: 32).background(Theme.ground.opacity(0.9), in: Capsule())
+                Text(object.name).font(.forma(12, bold: true)).foregroundStyle(chrome.ink)
+                    .padding(.horizontal, 14).frame(height: 32).background(chrome.fill, in: Capsule())
                     .padding(.top, 16).padding(.trailing, 16)
             } else { expand }
         }
-        .overlay(alignment: .bottom) { HintPill("Drag to orbit · Pinch to zoom").padding(.bottom, fullscreen ? 36 : 12) }
+        .overlay(alignment: .bottom) { HintPill("Drag to orbit · Pinch to zoom", fill: chrome.fill, ink: chrome.ink).padding(.bottom, fullscreen ? 36 : 12) }
     }
 
     private var ring: some View {
@@ -179,7 +186,7 @@ struct ObjectStage: View {
     private var collapse: some View {
         Button(action: toggle) {
             Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.ink).frame(width: 44, height: 44).background(Theme.ground.opacity(0.9), in: Circle())
+                .foregroundStyle(chrome.ink).frame(width: 44, height: 44).background(chrome.fill, in: Circle())
         }
         .accessibilityLabel("Close fullscreen").padding(.top, 8).padding(.leading, 16)
     }
