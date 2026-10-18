@@ -156,6 +156,35 @@ final class VibeShoppingTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
+    /// End to end: a saved vibe applied to the room is Shop a vibe's input, no typing needed.
+    func testShopStartsFromRoomVibe() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh", "-seedVibe"]
+        app.launch()
+        let pill = app.buttons["roomVibe"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 10))
+        pill.tap()
+        app.buttons["vibeOption"].firstMatch.tap()
+        XCTAssertTrue(pill.label.hasPrefix("Vibe: "))
+
+        generate(app)
+        let openVibe = app.buttons["openVibe"]
+        wait(for: [expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: openVibe)], timeout: 10)
+        let input = app.descendants(matching: .any)["roomVibeInput"]
+        for _ in 0..<3 where !input.exists {
+            openVibe.tap()
+            _ = input.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(input.exists, "the room's vibe is the input")
+        saveShot("shop-room-vibe")
+        let start = app.buttons["vibeStart"]
+        XCTAssertTrue(start.isEnabled, "a room vibe is enough to start")
+        start.tap()
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'shopRow-'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 30), "shopping starts from the vibe")
+        saveShot("shop-room-vibe-results")
+    }
+
     /// Make it real result has two tabs (Compare, Image) and reopens on the room's latest render.
     func testMakeItRealTabs() {
         let app = XCUIApplication()

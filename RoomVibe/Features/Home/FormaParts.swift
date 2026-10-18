@@ -145,6 +145,7 @@ struct DetailBar: View {
 /// Small "Name" caption over a big editable title with a rule and pencil.
 struct NameField: View {
     @Binding var text: String
+    var fieldID = "nameField"
     let commit: () -> Void
     @FocusState private var focused: Bool
 
@@ -155,6 +156,7 @@ struct NameField: View {
                 TextField("Name", text: $text)
                     .font(.forma(28, bold: true, relativeTo: .title)).foregroundStyle(Theme.ink)
                     .focused($focused).submitLabel(.done).onSubmit(commit)
+                    .accessibilityIdentifier(fieldID)
                 Image(systemName: "pencil").foregroundStyle(Theme.ink)
                     .onTapGesture { focused = true }
             }

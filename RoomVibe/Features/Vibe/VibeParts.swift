@@ -104,6 +104,66 @@ struct SwatchRow: View {
     }
 }
 
+/// The editable profile, shared by the new-vibe review and vibe details. The common tags and instructions show first;
+/// the finer tags and the long description are one tap deeper.
+struct VibeFields: View {
+    @Binding var vibe: SavedVibe
+    @Binding var nameMissing: Bool
+    var caption: String?
+    @State private var more = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 6) {
+                NameField(text: $vibe.name, fieldID: "vibeName") {}
+                    .onChange(of: vibe.name) { nameMissing = false }
+                if nameMissing {
+                    Text("Name it to save.").font(.forma(11)).foregroundStyle(Theme.terracotta)
+                } else if let caption {
+                    Text(caption).font(.forma(11)).foregroundStyle(Theme.muted)
+                }
+            }
+            if !vibe.colors.isEmpty { SwatchRow(colors: vibe.colors) }
+            TagEditor(title: "Styles", tags: $vibe.styles)
+            TagEditor(title: "Mood", tags: $vibe.mood)
+            TagEditor(title: "Materials", tags: $vibe.materials)
+            TagEditor(title: "Avoid", tags: $vibe.avoid, avoid: true)
+            if more {
+                TagEditor(title: "Textures", tags: $vibe.textures)
+                TagEditor(title: "Motifs", tags: $vibe.motifs)
+                TagEditor(title: "Lighting", tags: $vibe.lighting)
+                TagEditor(title: "Furniture", tags: $vibe.furnitureCharacteristics)
+                VibeTextField(title: "Description", text: $vibe.description, prompt: "What this look is about")
+            } else {
+                Button { withAnimation(.spring(duration: 0.3, bounce: 0)) { more = true } } label: {
+                    Label("More details", systemImage: "chevron.down").font(.forma(12)).foregroundStyle(Theme.wood)
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("vibeMore")
+            }
+            VibeTextField(title: "Instructions", text: $vibe.customInstructions,
+                          prompt: "Optional, e.g. keep the sofa, no dark colors")
+        }
+    }
+}
+
+/// Small caption over an outlined multi-line field.
+private struct VibeTextField: View {
+    let title: String
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased()).font(.forma(10)).foregroundStyle(Theme.muted)
+            TextField("", text: $text, prompt: Text(prompt).foregroundStyle(Theme.muted), axis: .vertical)
+                .font(.forma(12)).foregroundStyle(Theme.ink).lineSpacing(4).lineLimit(2...14)
+                .padding(14)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+}
+
 /// Editable tag group: chips with an x, then a dashed "+ add" field. `avoid` tints terracotta.
 struct TagEditor: View {
     let title: String?

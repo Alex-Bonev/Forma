@@ -5,8 +5,11 @@ import SwiftUI
 /// Vibe mode: an inspiration photo and/or a description -> /vibe/analyze -> restyled render (/render with the style
 /// and the photo as reference) + real products found by shopping agents (/vibe/shop), within the budget if one was
 /// given. Falls back to quick search (/vibe/products) per item. Pushed from RenderView's navigation stack.
+/// A room with a saved vibe starts from it: its first photo is the reference and its profile the description.
 struct VibeView: View {
     @Environment(ProjectStore.self) private var store
+    @Environment(VibeLibrary.self) private var library
+    @State private var useRoomVibe = true
     @State private var model: VibeModel
     @State private var pick: PhotosPickerItem?
     @State private var photo: UIImage?
@@ -71,51 +74,19 @@ struct VibeView: View {
         }
     }
 
-    private var canStart: Bool { photo != nil || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var room: Project? { store.projects.first { $0.id == model.projectID } }
+    /// The room's saved vibe, unless the user set it aside for this screen.
+    private var roomVibe: SavedVibe? { useRoomVibe ? room?.vibeID.flatMap(library.vibe) : nil }
+
+    private var canStart: Bool {
+        roomVibe != nil || photo != nil || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     private var input: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                PhotosPicker(selection: $pick, matching: .images) {
-                    Group {
-                        if let photo {
-                            Image(uiImage: photo).resizable().scaledToFill()
-                        } else {
-                            VStack(spacing: 4) {
-                                Image(systemName: "plus").font(.system(size: 16))
-                                Text("Photo").font(.forma(10))
-                            }
-                            .foregroundStyle(Theme.wood)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Theme.sand)
-                        }
-                    }
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
-                }
-                .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Describe a vibe").font(.system(size: 26, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
-                        // Hidden stage trigger (kept in Release): long-press the title on a fresh screen to show the
-                        // bundled demo result.
-                        .onLongPressGesture(minimumDuration: 0.8) {
-                            if !model.started, let demo = VibeDemo.load() { prompt = demo.prompt; model.showDemo(demo) }
-                        }
-                    Text("Add a photo, words, or both. We restyle your room and agents shop real stores for it.")
-                        .font(.forma(11)).foregroundStyle(Theme.muted)
-                }
-                Spacer(minLength: 0)
-                if photo != nil {
-                    Button { photo = nil } label: {
-                        Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
-                            .frame(width: 32, height: 32).background(Theme.sand, in: Circle())
-                            .frame(width: 44, height: 44).contentShape(Rectangle())   // 44 pt hit target
-                    }
-                    .accessibilityLabel("Remove photo")
-                }
-            }
-            TextField("", text: $prompt, prompt: Text("Cozy reading nook, warm wood, under $800").foregroundStyle(Theme.muted),
+            if let vibe = roomVibe { vibeHeader(vibe) } else { freeHeader }
+            TextField("", text: $prompt, prompt: Text(roomVibe == nil ? "Cozy reading nook, warm wood, under $800"
+                                                                      : "Anything else? e.g. under $800").foregroundStyle(Theme.muted),
                       axis: .vertical)
                 .font(.forma(12)).foregroundStyle(Theme.ink)
                 .lineLimit(1...4)
@@ -128,7 +99,7 @@ struct VibeView: View {
             Button(action: start) {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
-                    Text(model.started ? "Find a new vibe" : "Find my vibe")
+                    Text(model.started ? "Try again" : "Restyle and shop")
                 }
             }
             .buttonStyle(PillButtonStyle())
@@ -139,18 +110,90 @@ struct VibeView: View {
         .padding(.horizontal, 24)
     }
 
+    /// The room's saved vibe as the input; x sets it aside for a one-off photo or description.
+    private func vibeHeader(_ vibe: SavedVibe) -> some View {
+        HStack(spacing: 14) {
+            VibeTile(vibe: vibe, corner: 16).frame(width: 64, height: 64)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(vibe.name).font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink).lineLimit(2)
+                Text("\(room?.name ?? "This room")'s vibe").font(.forma(11)).foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 0)
+            Button { useRoomVibe = false } label: {
+                Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
+                    .frame(width: 32, height: 32).background(Theme.sand, in: Circle())
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Use another look")
+        }
+        .accessibilityIdentifier("roomVibeInput")
+    }
+
+    private var freeHeader: some View {
+        HStack(alignment: .top, spacing: 14) {
+            PhotosPicker(selection: $pick, matching: .images) {
+                Group {
+                    if let photo {
+                        Image(uiImage: photo).resizable().scaledToFill()
+                    } else {
+                        VStack(spacing: 4) {
+                            Image(systemName: "plus").font(.system(size: 16))
+                            Text("Photo").font(.forma(10))
+                        }
+                        .foregroundStyle(Theme.wood)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.sand)
+                    }
+                }
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
+            }
+            .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Describe a vibe").font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
+                    // Hidden stage trigger (kept in Release): long-press the title on a fresh screen to show the
+                    // bundled demo result.
+                    .onLongPressGesture(minimumDuration: 0.8) {
+                        if !model.started, let demo = VibeDemo.load() { prompt = demo.prompt; model.showDemo(demo) }
+                    }
+                Text("A photo, words, or both.")
+                    .font(.forma(11)).foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 0)
+            if photo != nil {
+                Button { photo = nil } label: {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
+                        .frame(width: 32, height: 32).background(Theme.sand, in: Circle())
+                        .frame(width: 44, height: 44).contentShape(Rectangle())   // 44 pt hit target
+                }
+                .accessibilityLabel("Remove photo")
+            }
+        }
+    }
+
     private func start() {
         guard canStart else { return }
         promptFocused = false
-        model.begin(with: photo, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+        let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let vibe = roomVibe, let room {
+            // What the user typed goes first so a budget survives the backend's prompt cap.
+            let brief = [typed, getRoomVibeBrief(room: room, library: library) ?? ""].filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            let image = vibe.imageFiles.first.flatMap { UIImage(contentsOfFile: library.imageURL(vibe, $0).path) }
+            model.begin(with: image, prompt: String(brief.prefix(VibeModel.maxPrompt)))
+        } else {
+            model.begin(with: photo, prompt: typed)
+        }
     }
 
     @ViewBuilder private var styleSection: some View {
         if let style = model.style {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Your vibe").font(.forma(11)).foregroundStyle(Theme.muted)
-                    Text(style.styleName).font(.system(size: 30, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
+                    if roomVibe == nil {   // a room vibe already names the look above
+                        Text(style.styleName).font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
+                    }
                     if model.isDemo {
                         Text("Saved demo result").font(.forma(10)).foregroundStyle(Theme.muted)
                     }
@@ -486,6 +529,8 @@ final class VibeModel {
         var quickFailed: Bool { if case .some(.success(let p)) = quick { p.isEmpty } else { false } }
     }
 
+    /// The backend's MAX_PROMPT.
+    static let maxPrompt = 1000
     private static let pollInterval: Duration = .seconds(4)
     private static let maxPollFailures = 3
     private static let shopDeadline: Duration = .seconds(8 * 60)   // the backend gives up on an agent after 6 min

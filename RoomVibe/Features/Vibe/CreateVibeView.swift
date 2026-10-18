@@ -41,33 +41,22 @@ struct CreateVibeView: View {
     // MARK: Chrome
 
     private var topBar: some View {
-        let step = phase == .pick ? 1 : phase == .finding ? 2 : 3
-        return ZStack {
-            Text("New vibe · \(step) of 3").font(.forma(12)).foregroundStyle(Theme.muted)
-            HStack {
-                if phase != .finding {
-                    Button(action: back) {
-                        Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.wood)
-                            .frame(width: 44, height: 44).background(Theme.sand, in: Circle())
-                    }
-                    .accessibilityLabel("Back")
+        HStack {
+            if phase != .finding {
+                Button(action: back) {
+                    Image(systemName: "chevron.left").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                        .frame(width: 40, height: 40).background(Theme.tiles[0], in: Circle())
                 }
-                Spacer()
+                .accessibilityLabel("Back")
             }
+            Spacer()
         }
-        .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
+        .frame(height: 44)
+        .padding(.horizontal, 24).padding(.top, 8)
     }
 
     private func bottomBar<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
-            .background(Theme.ground)
-            .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
-    }
-
-    private func heading(_ text: String) -> some View {
-        Text(text).font(.system(size: 34, weight: .semibold, design: .serif)).tracking(-0.34)
-            .foregroundStyle(Theme.ink).accessibilityAddTraits(.isHeader)
+        content().padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
     }
 
     // MARK: Pick (M)
@@ -76,24 +65,21 @@ struct CreateVibeView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    noticeCard
-                    VStack(alignment: .leading, spacing: 8) {
-                        heading("Add inspiration photos")
-                        Text("Pick 1 to \(VibeLibrary.maxImages) photos of looks you love. JPEG, PNG or HEIC.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Photos you love").font(.forma(24, bold: true, relativeTo: .title)).foregroundStyle(Theme.ink)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(picks.isEmpty ? "Add up to \(VibeLibrary.maxImages)." : "\(picks.count) of \(VibeLibrary.maxImages)")
                             .font(.forma(12)).foregroundStyle(Theme.muted)
+                            .contentTransition(.numericText(value: Double(picks.count)))
                     }
-                    HStack {
-                        Text("Photos").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
-                        Spacer()
-                        Text("\(picks.count) / \(VibeLibrary.maxImages)").font(.forma(12)).foregroundStyle(Theme.muted)
-                    }
+                    noticeCard
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                         ForEach(picks) { pick in
                             Color.clear.frame(height: 104)
                                 .overlay { Image(uiImage: pick.image).resizable().scaledToFill() }
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                 .overlay(alignment: .topTrailing) {
-                                    Button { picks.removeAll { $0.id == pick.id } } label: {
+                                    Button { withAnimation(.spring(duration: 0.3, bounce: 0)) { picks.removeAll { $0.id == pick.id } } } label: {
                                         Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                                             .foregroundStyle(Theme.onSage)
                                             .frame(width: 24, height: 24).background(Theme.ink, in: Circle())
@@ -102,35 +88,33 @@ struct CreateVibeView: View {
                                     .padding(.top, -10).padding(.trailing, -10)
                                     .accessibilityLabel("Remove photo")
                                 }
+                                .transition(.scale(scale: 0.9).combined(with: .opacity))
                         }
                         if picks.count < VibeLibrary.maxImages {
                             PhotosPicker(selection: $selection, maxSelectionCount: VibeLibrary.maxImages - picks.count,
                                          matching: .images) {
-                                VStack(spacing: 6) {
-                                    Image(systemName: "plus").font(.system(size: 18, weight: .regular))
-                                    Text("Add").font(.forma(11))
-                                }
-                                .foregroundStyle(Theme.wood)
-                                .frame(maxWidth: .infinity).frame(height: 104)
-                                .background(Theme.sand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(Theme.sage, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+                                Image(systemName: "plus").font(.system(size: 18, weight: .regular))
+                                    .foregroundStyle(Theme.wood)
+                                    .frame(maxWidth: .infinity).frame(height: 104)
+                                    .background(Theme.sand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(Theme.sage, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
                             }
                             .accessibilityLabel("Add photos")
                             .accessibilityIdentifier("addVibePhotos")
                         }
                     }
                 }
-                .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 24)
+                .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 24)
             }
             .scrollIndicators(.hidden)
             bottomBar {
                 Button(action: find) {
-                    HStack(spacing: 10) { Image(systemName: "sparkle"); Text("Find My Vibe") }
+                    HStack(spacing: 10) { Image(systemName: "sparkle"); Text("Find my vibe") }
                 }
                 .buttonStyle(PillButtonStyle())
                 .disabled(picks.isEmpty)
-                .opacity(picks.isEmpty ? 0.5 : 1)
+                .opacity(picks.isEmpty ? 0.4 : 1)
                 .accessibilityIdentifier("findVibe")
             }
         }
@@ -141,50 +125,33 @@ struct CreateVibeView: View {
     @ViewBuilder private var noticeCard: some View {
         switch notice {
         case .skipped(let n):
-            card(title: "\(n) file\(n == 1 ? "" : "s") skipped",
-                 text: "Only JPEG, PNG or HEIC photos work. \(n == 1 ? "It was" : "They were") not added.") {
-                Button { notice = nil } label: {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.wood)
-                        .frame(width: 32, height: 32)
-                }
-                .accessibilityLabel("Dismiss")
-            }
+            card("\(n) file\(n == 1 ? "" : "s") skipped. Only JPEG, PNG or HEIC photos work.")
         case .failed(let message):
-            card(title: "Couldn't find your vibe", text: "\(message) Your photos are kept.") {
-                EmptyView()
-            } actions: {
-                HStack(spacing: 8) {
-                    Button("Retry", action: find).font(.forma(12)).foregroundStyle(Theme.onSage)
-                        .padding(.horizontal, 20).frame(height: 40).background(Theme.sage, in: Capsule())
-                    Button("Back to photos") { notice = nil }.font(.forma(12)).foregroundStyle(Theme.ink)
-                        .padding(.horizontal, 20).frame(height: 40).overlay(Capsule().strokeBorder(Theme.ink))
-                }
-            }
+            card("Couldn't find your vibe. \(message)", retry: find)
         case .saveFailed(let message):
-            card(title: "Couldn't save", text: message) { EmptyView() }
+            card("Couldn't save. \(message)")
         case nil:
             EmptyView()
         }
     }
 
-    private func card<Trailing: View, Actions: View>(title: String, text: String,
-                                                      @ViewBuilder trailing: () -> Trailing,
-                                                      @ViewBuilder actions: () -> Actions = { EmptyView() }) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "exclamationmark.circle").font(.system(size: 18)).foregroundStyle(Theme.terracotta)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.forma(12, bold: true)).foregroundStyle(Theme.ink)
-                    Text(text).font(.forma(11)).foregroundStyle(Theme.wood)
-                }
-                Spacer(minLength: 0)
-                trailing()
+    private func card(_ text: String, retry: (() -> Void)? = nil) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 15)).foregroundStyle(Theme.terracotta)
+            Text(text).font(.forma(11)).foregroundStyle(Theme.ink).frame(maxWidth: .infinity, alignment: .leading)
+            if let retry {
+                Button("Retry", action: retry).font(.forma(12, bold: true)).foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 14).frame(height: 34).overlay(Capsule().strokeBorder(Theme.ink))
             }
-            actions()
+            Button { notice = nil } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.wood)
+                    .frame(width: 32, height: 32)
+            }
+            .accessibilityLabel("Dismiss")
         }
-        .padding(.vertical, 14).padding(.horizontal, 16)
-        .background(Color(hex: 0xF3E1D5), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color(hex: 0xE5C5B0)))
+        .padding(.vertical, 10).padding(.leading, 16).padding(.trailing, 8)
+        .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.terracotta.opacity(0.35)))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("vibeNotice")
     }
@@ -203,9 +170,8 @@ struct CreateVibeView: View {
                 .frame(width: 132, height: 132)
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .padding(.bottom, 12)
-                Text("Finding your vibe").font(.system(size: 26, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
-                Text("Reading \(picks.count) photo\(picks.count == 1 ? "" : "s") for palette, materials and mood.\nThis takes about 20 seconds.")
-                    .font(.forma(12)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+                Text("Finding your vibe").font(.forma(20, bold: true, relativeTo: .title2)).foregroundStyle(Theme.ink)
+                Text("About 20 seconds").font(.forma(12)).foregroundStyle(Theme.muted)
                 GeometryReader { geo in
                     Capsule().fill(Theme.hairline)
                         .overlay(alignment: .leading) {
@@ -242,74 +208,21 @@ struct CreateVibeView: View {
     private var reviewScreen: some View {
         VStack(spacing: 0) {
             ScrollView {
-                if let binding = Binding($draft) { reviewFields(binding) }
+                if let binding = Binding($draft) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        noticeCard
+                        VibeFields(vibe: binding, nameMissing: $nameMissing)
+                    }
+                    .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 24)
+                }
             }
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
             bottomBar {
-                Button("Save Vibe", action: save).buttonStyle(PillButtonStyle())
+                Button("Save vibe", action: save).buttonStyle(PillButtonStyle())
                     .accessibilityIdentifier("saveVibe")
             }
         }
-    }
-
-    private func reviewFields(_ vibe: Binding<SavedVibe>) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            noticeCard
-            VStack(alignment: .leading, spacing: 6) {
-                Text("NAME · SUGGESTED BY AI").font(.forma(10)).tracking(0.6).foregroundStyle(Theme.muted)
-                HStack {
-                    TextField("", text: vibe.name, prompt: Text("Name your vibe").foregroundStyle(Color(hex: 0xC9BBA4)))
-                        .font(.system(size: 34, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
-                        .accessibilityIdentifier("vibeName")
-                        .onChange(of: vibe.wrappedValue.name) { nameMissing = false }
-                    Image(systemName: "pencil").font(.system(size: 14)).foregroundStyle(Theme.wood)
-                }
-                .padding(.bottom, 10)
-                .overlay(alignment: .bottom) {
-                    (nameMissing ? Color(hex: 0xC98F6B) : Theme.sage).frame(height: 1.5)
-                }
-                if nameMissing {
-                    Text("A vibe needs a name before it can be saved.").font(.forma(11)).foregroundStyle(Theme.terracotta)
-                }
-            }
-            if !vibe.wrappedValue.colors.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Colors").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
-                    SwatchRow(colors: vibe.wrappedValue.colors, showHex: true)
-                }
-            }
-            TagEditor(title: "Styles", tags: vibe.styles)
-            TagEditor(title: "Mood", tags: vibe.mood)
-            TagEditor(title: "Materials", tags: vibe.materials)
-            TagEditor(title: "Textures", tags: vibe.textures)
-            TagEditor(title: "Motifs", tags: vibe.motifs)
-            TagEditor(title: "Lighting", tags: vibe.lighting)
-            TagEditor(title: "Furniture", tags: vibe.furnitureCharacteristics)
-            TagEditor(title: "Avoid", tags: vibe.avoid, avoid: true)
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Description").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
-                    Spacer()
-                    Text("\(vibe.wrappedValue.description.split(whereSeparator: \.isWhitespace).count) words")
-                        .font(.forma(11)).foregroundStyle(Theme.muted)
-                }
-                field(vibe.description, prompt: "What this aesthetic is about", filled: true)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Custom instructions").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
-                field(vibe.customInstructions, prompt: "Optional. e.g. keep the existing sofa, no dark colors.", filled: false)
-            }
-        }
-        .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 24)
-    }
-
-    private func field(_ text: Binding<String>, prompt: String, filled: Bool) -> some View {
-        TextField("", text: text, prompt: Text(prompt).foregroundStyle(Theme.muted), axis: .vertical)
-            .font(.forma(12)).foregroundStyle(Theme.ink).lineLimit(3...14)
-            .padding(16)
-            .background(filled ? Theme.sand : .clear, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.hairline))
     }
 
     // MARK: Actions
