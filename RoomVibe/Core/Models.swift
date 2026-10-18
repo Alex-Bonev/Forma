@@ -34,6 +34,8 @@ struct Placement: Codable, Identifiable, Hashable {
     var scale: SIMD3<Float>? = nil
     /// Scale the item was created with (fitted to a scanned box); "Reset Size" returns here. nil = 1.
     var fitScale: SIMD3<Float>? = nil
+    /// "Lock in place" from the quick menu: no drag or twist while true. nil = unlocked.
+    var locked: Bool? = nil
 
     static let catalogObjectID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }
