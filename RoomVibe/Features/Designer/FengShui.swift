@@ -317,7 +317,10 @@ enum FengShui {
             for i in movable {
                 // Inside: rotated corners within the outline (inset by the wall), and no outline vertex poking into the box.
                 let h = items[i].half, p = s.pos[i], r = SIMD2(f[i].y, -f[i].x)
-                for c in [p + r * h.x + f[i] * h.y, p - r * h.x + f[i] * h.y, p + r * h.x - f[i] * h.y, p - r * h.x - f[i] * h.y] {
+                // Split from one literal: the type checker times out on the four-term expression in a single array.
+                let (rx, fy) = (r * h.x, f[i] * h.y)
+                let corners: [SIMD2<Float>] = [p + rx + fy, p - rx + fy, p + rx - fy, p - rx - fy]
+                for c in corners {
                     let d = nearestWall(c).d
                     t.inside += FloorClamp.contains(c, outline) ? max(0, FengShui.wall - d) : 1 + d
                 }
@@ -473,7 +476,9 @@ enum FengShui {
             let g = (lo: grid.lo, nx: grid.nx, nz: grid.nz), cell = FengShui.cell
             var open = grid.open
             for j in items.indices where items[j].kind != .rug {
-                let lo = s.pos[j] - box[j] - FengShui.person, hi = s.pos[j] + box[j] + FengShui.person
+                // Typed once: `SIMD2 - Float` in two inits at once makes Xcode 26.2 pick the Float overload and fail.
+                let pad = SIMD2<Float>(repeating: FengShui.person)
+                let lo: SIMD2<Float> = s.pos[j] - box[j] - pad, hi: SIMD2<Float> = s.pos[j] + box[j] + pad
                 let x0 = max(Int(((lo.x - g.lo.x) / cell).rounded(.up)), 0), x1 = min(Int(((hi.x - g.lo.x) / cell).rounded(.down)), g.nx - 1)
                 let z0 = max(Int(((lo.y - g.lo.y) / cell).rounded(.up)), 0), z1 = min(Int(((hi.y - g.lo.y) / cell).rounded(.down)), g.nz - 1)
                 guard x0 <= x1, z0 <= z1 else { continue }

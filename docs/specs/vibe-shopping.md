@@ -84,13 +84,19 @@ Check field names against the provider docs on the day you build. These were rea
 - `GET /vibe/shop/{job}` adds `chosen: [product_url]` and `total_usd` when `budget_usd` is set and every item is finished.
 - With a budget:
   - Products with no parseable price are never chosen.
-  - The app shows the chosen set first, labelled "Fits your $X budget", and shows the total.
+  - Once every item is finished and `chosen` is not empty, a summary card sits above the rows: "Within budget" or "Over budget", the picks total "of $X", a segment bar (one segment per picked product), a legend with "Left to spend", a "Change" link, and the price note. Before that, a caption "Budget $X." shows. Products in `chosen` keep the "Fits budget" badge.
+  - "Change" opens a sheet (current budget, "Picks now", amount field, "Update budget", "Cancel"). Applying calls `GET /vibe/shop/{job}?budget_usd=N`, or `?no_limit=true`, re-picks from the products already found and saves the run. No new agents run.
+  - Nothing fits: when a row finished with products, none is in `chosen`, and some cost more than what is left, the row shows "Nothing fits the $X." and "See N options". The options page lists those products cheapest first, each marked "Over by $Y" with "Open". "Raise budget to $N" re-picks with a budget that fits the cheapest one; "Skip this item" goes back. Both return to the results.
   - The UI says prices exclude shipping and tax.
 - Without a budget, `chosen` is the first product of each item.
+- `GET /vibe/shop/{job}?budget_usd=N` re-picks with budget N (finite, > 0, else 422) instead of the job's own. The response `budget_usd` is the one used.
+- `GET /vibe/shop/{job}?no_limit=true` re-picks with no budget and returns `budget_usd: null`. It wins over `budget_usd`.
+- Both params only change the pick. The signed job token and the agents' products stay as they are.
+- Each item carries `cap_usd`, its price share from the job (null when unset).
 
 ### 4. App: input and results (`VibeView`)
 
-- The input card has a photo picker **and** a text field ("Describe the vibe…"). Either is enough to start, and a budget can be typed in the text.
+- The input card has a photo picker **and** a text field ("Describe the vibe…"). Either is enough to start, and a budget can be typed in the text. Below the text field is an optional Budget field ("No limit" when empty) with preset chips. A budget typed in the text fills the field when it is empty. A value in the field beats the budget the backend parsed, and is sent as `budget_usd` to `POST /vibe/shop`. The settled budget is saved on the room (`Project.budgetUSD`) for the cart.
 - After the analysis:
   - Style section (exists).
   - Restyled render (exists).
@@ -98,8 +104,8 @@ Check field names against the provider docs on the day you build. These were rea
 - `ProductCard` has "Add" (becomes "Added") next to "Open". Open pushes the product detail page (see `cart.md`); the original listing is reached from there with "Go to original listing". If the product is in `chosen`, the card shows a "Fits budget" badge.
 - `APIClient`:
   - `analyzeVibe(image: UIImage?, prompt: String?)`.
-  - `startShopping(_ style:) -> ShopJob`.
-  - `pollShopping(_ job:) -> ShopStatus`.
+  - `startShopping(_ style:, budget: Double? = nil) -> ShopJob`.
+  - `pollShopping(_ job:, budget: Double? = nil, noLimit: Bool = false) -> ShopStatus`; `ShopStatus.Item.capUsd` (from `cap_usd`, optional).
   - Use `Lossy<>` decoding as `products(for:)` does.
 
 ### 5. Items into the room as catalog boxes (core)

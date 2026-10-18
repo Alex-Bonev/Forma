@@ -259,6 +259,30 @@ def test_shop_mock_streams_then_picks(monkeypatch):
     assert product["category"] == "sofa" and product["dimensions_cm"] == [80, 75, 80] and product["price_usd"] > 0
 
 
+def test_shop_budget_override(monkeypatch):
+    job = c.post("/vibe/shop", headers=H, json=shop_request(300)).json()["job"]
+    monkeypatch.setattr(main.time, "time", lambda: 10**10)
+
+    def get(**q):
+        return c.get(f"/vibe/shop/{job}", headers=H, params=q)
+
+    base = get().json()
+    assert get().json() == base and base["budget_usd"] == 300
+    assert all(it["cap_usd"] is not None for it in base["items"])
+    big = get(budget_usd=100000).json()
+    assert big["budget_usd"] == 100000 and big["chosen"] == base["chosen"]  # first products already fit; best fit stays
+    tiny = get(budget_usd=1).json()
+    assert tiny["chosen"] == [] and tiny["total_usd"] == 0
+    mid = get(budget_usd=base["total_usd"] / 2).json()
+    assert len(mid["chosen"]) < len(base["chosen"])
+    assert get(budget_usd=base["total_usd"] / 2 + 100).json()["total_usd"] > mid["total_usd"]  # bigger budget, bigger pick
+    free = get(no_limit="true", budget_usd=1).json()  # no_limit wins
+    assert free["budget_usd"] is None
+    assert free["chosen"] == [it["products"][0]["product_url"] for it in free["items"]]
+    for bad in ("0", "-5", "nan", "inf"):
+        assert get(budget_usd=bad).status_code == 422
+
+
 def test_shop_bad_job():
     assert c.get("/vibe/shop/not-a-job", headers=H).status_code == 400
     job = c.post("/vibe/shop", headers=H, json=shop_request()).json()["job"]

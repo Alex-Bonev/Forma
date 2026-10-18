@@ -18,6 +18,8 @@ struct Project: Codable, Identifiable, Hashable {
     /// Applied SavedVibe (Apply vibe in the room). A link only: independent of the render restyle. Dangles to nil
     /// lookups if that vibe is deleted.
     var vibeID: UUID? = nil
+    /// Budget (USD) for what is bought for this room. Set from Shop a vibe, shown in the cart. nil = no limit.
+    var budgetUSD: Double? = nil
 }
 
 struct ScannedObject: Codable, Identifiable, Hashable {

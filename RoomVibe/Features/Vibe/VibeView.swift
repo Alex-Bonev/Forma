@@ -14,6 +14,8 @@ struct VibeView: View {
     @State private var pick: PhotosPickerItem?
     @State private var photo: UIImage?
     @State private var prompt = ""
+    @State private var budget: Double?
+    @State private var showBudgetSheet = false
     @FocusState private var promptFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showCart = false
@@ -75,6 +77,17 @@ struct VibeView: View {
             }
         }
         .sheet(isPresented: $showCart) { CartSheet(projectID: model.projectID) }
+        .sheet(isPresented: $showBudgetSheet) {
+            BudgetSheet(current: model.budgetUSD, picksTotal: model.totalUSD) { new in Task { await model.applyBudget(new) } }
+        }
+        .onChange(of: model.style?.budgetUsd) { _, parsed in
+            if budget == nil, let parsed { budget = parsed }   // only fills an empty field
+        }
+        .onChange(of: model.settledBudget) { _, settled in
+            guard var room else { return }
+            room.budgetUSD = settled
+            store.update(room)
+        }
         .overlay { flightLayer }
         .tint(Theme.ink)
         .environment(\.colorScheme, .light)   // Paper is light-only
@@ -124,6 +137,7 @@ struct VibeView: View {
                 .submitLabel(.go)
                 .onSubmit(start)
                 .accessibilityIdentifier("vibePrompt")
+            BudgetField(amount: $budget)
             Button(action: start) {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
@@ -203,6 +217,7 @@ struct VibeView: View {
     private func start() {
         guard canStart else { return }
         promptFocused = false
+        model.budgetOverride = budget
         let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if let vibe = roomVibe, let room {
             // What the user typed goes first so a budget survives the backend's prompt cap.
@@ -303,18 +318,21 @@ struct VibeView: View {
                     }
                 }
                 Group {
-                    if let budget = model.budgetUSD {
-                        if let total = model.totalUSD, !model.chosen.isEmpty {
-                            Text("Picks marked \"Fits budget\" total \(usd(total)) of your \(usd(budget)).")
-                        } else {
-                            Text("Budget \(usd(budget)).")
-                        }
+                    if let budget = model.budgetUSD, !showsSummary {
+                        Text("Budget \(usd(budget)).")
                     }
                     Text("Agents browse real stores. Prices exclude shipping and tax.")
                 }
                 .font(.forma(11)).foregroundStyle(Theme.muted)
             }
             .padding(.horizontal, 24)
+            if showsSummary, let budget = model.budgetUSD {
+                BudgetSummaryCard(budget: budget, segments: (model.shopRows ?? []).flatMap { row in
+                    row.products.filter { model.chosen.contains($0.productURL) }
+                        .map { BudgetBar.Segment(id: "\(row.id)-\($0.id)", label: row.query.capitalized, amount: $0.priceUSD ?? 0) }
+                }, onChange: { showBudgetSheet = true })
+                .padding(.horizontal, 24)
+            }
             addAllButton
             if let error = model.shopError {
                 errorCard(error.localizedDescription) { model.retryProducts() }
@@ -324,6 +342,9 @@ struct VibeView: View {
             }
         }
     }
+
+    private var shopFinished: Bool { !(model.shopRows ?? []).contains { $0.status == .running } }
+    private var showsSummary: Bool { model.budgetUSD != nil && shopFinished && !model.chosen.isEmpty }
 
     /// The picks (`chosen`, set once every agent is done) with their row's category, in shopping-list order.
     private var picks: [(product: ShopProduct, category: String)] {
@@ -397,6 +418,24 @@ struct VibeView: View {
                 }
             }
             .padding(.horizontal, 24)
+            if let budget = model.budgetUSD, shopFinished, !products.isEmpty,
+               !products.contains(where: { model.chosen.contains($0.productURL) }) {
+                let left = max(budget - (model.totalUSD ?? 0), 0)
+                let over = products.filter { ($0.priceUSD ?? 0) > left }.sorted { ($0.priceUSD ?? 0) < ($1.priceUSD ?? 0) }
+                if !over.isEmpty {
+                    HStack {
+                        Text("Nothing fits the \(usd(left)).").font(.forma(11)).foregroundStyle(Theme.terracotta)
+                        Spacer()
+                        NavigationLink {
+                            BudgetOptionsWrapper(row: row, budget: budget, spent: model.totalUSD ?? 0, options: over,
+                                                 projectID: model.projectID) { new in Task { await model.applyBudget(new) } }
+                        } label: {
+                            Text("See \(over.count) options").font(.forma(11, bold: true)).foregroundStyle(Theme.ink)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                }
+            }
             if !products.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
@@ -481,6 +520,23 @@ struct VibeView: View {
 }
 
 /// Compact pill for row-level actions (Retry, Add, Open, Try quick search): sage filled, or a 1 pt ink outline.
+/// Pops back after either choice.
+private struct BudgetOptionsWrapper: View {
+    @Environment(\.dismiss) private var dismiss
+    let row: VibeModel.ShopRow
+    let budget: Double
+    let spent: Double
+    let options: [ShopProduct]
+    let projectID: UUID?
+    let onRaise: (Double) -> Void
+
+    var body: some View {
+        BudgetOptionsView(itemName: row.query.capitalized, category: row.category, projectID: projectID,
+                          budget: budget, spent: spent, options: options,
+                          onRaise: { onRaise($0); dismiss() }, onSkip: { dismiss() })
+    }
+}
+
 private struct SmallPillStyle: ButtonStyle {
     var filled = true
     @Environment(\.isEnabled) private var isEnabled
@@ -632,6 +688,10 @@ final class VibeModel {
     /// The shopping agents' job token (stateless on the backend), kept so polling can resume after a relaunch.
     private var job: String?
     private var shopDone = false
+    /// Budget the user typed into the field; beats the one the backend parsed from the prompt.
+    var budgetOverride: Double?
+    /// The budget once the run has settled, nil before (and for a run without one). The screen saves it to the project.
+    var settledBudget: Double? { shopDone && !isDemo ? budgetUSD : nil }
     private var poller: Task<Void, Never>?
     /// The current restyle is already on disk.
     private var renderWritten = false
@@ -797,9 +857,9 @@ final class VibeModel {
         resetShopping()
         shopRows = (style.shoppingList ?? []).enumerated().map { ShopRow(id: $0.offset, category: $0.element.category,
                                                                           query: $0.element.query) }
-        budgetUSD = style.budgetUsd
+        budgetUSD = budgetOverride ?? style.budgetUsd
         do {
-            let started = try await APIClient.shared.startShopping(style)
+            let started = try await APIClient.shared.startShopping(style, budget: budgetOverride)
             guard !Task.isCancelled, style == self.style else { return }
             job = started.job
             save()
@@ -940,6 +1000,15 @@ final class VibeModel {
         budgetUSD = status.budgetUsd
         chosen = Set(status.chosen ?? [])
         totalUSD = status.totalUsd
+    }
+
+    /// Re-picks the set under a new budget (nil = no limit) from the products already found.
+    func applyBudget(_ usd: Double?) async {
+        guard let job, let status = try? await APIClient.shared.pollShopping(ShopJob(job: job, items: []),
+                                                                             budget: usd, noLimit: usd == nil) else { return }
+        apply(status)
+        budgetUSD = usd == nil ? nil : status.budgetUsd ?? usd
+        save()
     }
 
     /// Quick search (/vibe/products) for one item whose agent came back empty.

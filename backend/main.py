@@ -866,10 +866,17 @@ def mock_run(i: int, item: dict, elapsed: float) -> dict:
 
 
 @app.get("/vibe/shop/{job}")
-async def vibe_shop_status(job: str):
-    """Each item's agent status and products. When all are finished, `chosen` is the set that fits the budget."""
+async def vibe_shop_status(job: str, budget_usd: float | None = None, no_limit: bool = False):
+    """Each item's agent status and products. When all are finished, `chosen` is the set that fits the budget.
+    `budget_usd` / `no_limit` re-pick with another budget; the signed job token is not changed."""
+    if budget_usd is not None and not (math.isfinite(budget_usd) and budget_usd > 0):
+        raise HTTPException(422, "budget_usd must be a finite number above 0")
     state = decode_job(job)
     items, budget = state["items"], state.get("budget")
+    if no_limit:
+        budget = None
+    elif budget_usd is not None:
+        budget = budget_usd
     elapsed = max(0.0, time.time() - state["t"])
     if MOCK:
         runs = [mock_run(i, it, elapsed) for i, it in enumerate(items)]
@@ -891,7 +898,7 @@ async def vibe_shop_status(job: str):
             state_ = "failed"
         else:
             state_ = "running"
-        out.append({"category": it["category"], "query": it["query"], "status": state_,
+        out.append({"category": it["category"], "query": it["query"], "status": state_, "cap_usd": it.get("cap"),
                     "products": [p.model_dump() for p in products]})
     done = all(it["status"] != "running" for it in out)
     result = {"done": done, "budget_usd": budget, "items": out}
