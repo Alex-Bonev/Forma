@@ -33,6 +33,7 @@ struct RoomVibeApp: App {
                         .transition(.opacity)
                 }
             }
+            .preferredColorScheme(.light)   // the forma palette is light-only; dark system text in sheets/menus was unreadable on it
             .task {
                 // Wake a cold Vercel function now, so the first "Make it real" doesn't pay for the cold start.
                 _ = try? await APIClient.shared.health()
