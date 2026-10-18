@@ -6,11 +6,14 @@ import UIKit
 ///
 /// Config: optional `APIConfig.json` next to this file (gitignored, bundled automatically by the synced folder),
 /// written by `scripts/run_local.sh` for the demo server on the Mac:
-///   {"baseURL": "http://<mac-lan-ip>:8000", "secret": "<APP_SHARED_SECRET>"}
+///   {"baseURL": "http://<mac-lan-ip>:8000", "secret": "<APP_SHARED_SECRET>",
+///    "cloud": {"url": "https://<ref>.supabase.co", "key": "<publishable key>"}}
 /// Without it the app talks to `http://127.0.0.1:8000`, which only works from the Simulator.
 struct APIConfig: Codable {
     var baseURL: URL
     var secret: String
+    /// Supabase project for the library mirror (CloudSync). nil = the library stays on this device only.
+    var cloud: CloudConfig? = nil
 
     static let current: APIConfig = {
         if let url = Bundle.main.url(forResource: "APIConfig", withExtension: "json") {
