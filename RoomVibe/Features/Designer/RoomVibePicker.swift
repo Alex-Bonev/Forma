@@ -44,6 +44,7 @@ struct RoomVibeControl<Leading: View>: View {
                     onNew: { showMenu = false; newVibe() }
                 )
                 .frame(width: 280)
+                .fixedSize(horizontal: false, vertical: true)   // the overlay proposes the pill's height; without this the list collapses
                 .offset(y: opensUp ? -52 : 52)
                 .transition(.scale(scale: 0.96, anchor: opensUp ? .bottomLeading : .topLeading).combined(with: .opacity))
             }
