@@ -9,6 +9,7 @@ struct RenderView: View {
     @State private var model: RenderModel
     @Environment(\.dismiss) private var dismiss
     @Environment(ProjectStore.self) private var store
+    @Environment(Connectivity.self) private var connectivity
 
     /// `camera`: the Designer camera at capture time. With it, a structure map of the same view is sent too,
     /// and a low camera starts in Photo mode.
@@ -65,6 +66,10 @@ struct RenderView: View {
         }
         .animation(.easeOut(duration: 0.25), value: model.isLoading)
         .onChange(of: model.view) { model.start() }
+        // Back online after an offline failure or a cached render: try again without a tap.
+        .onChange(of: connectivity.online) { _, online in
+            if online, model.needsRetry { model.start() }
+        }
         .onAppear {
             guard model.result == nil, !model.isRunning else { return }
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
@@ -132,6 +137,8 @@ private struct ViewPicker: View {
         }
         .padding(4)
         .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("View")
         .animation(.spring(duration: 0.25, bounce: 0), value: selection)
         .sensoryFeedback(.selection, trigger: selection)
     }
@@ -180,6 +187,14 @@ final class RenderModel {
     }
 
     var isLoading: Bool { if case .loading = phase { true } else { false } }
+
+    /// A failed run or a cached (stale) render: worth retrying once the network is back.
+    var needsRetry: Bool {
+        switch phase {
+        case .failed, .done(_, isStale: true): !isRunning
+        default: false
+        }
+    }
 
     var result: UIImage? {
         if case .done(let image, _) = phase { image } else { nil }
