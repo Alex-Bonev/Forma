@@ -45,7 +45,7 @@ final class VibeShoppingTests: XCTestCase {
 
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Close"].tap()
-        if !app.buttons["Add object"].waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
+        openObjectsPanel(app)
         let names = ["Sofa", "Round Table", "Armchair", "Floor Lamp"]
         for name in names { XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 5), name) }
         app.buttons["Objects"].tap()   // panel away: the room shows where the new items landed
@@ -54,10 +54,11 @@ final class VibeShoppingTests: XCTestCase {
         shot.name = "vibe-add-all"
         shot.lifetime = .keepAlways
         add(shot)
-        if !app.buttons["Add object"].waitForExistence(timeout: 2) { app.buttons["Objects"].tap() }
+        openObjectsPanel(app)
 
         // The demo room persists across launches: remove the shopped items (listed before scanned furniture).
         for name in names {
+            openObjectsPanel(app)   // Remove closes the sheet
             app.staticTexts[name].firstMatch.tap()
             XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3),
                           "\(name) should be the shopped one")
@@ -88,7 +89,7 @@ final class VibeShoppingTests: XCTestCase {
         app.buttons["Close"].tap()
 
         // The demo room persists across launches: remove the shopped sofa again.
-        if !app.buttons["Add object"].waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
+        openObjectsPanel(app)
         sleep(1)   // the panel slides in: a tap mid-slide can land on the row's eye button instead
         app.staticTexts["Sofa"].firstMatch.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3))
@@ -178,6 +179,13 @@ final class VibeShoppingTests: XCTestCase {
         let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
         XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
     }
+}
+
+/// Opens the Designer's Objects panel unless it is already open (the bottom bar, with Make it real, shows only
+/// while it is closed).
+func openObjectsPanel(_ app: XCUIApplication) {
+    let bar = app.buttons["Make it real"].firstMatch
+    if bar.waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
 }
 
 /// Make it real (wide bottom bar) opens the render sheet. A tap during launch can be swallowed, so retry.
