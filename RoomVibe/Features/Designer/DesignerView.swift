@@ -1484,7 +1484,7 @@ struct DesignerView: View {
     /// Deselect, let the solver agents think (a beat at least, for show), then glide everything into place.
     private func fengShuiify() {
         guard balancing == nil, let room = fengShuiRoom() else { return }
-        selected = nil; selectedRoomObject = nil; lockMenuFor = nil
+        selected = nil; selectedRoomObject = nil
         let (items, scanned) = fengShuiItems()
         balancing = Task {
             async let solved = FengShui.arrange(items, in: room)
