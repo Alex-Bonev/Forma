@@ -30,8 +30,8 @@ final class DesignerGestureTests: XCTestCase {
 
         // Chair sits on the camera target, which projects to the canvas center.
         let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
-        // Hit testing alone: deselect (tap empty floor near the top), then tap the chair to select it again.
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08)).tap()
+        // Hit testing alone: deselect (tap empty space above the room), then tap the chair to select it again.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
         XCTAssertFalse(app.buttons["Remove"].exists)
         chair.tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 2), "tap on the chair should select it")
@@ -128,7 +128,7 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(width.waitForExistence(timeout: 3))
         XCTAssertTrue(width.label.hasSuffix(" cm"), "sizes read in cm, like the Objects panel")
         XCUIScreen.main.screenshot().attach(named: "size-sheet", to: self)
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08)).tap()   // deselect through the half sheet
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()   // deselect through the half sheet
         sleep(1)
         XCTAssertFalse(width.exists, "deselecting closes the Size sheet instead of leaving it empty or stale")
     }
@@ -185,7 +185,7 @@ final class DesignerGestureTests: XCTestCase {
         let pill = app.buttons["Lock in place"], unlockPill = app.buttons["Unlock in place"]
         XCTAssertFalse(pill.exists, "adding an object must not show the pill")
 
-        let empty = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08))
+        let empty = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
         let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
         empty.tap()
         chair.tap()
