@@ -65,7 +65,17 @@ struct DesignerView: View {
     @State private var renderShot: RenderShot?
 
     /// Capture before presenting: the snapshot and the camera must describe the same frame.
+    /// Selection markers are cleared first so the image model doesn't render them as objects.
     private func makeItReal() {
+        if selected != nil || selectedRoomObject != nil {
+            selected = nil
+            selectedRoomObject = nil
+            Task {
+                try? await Task.sleep(for: .milliseconds(150))   // let RealityKit draw a frame without the marker
+                makeItReal()
+            }
+            return
+        }
         guard let image = captureDesignerSnapshot() else { return }
         let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
                                verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
