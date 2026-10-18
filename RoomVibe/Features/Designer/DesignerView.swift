@@ -43,6 +43,9 @@ struct DesignerView: View {
     @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
     @State private var making3D: (id: UUID, task: Task<Void, Never>)?   // "Make it 3D" job for a shopped product
     @State private var failed3D: Set<UUID> = []
+    @State private var balancing: Task<Void, Never>?   // Feng-shui-ify solver run
+    @State private var inHarmony = false   // "Already in harmony" pill: the solver found nothing better
+    @State private var balanced = 0   // haptic trigger
 
     /// What a new Object Capture scan should replace.
     enum ScanTarget: Identifiable {
@@ -109,7 +112,7 @@ struct DesignerView: View {
         stack.sheet(item: $renderShot) { shot in
             RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera)
         }
-        .onDisappear { making3D?.task.cancel() }
+        .onDisappear { making3D?.task.cancel(); balancing?.cancel() }
     }
 
     @ViewBuilder private var stack: some View {
@@ -170,10 +173,14 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
                 .animation(.spring(duration: 0.3, bounce: 0), value: objectsDetent)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
+                .animation(.easeOut(duration: 0.25), value: inHarmony)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) {
                         // With the Objects panel open, Undo lives in the panel instead of under it.
                         if !showObjects { undoBar }
+                        if inHarmony && !showObjects {
+                            HintPill("Already in harmony ✨", fill: chrome.fill, ink: chrome.ink).transition(.opacity)
+                        }
                         hint.allowsHitTesting(false)
                         // Renders exactly what's on screen: frame it by dragging, then tap.
                         if !showObjects {
@@ -202,6 +209,7 @@ struct DesignerView: View {
                         .animation(.spring(duration: 0.25, bounce: 0), value: lockMenuFor)   // scoped: on the whole view it froze the Designer
                 }
                 .sensoryFeedback(.selection, trigger: selected)
+                .sensoryFeedback(.success, trigger: balanced)
         } else {
             ContentUnavailableView("Room not found", systemImage: "cube.transparent")
         }
@@ -238,7 +246,13 @@ struct DesignerView: View {
                 .ignoresSafeArea(edges: style == .card ? [] : .bottom)
         }
         .overlay(alignment: .topTrailing) {
-            if style == .full { viewControls.padding(.horizontal, 16).padding(.top, 64) }
+            if style == .full {
+                VStack(alignment: .trailing, spacing: 12) {
+                    viewControls
+                    if !showObjects && (balancing != nil || canFengShui) { fengShuiButton.transition(.opacity) }
+                }
+                .padding(.horizontal, 16).padding(.top, 64)
+            }
         }
         .animation(.easeOut(duration: 0.3), value: showHint)
         .animation(.easeOut(duration: 0.3), value: objectHint)
@@ -1111,15 +1125,8 @@ struct DesignerView: View {
     /// Wall-mounted objects keep their height (bottom of RoomPlan's box above the floor).
     private func replaceRoomObject(_ i: Int, object: ScannedObject? = nil, catalog: CatalogItem? = nil) async {
         guard var project, let anchor = roomObjectEntity(i), let box = store.room(for: project)?.objects[i] else { return }
-        let pos = anchor.position(relativeTo: scene)
-        let bottom = pos.y - box.dimensions.y / 2
-        var yaw = { let f = anchor.orientation(relativeTo: scene).act([0, 0, 1]); return atan2(f.x, f.z) }()
-        if box.label == RoomModel.markedLabel, let away = yawAwayFromNearestWall(pos) { yaw = away }
-        var p = Placement(id: UUID(), objectID: object?.id ?? Placement.catalogObjectID,
-                          position: [pos.x, bottom > 0.1 ? bottom : 0, pos.z], yRotation: yaw, catalogItem: catalog?.id)
-        if let catalog { p.scale = box.dimensions / catalog.size; p.fitScale = p.scale }
+        let p = placement(replacing: i, box: box, anchor: anchor, object: object, catalog: catalog, in: &project)
         project.placements.append(p)
-        project.removedRoomObjects = Array(Set((project.removedRoomObjects ?? []) + [i])).sorted()
         store.update(project)
         anchor.isEnabled = false
         selectedRoomObject = nil
@@ -1127,15 +1134,34 @@ struct DesignerView: View {
         selected = p.id
     }
 
+    /// Placement standing exactly where scanned furniture `i` is (shared by Replace, Size and Feng-shui-ify); marks `i`
+    /// removed in `project`. The caller appends it, saves, and hides the anchor.
+    private func placement(replacing i: Int, box: RoomModel.Box, anchor: Entity, object: ScannedObject? = nil,
+                           catalog: CatalogItem? = nil, in project: inout Project) -> Placement {
+        let pos = anchor.position(relativeTo: scene)
+        let bottom = pos.y - box.dimensions.y / 2
+        var yaw = { let f = anchor.orientation(relativeTo: scene).act([0, 0, 1]); return atan2(f.x, f.z) }()
+        if box.label == RoomModel.markedLabel, let away = yawAwayFromNearestWall(pos) { yaw = away }
+        var p = Placement(id: UUID(), objectID: object?.id ?? Placement.catalogObjectID,
+                          position: [pos.x, bottom > 0.1 ? bottom : 0, pos.z], yRotation: yaw, catalogItem: catalog?.id)
+        if let catalog { p.scale = box.dimensions / catalog.size; p.fitScale = p.scale }
+        project.removedRoomObjects = Array(Set((project.removedRoomObjects ?? []) + [i])).sorted()
+        return p
+    }
+
     /// Edit = turn scanned furniture into an editable placement (same model, same box), then open the editor.
     private func editRoomObject(_ i: Int, room: RoomModel) async {
+        await replaceRoomObject(i, catalog: standIn(i, room: room))
+        editing = selected   // replaceRoomObject selects the new placement
+    }
+
+    /// The catalog model Realistic Models shows for scanned furniture `i` (Custom Box when there's none).
+    private func standIn(_ i: Int, room: RoomModel) -> CatalogItem {
         var key = RoomBuilder.furnitureModel(for: room.objects[i])
         if key == "sink", let e = roomObjectEntity(i), e.position(relativeTo: scene).y - room.objects[i].dimensions.y / 2 > 0.2 {
             key = "sink_wall"   // floating sink = wall-mounted basin
         }
-        let item = CatalogItem.all.first { $0.model == key } ?? CatalogItem.item("custom_box")!
-        await replaceRoomObject(i, catalog: item)
-        editing = selected   // replaceRoomObject selects the new placement
+        return CatalogItem.all.first { $0.model == key } ?? CatalogItem.item("custom_box")!
     }
 
     /// Facing for things marked on a wall: front points into the room, away from the closest wall.
@@ -1328,6 +1354,159 @@ struct DesignerView: View {
             guard e.transform != to else { continue }
             e.move(to: to, relativeTo: scene, duration: 0.45, timingFunction: .easeInOut)
         }
+    }
+
+    // MARK: Feng-shui-ify
+
+    /// Plumbed-in or built-in scanned furniture: an obstacle for the solver, never moved.
+    private static let fixtures: Set<String> = ["toilet", "sink", "bathtub", "stove", "oven", "dishwasher", "washer", "dryer",
+                                                "refrigerator", "fireplace", "stairs"]
+
+    /// Stable solver id for scanned furniture `i` (it has no UUID of its own).
+    private static func roomObjectID(_ i: Int) -> UUID { UUID(uuidString: String(format: "FE45E000-0000-4000-8000-%012X", i))! }
+
+    private var canFengShui: Bool { fengShuiItems().items.contains(where: \.movable) }
+
+    /// Capsule under the view controls; a spinner while the solver agents think.
+    private var fengShuiButton: some View {
+        Button(action: fengShuiify) {
+            HStack(spacing: 8) {
+                if balancing != nil { ProgressView().controlSize(.small).tint(chrome.ink) }
+                else { Image(systemName: "circle.lefthalf.filled") }
+                Text(balancing != nil ? "Balancing chi…" : "Feng-shui-ify").font(.forma(13, bold: true))
+            }
+            .foregroundStyle(chrome.ink)
+            .padding(.horizontal, 14).frame(height: 44).background(chrome.fill, in: Capsule())
+        }
+        .disabled(balancing != nil)
+        .accessibilityLabel("Feng-shui-ify")
+    }
+
+    /// Every visible placement and scanned piece in scene x/z. `scanned` maps solver ids back to room object indices.
+    private func fengShuiItems() -> (items: [FengShui.Item], scanned: [UUID: Int]) {
+        guard let project else { return ([], [:]) }
+        var items: [FengShui.Item] = [], scanned: [UUID: Int] = [:], raised: [SIMD2<Float>] = []
+        for p in project.placements {
+            guard let e = placed[p.id] else { continue }
+            let size = (e.children.first ?? e).visualBounds(relativeTo: e).extents * e.scale   // model only, not the selection disc
+            let f = e.orientation.act([0, 0, 1]), label = name(of: p.id) ?? ""
+            let hidden = hiddenPlacements.contains(p.id)
+            if e.position.y > 0.1 { raised.append(SIMD2(e.position.x, e.position.z)) }
+            items.append(.init(id: p.id, kind: .from(p.catalogItem ?? p.product?.title ?? label), half: SIMD2(size.x, size.z) / 2,
+                               position: SIMD2(e.position.x, e.position.z), yaw: atan2(f.x, f.z),
+                               movable: !(p.locked ?? false) && !hidden && e.position.y <= 0.1,   // wall-mounted things stay put
+                               height: size.y, label: label))
+        }
+        guard let room = store.room(for: project) else { return (items, scanned) }
+        let gone = Set((project.hiddenRoomObjects ?? []) + (project.removedRoomObjects ?? []))
+        for (i, box) in room.objects.enumerated() where !gone.contains(i) {
+            guard let e = roomObjectEntity(i), e.isEnabled else { continue }
+            let pos = e.position(relativeTo: scene), f = e.orientation(relativeTo: scene).act([0, 0, 1])
+            let id = Self.roomObjectID(i)
+            scanned[id] = i
+            let fixed = Self.fixtures.contains(box.label) || box.label == RoomModel.markedLabel || pos.y - box.dimensions.y / 2 > 0.1
+            if pos.y - box.dimensions.y / 2 > 0.1 { raised.append(SIMD2(pos.x, pos.z)) }
+            items.append(.init(id: id, kind: .from(box.label), half: SIMD2(box.dimensions.x, box.dimensions.z) / 2,
+                               position: SIMD2(pos.x, pos.z), yaw: atan2(f.x, f.z), movable: !fixed,
+                               height: box.dimensions.y, label: box.label))
+        }
+        // Whatever a raised piece stands on (TV on a console) stays put too, or the raised piece would float.
+        for k in items.indices where items[k].movable {
+            let it = items[k], c = cos(it.yaw), s = sin(it.yaw)
+            if raised.contains(where: { r in
+                let d = r - it.position, local = SIMD2(d.x * c - d.y * s, d.x * s + d.y * c)   // into the item's own x/z
+                return abs(local.x) < it.half.x && abs(local.y) < it.half.y
+            }) { items[k].movable = false }
+        }
+        return (items, scanned)
+    }
+
+    /// Floor polygon and doors/windows in scene x/z (RoomModel boxes are world space: scene = world + content offset).
+    private func fengShuiRoom() -> FengShui.Room? {
+        guard let project, let room = store.room(for: project), let offset = roomEntity?.children.first?.position else { return nil }
+        let h = roomSize / 2 - RoomBuilder.wallThickness / 2
+        let poly = room.floorOutline.flatMap { $0.count >= 3 ? $0.map { SIMD2($0.x + offset.x, $0.z + offset.z) } : nil }
+            ?? [SIMD2(-h.x, -h.y), SIMD2(h.x, -h.y), SIMD2(h.x, h.y), SIMD2(-h.x, h.y)]
+        let openings = [(room.doors, true), (room.windows, false), (room.openings, true)].flatMap { boxes, isDoor in
+            boxes.map { b -> FengShui.Opening in
+                let c = SIMD2(b.columns[3].x + offset.x, b.columns[3].z + offset.z), z = SIMD2(b.columns[2].x, b.columns[2].z)
+                var n = simd_length(z) > 1e-4 ? simd_normalize(z) : SIMD2(0, 1)
+                let front = FloorClamp.contains(c + n * 0.3, poly), back = FloorClamp.contains(c - n * 0.3, poly)
+                if front == back ? simd_dot(n, c) > 0 : back { n = -n }   // toward the floor, else the room center (origin)
+                return .init(center: c, width: b.dimensions.x, inward: n, isDoor: isDoor)
+            }
+        }
+        return .init(outline: poly, openings: openings)
+    }
+
+    /// Deselect, let the solver agents think (a beat at least, for show), then glide everything into place.
+    private func fengShuiify() {
+        guard balancing == nil, let room = fengShuiRoom() else { return }
+        selected = nil; selectedRoomObject = nil; lockMenuFor = nil
+        let (items, scanned) = fengShuiItems()
+        balancing = Task {
+            async let solved = FengShui.arrange(items, in: room)
+            try? await Task.sleep(for: .milliseconds(600))
+            let result = await solved
+            if !Task.isCancelled {
+                if !result.improved || !applyFengShui(result, items: items, scanned: scanned) { flashHarmony() }
+            }
+            balancing = nil
+        }
+    }
+
+    /// Saves the new layout at once, then animates it in a short cascade. Scanned furniture that moves becomes a
+    /// placement first (like Size does), starting where it stood. Returns false when nothing moved meaningfully.
+    private func applyFengShui(_ result: FengShui.Result, items: [FengShui.Item], scanned: [UUID: Int]) -> Bool {
+        guard var project, let room = store.room(for: project) else { return false }
+        let before = project
+        var moves: [(id: UUID, from: Transform?, to: SIMD3<Float>, yaw: Float, anchor: Entity?)] = []
+        for item in items {
+            guard let pose = result.poses[item.id] else { continue }
+            let turn = abs(atan2(sin(pose.yaw - item.yaw), cos(pose.yaw - item.yaw)))
+            guard simd_distance(pose.position, item.position) > 0.05 || turn > .pi / 36 else { continue }   // > 5 cm or 5°
+            if let i = scanned[item.id] {
+                guard let anchor = roomObjectEntity(i) else { continue }
+                var p = placement(replacing: i, box: room.objects[i], anchor: anchor, catalog: standIn(i, room: room), in: &project)
+                let from = Transform(scale: p.scale ?? .one, rotation: simd_quatf(angle: p.yRotation, axis: [0, 1, 0]), translation: p.position)
+                p.position = [pose.position.x, p.position.y, pose.position.y]
+                p.yRotation = pose.yaw
+                project.placements.append(p)
+                moves.append((p.id, from, p.position, pose.yaw, anchor))
+            } else if let k = project.placements.firstIndex(where: { $0.id == item.id }) {
+                project.placements[k].position = [pose.position.x, project.placements[k].position.y, pose.position.y]
+                project.placements[k].yRotation = pose.yaw
+                moves.append((item.id, nil, project.placements[k].position, pose.yaw, nil))
+            }
+        }
+        guard !moves.isEmpty else { return false }
+        store.update(project)
+        // After the save: nothing below touches `selected` or calls commit(), either of which would drop the Undo.
+        offerUndo("Feng shui'd · \(result.note)", before, for: .seconds(8))
+        balanced += 1
+        Task {
+            for m in moves {
+                // Undone mid-cascade: restore() already put this one back.
+                func live() -> Placement? { self.project?.placements.first { $0.id == m.id && $0.position == m.to } }
+                if let from = m.from {   // stand-in appears on the box's spot, then the box hides
+                    guard let p = live() else { continue }
+                    await spawn(p)
+                    guard live() != nil, let e = placed[m.id] else { continue }
+                    e.transform = from
+                    m.anchor?.isEnabled = false
+                }
+                guard let p = live(), let e = placed[m.id] else { continue }
+                let to = Transform(scale: p.scale ?? .one, rotation: simd_quatf(angle: m.yaw, axis: [0, 1, 0]), translation: m.to)
+                e.move(to: to, relativeTo: scene, duration: 0.7, timingFunction: .easeInOut)
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+        }
+        return true
+    }
+
+    private func flashHarmony() {
+        inHarmony = true
+        Task { try? await Task.sleep(for: .seconds(2)); inHarmony = false }
     }
 
     /// Selection marker: bright corner brackets around the object's box, a solid ring and a tinted disc on the floor.
