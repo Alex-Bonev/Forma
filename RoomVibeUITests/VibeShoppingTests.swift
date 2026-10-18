@@ -110,7 +110,8 @@ final class VibeShoppingTests: XCTestCase {
         XCTAssertTrue(app.buttons["Added to room"].firstMatch.waitForExistence(timeout: 5))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Close"].tap()
-        if !app.buttons["Add object"].waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
+        sleep(1)
+        if !app.staticTexts["Sofa"].exists { app.buttons["Objects"].tap() }   // open the Objects panel
         XCTAssertTrue(app.staticTexts["Sofa"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts.matching(identifier: "Sofa").count, 2, "the demo sofa plus the shopped one")
 

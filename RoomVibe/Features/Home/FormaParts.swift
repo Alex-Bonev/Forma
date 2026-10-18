@@ -41,6 +41,24 @@ struct Wordmark: View {
 
 /// Glass-free sand pill with a sage outline and sparkle: starts the photoreal render of the room.
 /// `compact` is the icon-only circle used when the Objects panel covers the room.
+/// "Add object" half of the fullscreen Designer's bottom bar, matching MakeItRealButton(wide: true).
+struct AddObjectButton: View {
+    var fill = Theme.sand
+    var ink = Theme.ink
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Add object", systemImage: "plus").font(.forma(15, bold: true)).foregroundStyle(ink)
+                .frame(maxWidth: .infinity).frame(height: 56)
+                .background(fill, in: Capsule())
+                .overlay(Capsule().strokeBorder(ink.opacity(0.35), lineWidth: 1.5))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct MakeItRealButton: View {
     var compact = false
     /// Full-width bar along the bottom of the fullscreen Designer.

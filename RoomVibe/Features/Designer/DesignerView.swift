@@ -33,6 +33,7 @@ struct DesignerView: View {
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
     @State private var highlighted: Entity?
     @State private var showCatalog = false
+    @State private var showAddChoice = false   // Add object: scan a real one, or pick a preset
     @State private var editing: UUID?   // placement open in the Size sheet; not tied to `selected`, which taps can change
     @State private var showPhotos = false
     @State private var scanTarget: ScanTarget?
@@ -43,8 +44,11 @@ struct DesignerView: View {
 
     /// What a new Object Capture scan should replace.
     enum ScanTarget: Identifiable {
-        case placement(UUID), roomObject(Int)
-        var id: String { switch self { case .placement(let u): u.uuidString; case .roomObject(let i): "room-\(i)" } }
+        /// `new`: a fresh scan from Add object, dropped where the user is looking.
+        case placement(UUID), roomObject(Int), new
+        var id: String {
+            switch self { case .placement(let u): u.uuidString; case .roomObject(let i): "room-\(i)"; case .new: "new" }
+        }
     }
     @AppStorage(RoomBuilder.realisticKey) private var realisticFurniture = true
     @State private var moving: (id: UUID, offset: SIMD3<Float>)?
@@ -128,7 +132,7 @@ struct DesignerView: View {
                 .padding(.bottom, showObjects ? min(objectsHeight(), ObjectsDetent.medium.height(in: viewSize.height)) : 0)   // room recenters above the Objects sheet (Paper E2/E3)
                 .toolbar(.hidden, for: .navigationBar)
                 .onAppear {
-                    if opensCatalog { showCatalog = true }
+                    if opensCatalog { showAddChoice = true }
                 }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
@@ -142,6 +146,7 @@ struct DesignerView: View {
                     highlight(new.flatMap(roomObjectEntity))
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
+                .sheet(isPresented: $showAddChoice) { addChoiceSheet }
                 .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
                 .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
                     if let editing { editor(editing) }
@@ -169,11 +174,15 @@ struct DesignerView: View {
                         hint.allowsHitTesting(false)
                         // Renders exactly what's on screen: frame it by dragging, then tap.
                         if !showObjects {
-                            MakeItRealButton(wide: true, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                             ink: lightBackdrop ? Theme.ground : Theme.ink,
-                                             sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
-                                .padding(.horizontal, 16)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                            HStack(spacing: 10) {
+                                MakeItRealButton(wide: true, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                                 ink: lightBackdrop ? Theme.ground : Theme.ink,
+                                                 sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
+                                AddObjectButton(fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                                ink: lightBackdrop ? Theme.ground : Theme.ink) { showAddChoice = true }
+                            }
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                     .padding(.bottom, 24)
@@ -557,7 +566,7 @@ struct DesignerView: View {
             .task(id: selectedRow) { if let selectedRow { withAnimation { proxy.scrollTo(selectedRow, anchor: .center) } } }
             }
             undoBar.frame(maxWidth: .infinity)
-            Button { showCatalog = true } label: { Label("Add object", systemImage: "plus") }
+            Button { showAddChoice = true } label: { Label("Add object", systemImage: "plus") }
                 .buttonStyle(PillButtonStyle())
         }
         .padding(.horizontal, 16).padding(.bottom, 16)
@@ -713,6 +722,52 @@ struct DesignerView: View {
                 if Capabilities.canScanObject { PanelAction("Scan real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) } }
             }
         }
+    }
+
+    /// Add object, step 1: a real scan (guided by Object Capture, then dropped in) or a preset (the catalog).
+    private var addChoiceSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add an object").font(.forma(18, bold: true)).foregroundStyle(Theme.ink)
+            addChoice("Scan a real one", detail: Capabilities.canScanObject
+                        ? "Walk around it with your phone. About 2 minutes, then it drops into the room."
+                        : "Needs an iPhone Pro with LiDAR.",
+                      icon: "camera.viewfinder", enabled: Capabilities.canScanObject) {
+                showAddChoice = false
+                Task { try? await Task.sleep(for: .milliseconds(350)); scanTarget = .new }   // after the sheet is gone
+            }
+            addChoice("Choose a preset", detail: "Sofas, beds, desks, lamps… at real sizes. Your past scans are here too.",
+                      icon: "square.grid.2x2") {
+                showAddChoice = false
+                Task { try? await Task.sleep(for: .milliseconds(350)); showCatalog = true }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.ground)
+        .presentationDetents([.height(320)])
+        .presentationBackground(Theme.ground)
+    }
+
+    private func addChoice(_ title: String, detail: String, icon: String, enabled: Bool = true,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.wood)
+                    .frame(width: 52, height: 52).background(Theme.hairline, in: RoundedRectangle(cornerRadius: 16))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+                    Text(detail).font(.forma(11)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.wood)
+            }
+            .padding(14)
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.ink.opacity(0.15)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled).opacity(enabled ? 1 : 0.45)
+        .accessibilityLabel(title)
     }
 
     private var catalogSheet: some View {
@@ -986,9 +1041,7 @@ struct DesignerView: View {
         await spawn(p)
         if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
-        objectHint = true
-        try? await Task.sleep(for: .seconds(4))
-        objectHint = false
+        flashObjectHint()
     }
 
     private func add(catalog item: CatalogItem) async {
@@ -1000,6 +1053,13 @@ struct DesignerView: View {
         await spawn(p)
         if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
+        flashObjectHint()   // guide the next step: move and turn it
+    }
+
+    /// "Drag to move · Twist to rotate" for a few seconds, without holding up the caller.
+    private func flashObjectHint() {
+        objectHint = true
+        Task { try? await Task.sleep(for: .seconds(4)); objectHint = false }
     }
 
     /// New item falls in from a little above and settles, with a light tap. Purely visual: already committed.
@@ -1065,6 +1125,8 @@ struct DesignerView: View {
     /// A fresh scan replaces a placement (keeping spot, facing and height) or a piece of scanned furniture.
     private func applyScan(_ object: ScannedObject, to target: ScanTarget) async {
         switch target {
+        case .new:
+            await add(object)   // drops in where the user is looking, selected, with the move/turn hint
         case .roomObject(let i):
             await replaceRoomObject(i, object: object)
         case .placement(let id):
