@@ -21,7 +21,7 @@ Status: **UI built; checkout not built**. Owner: Michelle (B) for the UI, David 
 - The room's budget is `Project.budgetUSD` (USD, nil = no limit). Shop a vibe prefills its budget field from it and saves to it when the field is edited, when a run starts or finishes with a budget, and when the budget sheet or Raise budget changes it (No limit saves nil). Starting a new run never clears it, and the demo run never writes it. It is per room, not per vibe.
 - The one-room cart (not the all-rooms cart) shows a budget card above the list when the room has a budget and the cart is not empty: spent "of $B", "Change", a segment bar, and "$X left. Prices exclude shipping and tax." or, when over, "Over budget by $X."
 - Each row shows a dot and "N% of budget" when the budget and the price are known.
-- Under the rows, while money is left, a note says "Adding anything over $X goes past your $B budget." Adding is never blocked.
+- Under the rows, when little money is left (more than $0 and at most 20% of the budget), a note says "Adding anything over $X goes past your $B budget." Adding is never blocked.
 - "Change" opens the budget sheet ("Your cart total stays the same. Only the budget changes.", "Update budget"). It writes `Project.budgetUSD` only and does not re-pick products.
 - Paper: BG1 to BG5 on "forma — v2".
 
