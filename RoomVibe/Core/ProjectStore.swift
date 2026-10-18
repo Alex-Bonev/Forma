@@ -204,11 +204,15 @@ final class ProjectStore {
 
     /// Deletes an item another install deleted.
     func removeRemote(_ kind: PendingDelete.Kind, _ id: UUID) {
+        let oldProjects = projects, oldObjects = objects
         switch kind {
         case .project: projects.removeAll { $0.id == id }
         case .object: objects.removeAll { $0.id == id }
         }
-        guard (try? persist(remote: true)) != nil else { return }
+        guard (try? persist(remote: true)) != nil else {
+            projects = oldProjects; objects = oldObjects   // still indexed with its files: the next pass removes it again
+            return
+        }
         try? FileManager.default.removeItem(at: kind == .project ? Self.projectDir(id) : Self.objectDir(id))
     }
 

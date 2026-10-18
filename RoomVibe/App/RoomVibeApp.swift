@@ -41,8 +41,8 @@ struct RoomVibeApp: App {
                 _ = try? await APIClient.shared.health()
             }
             .task {
-                // A pass now pulls rooms and objects from other sessions; later passes follow local changes.
-                if sync == nil { sync = CloudSync(store: store) }
+                // A pass now pulls rooms, objects and vibes from other sessions; later passes follow local changes.
+                if sync == nil { sync = CloudSync(store: store, vibes: vibeLibrary) }
                 sync?.schedule(after: .zero)
             }
             .onChange(of: scenePhase) { _, phase in

@@ -1,10 +1,10 @@
 import Foundation
 import os
 
-/// Mirrors ProjectStore to Supabase (supabase/migrations). Local-first: the app keeps working offline from
-/// Application Support, and each pass reconciles both ways.
+/// Mirrors ProjectStore and VibeLibrary to Supabase (supabase/migrations). Local-first: the app keeps working offline
+/// from Application Support, and each pass reconciles both ways.
 ///
-/// One pass: pull every row, send pending deletes, then for each room and object take the newer side
+/// One pass: pull every row, send pending deletes, then for each vibe, object and room take the newer side
 /// (last writer wins on `updatedAt`, enforced again by a trigger in the database). Files reconcile on their own,
 /// per file, against the manifest in the item's row and the one both sides had at the item's last sync (its base,
 /// kept in `sync-state.json`): a file missing on one side is a delete when the other side still has the base's copy,
@@ -18,6 +18,7 @@ import os
 @MainActor
 final class CloudSync {
     private let store: ProjectStore
+    private let vibes: VibeLibrary
     private let client: CloudClient
     private var running = false
     private var again = false
@@ -26,19 +27,51 @@ final class CloudSync {
     private var state: SyncState
     private var stateDirty = false   // a change not yet saved, or a save that failed
     private var badManifests = Set<UUID>()   // rows whose `files` did not decode, logged once
+    private var badDocs = Set<UUID>()   // rows whose `doc` (or `room`) did not decode, logged once
     private let log = Logger(subsystem: "RoomVibe", category: "CloudSync")
     private static let stateURL = ProjectStore.root.appending(path: "sync-state.json")
 
     /// nil when the app has no cloud config: the library then stays on this device.
     /// `client` defaults to the process's one CloudClient: refresh tokens rotate, so a second instance would break
     /// the session.
-    init?(store: ProjectStore, client: CloudClient? = .shared) {
+    init?(store: ProjectStore, vibes: VibeLibrary, client: CloudClient? = .shared) {
         guard let client else { return nil }
         self.store = store
+        self.vibes = vibes
         self.client = client
         state = Self.loadState()
-        store.onChange = { [weak self] remote in
+        let onChange: (Bool) -> Void = { [weak self] remote in
             if !remote { self?.schedule() }   // a change sync made itself needs no new pass
+        }
+        store.onChange = onChange
+        vibes.onChange = onChange
+    }
+
+    /// What an item is, across ProjectStore and VibeLibrary: picks its table and its folders here and in the bucket.
+    enum Kind {
+        case project, object, vibe
+
+        init(_ kind: ProjectStore.PendingDelete.Kind) {
+            switch kind {
+            case .project: self = .project
+            case .object: self = .object
+            }
+        }
+
+        var table: String {
+            switch self {
+            case .project: "projects"
+            case .object: "scanned_objects"
+            case .vibe: "saved_vibes"
+            }
+        }
+
+        func localDir(_ id: UUID) -> URL {
+            switch self {
+            case .project: ProjectStore.projectDir(id)
+            case .object: ProjectStore.objectDir(id)
+            case .vibe: VibeLibrary.dir(id)
+            }
         }
     }
 
@@ -79,18 +112,24 @@ final class CloudSync {
             state = SyncState(user: user)
             stateDirty = true
         }
-        let projectRows = try await client.select("projects", as: ProjectRow.self)
-        let objectRows = try await client.select("scanned_objects", as: ObjectRow.self)
+        let projectRows = try await client.select(Kind.project.table, as: ProjectRow.self)
+        let objectRows = try await client.select(Kind.object.table, as: ObjectRow.self)
+        let vibeRows = try await client.select(Kind.vibe.table, as: SavedVibeRow.self)
         // An item on neither side (its tombstone missed, say) needs no base.
         let known = Set(projectRows.map { Self.remoteFolder(.project, $0.id) } + store.projects.map { Self.remoteFolder(.project, $0.id) }
-                        + objectRows.map { Self.remoteFolder(.object, $0.id) } + store.objects.map { Self.remoteFolder(.object, $0.id) })
+                        + objectRows.map { Self.remoteFolder(.object, $0.id) } + store.objects.map { Self.remoteFolder(.object, $0.id) }
+                        + vibeRows.map { Self.remoteFolder(.vibe, $0.id) } + vibes.vibes.map { Self.remoteFolder(.vibe, $0.id) })
         for key in state.bases.keys where !known.contains(key) {
             state.bases[key] = nil
             stateDirty = true
         }
-        try await sendDeletes(projectRows: projectRows, objectRows: objectRows)
+        try await sendDeletes(projectRows: projectRows, objectRows: objectRows, vibeRows: vibeRows)
 
-        // Objects first: placements in a pulled room reference them.
+        // Vibes first, then objects: a pulled room's `vibeID` and placements reference them.
+        let vibesByID = Dictionary(vibeRows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for id in Set(vibesByID.keys).union(vibes.vibes.map(\.id)) {
+            try await item { try await syncVibe(id, row: vibesByID[id]) }
+        }
         let objectsByID = Dictionary(objectRows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for id in Set(objectsByID.keys).union(store.objects.map(\.id)) {
             try await item { try await syncObject(id, row: objectsByID[id]) }
@@ -113,36 +152,58 @@ final class CloudSync {
     }
 
     /// Deleted here and not yet sent: the pass leaves it alone (the user may delete during a pass's awaits).
-    private func deleting(_ id: UUID) -> Bool { store.pendingDeletes.contains { $0.id == id } }
+    private func deleting(_ id: UUID) -> Bool {
+        store.pendingDeletes.contains { $0.id == id } || vibes.pendingDeletes.contains { $0.id == id }
+    }
 
-    private func sendDeletes(projectRows: [ProjectRow], objectRows: [ObjectRow]) async throws {
+    /// A row's state, as far as a delete of its item cares.
+    private typealias RemoteState = (updatedAt: Date, deletedAt: Date?, files: Manifest)
+
+    private func sendDeletes(projectRows: [ProjectRow], objectRows: [ObjectRow], vibeRows: [SavedVibeRow]) async throws {
         var sent = Set<ProjectStore.PendingDelete>()
         for delete in store.pendingDeletes {
             try await item {
-                let table = delete.kind == .project ? "projects" : "scanned_objects"
-                let remote: (updatedAt: Date, deletedAt: Date?, files: Manifest)? = switch delete.kind {
+                let remote: RemoteState? = switch delete.kind {
                 case .project: projectRows.first { $0.id == delete.id }.map { ($0.updatedAt, $0.deletedAt, $0.files) }
                 case .object: objectRows.first { $0.id == delete.id }.map { ($0.updatedAt, $0.deletedAt, $0.files) }
                 }
-                // Never uploaded, or already gone: nothing to tell the cloud. Edited elsewhere after this delete:
-                // the edit wins, and this pass pulls the item back.
-                if let remote, remote.deletedAt == nil, delete.deletedAt >= remote.updatedAt {
-                    try await client.update(table, id: delete.id,
-                                            Tombstone(updatedAt: delete.deletedAt, deletedAt: delete.deletedAt))
-                    // After the tombstone, so other installs never see a live row without its files. A failure here
-                    // only leaves files behind.
-                    let prefix = Self.remoteFolder(delete.kind, delete.id)
-                    do { try await client.remove(remote.files.keys.map { "\(prefix)/\($0)" }) } catch let e as APIError {
-                        throw e
-                    } catch {
-                        log.error("could not remove deleted files: \(error.localizedDescription, privacy: .public)")
-                    }
-                }
+                try await sendDelete(Kind(delete.kind), delete.id, deletedAt: delete.deletedAt, remote: remote)
                 sent.insert(delete)
-                setBase(delete.kind, delete.id, nil)
             }
         }
         if !sent.isEmpty { store.clearPendingDeletes(sent) }
+
+        var sentVibes = Set<VibeLibrary.PendingDelete>()
+        for delete in vibes.pendingDeletes {
+            try await item {
+                let remote: RemoteState? = vibeRows.first { $0.id == delete.id }.map { ($0.updatedAt, $0.deletedAt, $0.files) }
+                try await sendDelete(.vibe, delete.id, deletedAt: delete.deletedAt, remote: remote)
+                sentVibes.insert(delete)
+            }
+        }
+        if !sentVibes.isEmpty { vibes.clearPendingDeletes(sentVibes) }
+    }
+
+    /// Tombstones one item's row and removes its files from storage, then drops its base. The caller clears the
+    /// pending delete either way.
+    private func sendDelete(_ kind: Kind, _ id: UUID, deletedAt: Date, remote: RemoteState?) async throws {
+        // Never uploaded, or already gone: nothing to tell the cloud. Edited elsewhere after this delete:
+        // the edit wins, and this pass pulls the item back.
+        if let remote, remote.deletedAt == nil, deletedAt >= remote.updatedAt {
+            // Rejected by the last-writer-wins trigger: an edit elsewhere landed since the select. That row is live,
+            // so its files and the base stay, and the next pass pulls it back.
+            guard try await client.update(kind.table, id: id, Tombstone(updatedAt: deletedAt, deletedAt: deletedAt))
+            else { return }
+            // After the tombstone, so other installs never see a live row without its files. A failure here
+            // only leaves files behind.
+            let prefix = Self.remoteFolder(kind, id)
+            do { try await client.remove(remote.files.keys.map { "\(prefix)/\($0)" }) } catch let e as APIError {
+                throw e
+            } catch {
+                log.error("could not remove deleted files: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        setBase(kind, id, nil)
     }
 
     private func syncProject(_ id: UUID, row: ProjectRow?) async throws {
@@ -169,12 +230,13 @@ final class CloudSync {
             setBase(.project, id, row.files)
             return
         }
-        guard let row, let doc = row.doc, let room = row.room else {
-            // New here, or the cloud's doc is unreadable. No row: no base either, so a missing row (another
-            // cloud user, say) never reads as every file deleted elsewhere.
-            try await push(.project, id, remoteFiles: row?.files ?? [:], base: row == nil ? nil : base(.project, id))
+        guard let row else {
+            // New here. No row: no base either, so a missing row (another cloud user, say) never reads as every
+            // file deleted elsewhere.
+            try await push(.project, id, remoteFiles: [:])
             return
         }
+        guard let doc = row.doc, let room = row.room else { return skipBadDoc(id) }
         if Self.newer(row.updatedAt, than: local.updatedAt) {
             guard let files = try await reconcileFiles(row.files, base: base(.project, id), kind: .project, id: id, dir: dir)
             else { return }
@@ -215,10 +277,11 @@ final class CloudSync {
             setBase(.object, id, row.files)
             return
         }
-        guard let row, let doc = row.doc else {
-            try await push(.object, id, remoteFiles: row?.files ?? [:], base: row == nil ? nil : base(.object, id))
+        guard let row else {
+            try await push(.object, id, remoteFiles: [:])
             return
         }
+        guard let doc = row.doc else { return skipBadDoc(id) }
         if Self.newer(row.updatedAt, than: local.updatedAt) {
             guard let files = try await reconcileFiles(row.files, base: base(.object, id), kind: .object, id: id, dir: dir)
             else { return }
@@ -234,6 +297,49 @@ final class CloudSync {
         }
     }
 
+    private func syncVibe(_ id: UUID, row: SavedVibeRow?) async throws {
+        guard !deleting(id) else { return }
+        let local = vibes.vibe(id)
+        let dir = VibeLibrary.dir(id)
+        if let row, let deletedAt = row.deletedAt {
+            setBase(.vibe, id, nil)
+            guard let local else { return }
+            if Self.newer(local.updatedAt, than: deletedAt) {
+                try await push(.vibe, id, remoteFiles: [:])
+            } else {
+                vibes.removeRemote(id)
+            }
+            return
+        }
+        guard row?.filesValid != false else { return skipBadManifest(id) }
+        guard let local else {
+            guard let row, let doc = row.doc else { return }
+            try await pull(row.files, kind: .vibe, id: id, into: dir)
+            guard !deleting(id), vibes.vibe(id) == nil else { return }
+            try vibes.applyRemote(doc)
+            setBase(.vibe, id, row.files)
+            return
+        }
+        guard let row else {
+            try await push(.vibe, id, remoteFiles: [:])
+            return
+        }
+        guard let doc = row.doc else { return skipBadDoc(id) }
+        if Self.newer(row.updatedAt, than: local.updatedAt) {
+            guard let files = try await reconcileFiles(row.files, base: base(.vibe, id), kind: .vibe, id: id, dir: dir)
+            else { return }
+            guard vibes.vibe(id)?.updatedAt == local.updatedAt else { return }
+            try vibes.applyRemote(doc)
+            try await finish(.vibe, id, remote: row.files, files)
+        } else if Self.newer(local.updatedAt, than: row.updatedAt) {
+            try await push(.vibe, id, remoteFiles: row.files, base: base(.vibe, id))
+        } else {
+            guard let files = try await reconcileFiles(row.files, base: base(.vibe, id), kind: .vibe, id: id, dir: dir)
+            else { return }
+            try await finish(.vibe, id, remote: row.files, files)
+        }
+    }
+
     // MARK: Rows
 
     /// A row whose manifest did not decode (a newer app's format, a damaged row) would read as every file gone
@@ -243,16 +349,23 @@ final class CloudSync {
         log.error("unreadable file manifest in row, item skipped: \(id.uuidString, privacy: .public)")
     }
 
+    /// A live row whose doc did not decode (a newer app's format, a damaged row): pushing would overwrite what a
+    /// newer build wrote, so the item waits, untouched here and there, until a readable row comes.
+    private func skipBadDoc(_ id: UUID) {
+        guard badDocs.insert(id).inserted else { return }
+        log.error("unreadable doc in row, item skipped: \(id.uuidString, privacy: .public)")
+    }
+
     /// `base` nil merges two-way: right for an item with no row, or one whose row is a tombstone.
-    private func push(_ kind: ProjectStore.PendingDelete.Kind, _ id: UUID, remoteFiles: Manifest, base: Manifest? = nil) async throws {
-        let dir = kind == .project ? ProjectStore.projectDir(id) : ProjectStore.objectDir(id)
+    private func push(_ kind: Kind, _ id: UUID, remoteFiles: Manifest, base: Manifest? = nil) async throws {
+        let dir = kind.localDir(id)
         guard let files = try await reconcileFiles(remoteFiles, base: base, kind: kind, id: id, dir: dir) else { return }
         if let sent = try await upsert(kind, id, files: files.verified) { setBase(kind, id, sent) }
     }
 
     /// Ends a live item's sync after its files reconciled. Changed: the row's manifest is stale, so send the row and
     /// take the manifest it carried as the base. Unchanged: both sides list exactly the row's files.
-    private func finish(_ kind: ProjectStore.PendingDelete.Kind, _ id: UUID, remote: Manifest, _ files: Reconciled) async throws {
+    private func finish(_ kind: Kind, _ id: UUID, remote: Manifest, _ files: Reconciled) async throws {
         if files.changed {
             if let sent = try await upsert(kind, id, files: files.verified) { setBase(kind, id, sent) }
         } else if !deleting(id) {
@@ -266,14 +379,14 @@ final class CloudSync {
     /// sides then agree. Returns the manifest stored, or nil when nothing was: the item is gone (deleted mid-pass),
     /// or the last-writer-wins trigger kept a newer row, which the next pass merges.
     @discardableResult
-    private func upsert(_ kind: ProjectStore.PendingDelete.Kind, _ id: UUID, files: Manifest) async throws -> Manifest? {
+    private func upsert(_ kind: Kind, _ id: UUID, files: Manifest) async throws -> Manifest? {
         switch kind {
         case .project:
             guard !deleting(id), var project = store.projects.first(where: { $0.id == id }),
                   let room = store.room(for: project) else { return nil }   // deleted mid-pass
             let unstamped = project.updatedAt == nil
             if unstamped { project.updatedAt = .syncStamp }
-            let stored = try await client.upsert("projects", ProjectRow(id: id, updatedAt: project.updatedAt!, doc: project, room: room,
+            let stored = try await client.upsert(Kind.project.table, ProjectRow(id: id, updatedAt: project.updatedAt!, doc: project, room: room,
                                                            files: files))
             if unstamped, store.projects.first(where: { $0.id == id })?.updatedAt == nil { try store.applyRemote(project, room: room) }
             return stored ? files : nil
@@ -281,20 +394,25 @@ final class CloudSync {
             guard !deleting(id), var object = store.objects.first(where: { $0.id == id }) else { return nil }
             let unstamped = object.updatedAt == nil
             if unstamped { object.updatedAt = .syncStamp }
-            let stored = try await client.upsert("scanned_objects", ObjectRow(id: id, updatedAt: object.updatedAt!, doc: object,
+            let stored = try await client.upsert(Kind.object.table, ObjectRow(id: id, updatedAt: object.updatedAt!, doc: object,
                                                                  files: files))
             if unstamped, store.objects.first(where: { $0.id == id })?.updatedAt == nil { try store.applyRemote(object) }
+            return stored ? files : nil
+        case .vibe:
+            // Always stamped: vibes had `updatedAt` before sync did.
+            guard !deleting(id), let vibe = vibes.vibe(id) else { return nil }
+            let stored = try await client.upsert(Kind.vibe.table, SavedVibeRow(id: id, updatedAt: vibe.updatedAt, doc: vibe, files: files))
             return stored ? files : nil
         }
     }
 
     // MARK: Sync state
 
-    private func base(_ kind: ProjectStore.PendingDelete.Kind, _ id: UUID) -> Manifest? { state.bases[Self.remoteFolder(kind, id)] }
+    private func base(_ kind: Kind, _ id: UUID) -> Manifest? { state.bases[Self.remoteFolder(kind, id)] }
 
     /// Records (or with nil drops) an item's base; saved at the end of the pass. Only ever a manifest the item's row
     /// lists, never a local one ahead of it: a base file missing from the row reads as deleted elsewhere.
-    private func setBase(_ kind: ProjectStore.PendingDelete.Kind, _ id: UUID, _ manifest: Manifest?) {
+    private func setBase(_ kind: Kind, _ id: UUID, _ manifest: Manifest?) {
         let key = Self.remoteFolder(kind, id)
         guard state.bases[key] != manifest else { return }
         state.bases[key] = manifest
@@ -369,7 +487,7 @@ final class CloudSync {
     /// unreadable (which must never read as every file deleted here), or it is deleted here meanwhile, so a
     /// download never recreates its folder. Each file is checked again right before a download or a remove: one
     /// the user wrote meanwhile is kept, and the next pass merges it.
-    private func reconcileFiles(_ remote: Manifest, base: Manifest?, kind: ProjectStore.PendingDelete.Kind, id: UUID,
+    private func reconcileFiles(_ remote: Manifest, base: Manifest?, kind: Kind, id: UUID,
                                 dir: URL) async throws -> Reconciled? {
         guard let local = Self.manifest(of: dir, kind: kind) else {
             log.error("item folder unreadable, skipped: \(Self.remoteFolder(kind, id), privacy: .public)")
@@ -413,7 +531,7 @@ final class CloudSync {
     /// Downloads every file of an item that is new to this install. On failure, removes the folder only if this
     /// pull made it: half an item is not in the index, and removeIncompleteScans would keep it once it has its
     /// main file.
-    private func pull(_ remote: Manifest, kind: ProjectStore.PendingDelete.Kind, id: UUID, into dir: URL) async throws {
+    private func pull(_ remote: Manifest, kind: Kind, id: UUID, into dir: URL) async throws {
         let existed = FileManager.default.fileExists(atPath: dir.path(percentEncoded: false))
         do {
             for (path, entry) in remote.sorted(by: { $0.key < $1.key }) {
@@ -446,10 +564,14 @@ final class CloudSync {
     }
 
     /// The item's synced files, by path relative to its folder. room.json travels in the row; an object's
-    /// Images/ and Checkpoint/ are scan inputs, deleted once the model is built. nil when the folder is missing or
+    /// Images/ and Checkpoint/ are scan inputs, deleted once the model is built; a vibe's folder holds only its photos. nil when the folder is missing or
     /// unreadable, or a file's attributes are: a partial listing would read as files deleted here.
-    static func manifest(of dir: URL, kind: ProjectStore.PendingDelete.Kind) -> Manifest? {
-        let skipped: Set<String> = kind == .project ? ["room.json"] : ["Images", "Checkpoint"]
+    static func manifest(of dir: URL, kind: Kind) -> Manifest? {
+        let skipped: Set<String> = switch kind {
+        case .project: ["room.json"]
+        case .object: ["Images", "Checkpoint"]
+        case .vibe: []
+        }
         let fm = FileManager.default
         let root = dir.path(percentEncoded: false)
         var isDir: ObjCBool = false
@@ -487,8 +609,13 @@ final class CloudSync {
     }
 
     /// The item's folder in the bucket, under the user's own folder (CloudClient adds that).
-    static func remoteFolder(_ kind: ProjectStore.PendingDelete.Kind, _ id: UUID) -> String {
-        "\(kind == .project ? "projects" : "objects")/\(id.uuidString.lowercased())"
+    static func remoteFolder(_ kind: Kind, _ id: UUID) -> String {
+        let parent = switch kind {
+        case .project: "projects"
+        case .object: "objects"
+        case .vibe: "vibes"
+        }
+        return "\(parent)/\(id.uuidString.lowercased())"
     }
 
     /// Whether `a` is a later stamp than `b`. A missing stamp (saved before sync) is the oldest.
@@ -594,6 +721,46 @@ struct ObjectRow: Codable {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
         doc = try? c.decodeIfPresent(ScannedObject.self, forKey: .doc)
+        do { files = try c.decodeIfPresent(Manifest.self, forKey: .files) ?? [:] } catch {
+            files = [:]
+            filesValid = false
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encodeNil(forKey: .deletedAt)
+        try c.encode(doc, forKey: .doc)
+        try c.encode(files, forKey: .files)
+    }
+}
+
+/// A `saved_vibes` row. `doc` is nil when it does not decode (see ProjectRow).
+struct SavedVibeRow: Codable {
+    var id: UUID
+    var updatedAt: Date
+    var deletedAt: Date? = nil
+    var doc: SavedVibe?
+    var files: Manifest
+    var filesValid = true   // see ProjectRow
+
+    enum CodingKeys: String, CodingKey {
+        case id, doc, files
+        case updatedAt = "updated_at", deletedAt = "deleted_at"
+    }
+
+    init(id: UUID, updatedAt: Date, doc: SavedVibe, files: Manifest) {
+        self.id = id; self.updatedAt = updatedAt; self.doc = doc; self.files = files
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
+        doc = try? c.decodeIfPresent(SavedVibe.self, forKey: .doc)
         do { files = try c.decodeIfPresent(Manifest.self, forKey: .files) ?? [:] } catch {
             files = [:]
             filesValid = false

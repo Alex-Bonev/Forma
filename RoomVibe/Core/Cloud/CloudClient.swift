@@ -183,18 +183,23 @@ actor CloudClient {
         return try decode([Stored].self, data).count == 1
     }
 
-    /// Sets the given columns on the row with `id`, if there is one.
-    func update<T: Encodable>(_ table: String, id: UUID, _ values: T) async throws {
-        let url = config.url.appending(path: "rest/v1/\(table)").appending(queryItems: [.init(name: "id", value: "eq.\(id.uuidString.lowercased())")])
+    /// Sets the given columns on the row with `id`, if there is one. Returns whether the row was changed: no row
+    /// with that id, or a stale write the last-writer-wins trigger skipped, comes back as an empty response.
+    @discardableResult
+    func update<T: Encodable>(_ table: String, id: UUID, _ values: T) async throws -> Bool {
+        let url = config.url.appending(path: "rest/v1/\(table)").appending(queryItems: [
+            .init(name: "id", value: "eq.\(id.uuidString.lowercased())"), .init(name: "select", value: "id"),
+        ])
         let body = try Self.encoder.encode(values)
-        _ = try await send {
+        let data = try await send {
             var req = try await self.authorized(URLRequest(url: url))
             req.httpMethod = "PATCH"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+            req.setValue("return=representation", forHTTPHeaderField: "Prefer")
             req.httpBody = body
             return req
         }
+        return try decode([Stored].self, data).count == 1
     }
 
     // MARK: Storage
@@ -301,7 +306,16 @@ actor CloudClient {
     // Postgres timestamptz <-> Date, at millisecond precision both ways (see `Date.syncStamp`).
     @Sendable private static func encodeDate(_ date: Date, _ encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
-        try c.encode(Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(date))   // UTC, "...T12:00:00.123Z"
+        try c.encode(syncString(date))
+    }
+
+    /// UTC, "...T12:00:00.123Z", with the millisecond rounded. ISO8601FormatStyle truncates the fraction, and a
+    /// `syncStamp` like .123 is stored as .12299999…, so it would go out 1 ms low and drift on every round trip.
+    static func syncString(_ date: Date) -> String {
+        let ms = Int64((date.timeIntervalSince1970 * 1000).rounded())
+        let seconds = ms >= 0 ? ms / 1000 : (ms - 999) / 1000   // floor, so the fraction is never negative
+        let whole = Date.ISO8601FormatStyle().format(Date(timeIntervalSince1970: TimeInterval(seconds)))
+        return whole.dropLast() + String(format: ".%03lldZ", ms - seconds * 1000)
     }
 
     @Sendable static func decodeDate(_ decoder: Decoder) throws -> Date {
