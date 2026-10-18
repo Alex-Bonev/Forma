@@ -75,7 +75,7 @@ Check field names against the provider docs on the day you build. These were rea
 - `MOCK=1`:
   - `POST` returns a fixed token.
   - `GET` returns canned products. The first poll reports half the items as still running, so the app's streaming UI can be built offline.
-- A run that is `failed` or times out (> 6 min) has its item marked `failed`. The app then offers "Try quick search", which calls `/vibe/products` with that query.
+- A run that is `failed` or times out (> 6 min) has its item marked `failed`. The app then offers "Try quick search", which calls `/vibe/products` with that query and keeps only results within the item's `cap_usd` from the shop status (the parsed `max_price_usd` if absent).
 
 ### 3. Budget
 
@@ -97,7 +97,7 @@ Check field names against the provider docs on the day you build. These were rea
 
 ### 4. App: input and results (`VibeView`)
 
-- The input card has a photo picker **and** a text field ("Describe the vibe…"). Either is enough to start, and a budget can be typed in the text. Below the text field is an optional Budget field ("No limit" when empty) with preset chips. A budget typed in the text fills the field when it is empty. A value in the field beats the budget the backend parsed, and is sent as `budget_usd` to `POST /vibe/shop`. The settled budget is saved on the room (`Project.budgetUSD`) for the cart.
+- The input card has a photo picker **and** a text field ("Describe the vibe…"). Either is enough to start, and a budget can be typed in the text. Below the text field is an optional Budget field ("No limit" when empty) with preset chips. A budget typed in the text fills the field when it is empty. A value in the field beats the budget the backend parsed, and is sent as `budget_usd` to `POST /vibe/shop`. The room's budget (`Project.budgetUSD`, nil = no limit) prefills the budget field. Editing the field, starting or finishing a run with a budget, and changing it via the budget sheet or Raise budget all save it back to the room (No limit saves nil). Starting a new run never clears it, and the demo run never writes it.
 - After the analysis:
   - Style section (exists).
   - Restyled render (exists).

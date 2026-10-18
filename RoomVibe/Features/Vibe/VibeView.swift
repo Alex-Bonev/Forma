@@ -535,7 +535,6 @@ struct VibeView: View {
     }
 }
 
-/// Compact pill for row-level actions (Retry, Add, Open, Try quick search): sage filled, or a 1 pt ink outline.
 /// Pops back after either choice.
 private struct BudgetOptionsWrapper: View {
     @Environment(\.dismiss) private var dismiss
@@ -553,6 +552,7 @@ private struct BudgetOptionsWrapper: View {
     }
 }
 
+/// Compact pill for row-level actions (Retry, Add, Open, Try quick search): sage filled, or a 1 pt ink outline.
 private struct SmallPillStyle: ButtonStyle {
     var filled = true
     @Environment(\.isEnabled) private var isEnabled
@@ -688,6 +688,8 @@ final class VibeModel {
         var query: String
         var status: ShopStatus.Item.Status = .running
         var products: [ShopProduct] = []
+        /// The server's cap for this item (`cap_usd`); nil until a status arrives or on older servers.
+        var capUsd: Double?
         var quick: Result<[ShopProduct], Error>?
         var quickLoading = false
         var quickFailed: Bool { if case .some(.success(let p)) = quick { p.isEmpty } else { false } }
@@ -948,6 +950,7 @@ final class VibeModel {
             var query: String
             var status: ShopStatus.Item.Status
             var products: [ShopProduct]
+            var capUsd: Double?   // optional so older saves still decode
         }
     }
 
@@ -959,7 +962,7 @@ final class VibeModel {
         guard !isDemo, let style, let json = file("json"), let image = file("jpg"), let beforeURL = file("before.jpg") else { return }
         let saved = Saved(prompt: prompt, style: style, job: job, done: shopDone,
                           rows: (shopRows ?? []).map { .init(category: $0.category, query: $0.query, status: $0.status,
-                                                             products: $0.products) },
+                                                             products: $0.products, capUsd: $0.capUsd) },
                           chosen: Array(chosen), budgetUSD: budgetUSD, totalUSD: totalUSD)
         try? FileManager.default.createDirectory(at: json.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(saved).write(to: json, options: .atomic)
@@ -1000,7 +1003,7 @@ final class VibeModel {
         } else {
             shopRows = saved.rows.enumerated().map {
                 ShopRow(id: $0.offset, category: $0.element.category, query: $0.element.query, status: $0.element.status,
-                        products: $0.element.products)
+                        products: $0.element.products, capUsd: $0.element.capUsd)
             }
         }
         if let job, !shopDone { resume(job, saved.style) }
@@ -1011,6 +1014,7 @@ final class VibeModel {
         for (i, item) in status.items.enumerated() where i < rows.count {
             rows[i].status = item.status
             rows[i].products = item.products
+            rows[i].capUsd = item.capUsd
         }
         shopRows = rows
         budgetUSD = status.budgetUsd
@@ -1039,7 +1043,9 @@ final class VibeModel {
         update(id) {
             $0.quickLoading = false
             $0.quick = result
-            if case .success(let p) = result, let cap = current.shoppingList?.first(where: { $0.query == row.query })?.maxPriceUsd {
+            // The server's (rescaled) cap; the parsed one only if the server sent none.
+            if case .success(let p) = result,
+               let cap = row.capUsd ?? current.shoppingList?.first(where: { $0.query == row.query })?.maxPriceUsd {
                 // Keep only what provably fits that item's share of the budget.
                 $0.quick = .success(p.filter { ($0.priceUSD ?? dollars($0.price)).map { $0 <= cap } ?? false })
             }
