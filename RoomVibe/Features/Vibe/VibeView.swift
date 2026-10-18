@@ -218,20 +218,29 @@ struct VibeView: View {
     }
 
     @ViewBuilder private var shoppingSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Shop the look").font(.headline)
-                if let budget = model.budgetUSD {
-                    if let total = model.totalUSD, !model.chosen.isEmpty {
-                        Text("Picks marked \"Fits budget\" total \(usd(total)) of your \(usd(budget)).")
-                    } else {
-                        Text("Budget \(usd(budget)).")
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Shop the look").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                    Spacer()
+                    if let rows = model.shopRows, rows.contains(where: { $0.status == .running }) {
+                        Text("\(rows.filter { $0.status != .running }.count) of \(rows.count) agents done")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
                     }
                 }
-                Text("Agents browse real stores. Prices exclude shipping and tax.")
+                Group {
+                    if let budget = model.budgetUSD {
+                        if let total = model.totalUSD, !model.chosen.isEmpty {
+                            Text("Picks marked \"Fits budget\" total \(usd(total)) of your \(usd(budget)).")
+                        } else {
+                            Text("Budget \(usd(budget)).")
+                        }
+                    }
+                    Text("Agents browse real stores. Prices exclude shipping and tax.")
+                }
+                .font(.forma(11)).foregroundStyle(Theme.muted)
             }
-            .font(.footnote).foregroundStyle(.secondary)
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
             addAllButton
             if let error = model.shopError {
                 errorCard(error.localizedDescription) { model.retryProducts() }
@@ -258,27 +267,29 @@ struct VibeView: View {
                 Label(missing.isEmpty ? "All picks are in your room"
                       : missing.count == all.count ? "Add all \(all.count) picks to room" : "Add the other \(missing.count) picks",
                       systemImage: missing.isEmpty ? "checkmark" : "plus")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PillButtonStyle())
             .disabled(missing.isEmpty)
+            .opacity(missing.isEmpty ? 0.4 : 1)
             .accessibilityIdentifier("addAllPicks")
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
         }
     }
 
     private func shopRow(_ row: VibeModel.ShopRow) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(row.query.capitalized).font(.subheadline.bold())
-                if row.status == .running { ProgressView().controlSize(.small) }
-                Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            let products = row.products.isEmpty ? (try? row.quick?.get()) ?? [] : row.products
+            HStack(spacing: 8) {
+                Text(row.query.capitalized).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                Spacer(minLength: 8)
                 if row.status == .running {
-                    Text("Agent shopping…").font(.caption).foregroundStyle(.secondary)
+                    ProgressView().controlSize(.small).tint(Theme.sage)
+                    Text("Agent shopping…").font(.forma(11)).foregroundStyle(Theme.muted)
+                } else if !products.isEmpty {
+                    Text(products.count == 1 ? "1 find" : "\(products.count) finds").font(.forma(11)).foregroundStyle(Theme.muted)
                 }
             }
-            .padding(.horizontal)
-            let products = row.products.isEmpty ? (try? row.quick?.get()) ?? [] : row.products
+            .padding(.horizontal, 24)
             if !products.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
@@ -288,23 +299,25 @@ struct VibeView: View {
                                         onAdd: model.projectID == nil ? nil : { addToRoom(product, row: row) })
                         }
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 24)
                 }
             } else if row.status == .failed {
                 HStack {
                     Text(row.quickFailed ? "Nothing found." : "The agent couldn't find a match.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(.forma(11)).foregroundStyle(Theme.muted)
                     Spacer()
                     if row.quick == nil && row.quickLoading {
-                        ProgressView().controlSize(.small)
+                        ProgressView().controlSize(.small).tint(Theme.sage)
                     } else {
                         Button("Try quick search") { model.background { await model.quickSearch(row.id) } }
-                            .buttonStyle(.bordered).controlSize(.small)
+                            .buttonStyle(SmallPillStyle(filled: false))
                     }
                 }
-                .padding(.horizontal)
+                .padding(.horizontal, 24)
             }
         }
+        .padding(.top, 14)
+        .overlay(alignment: .top) { Theme.hairline.frame(height: 1).padding(.horizontal, 24) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("shopRow-\(row.id)-\(row.category)")
     }
@@ -334,22 +347,22 @@ struct VibeView: View {
     }
 
     @ViewBuilder private var productsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Shop the look").font(.headline).padding(.horizontal)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Shop the look").font(.forma(13, bold: true)).foregroundStyle(Theme.ink).padding(.horizontal, 24)
             switch model.products {
             case .some(.success(let products)) where products.isEmpty:
-                Text("No products found.").font(.footnote).foregroundStyle(.secondary).padding(.horizontal)
+                Text("No products found.").font(.forma(11)).foregroundStyle(Theme.muted).padding(.horizontal, 24)
             case .some(.success(let products)):
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
                         ForEach(products) { ProductCard(product: $0) }
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 24)
                 }
             case .some(.failure(let error)):
                 errorCard(error.localizedDescription) { model.retryProducts() }
             case nil:
-                ProgressView().frame(maxWidth: .infinity)
+                ProgressView().tint(Theme.sage).frame(maxWidth: .infinity)
             }
         }
     }
