@@ -472,3 +472,12 @@ def test_profile_description_length(monkeypatch):
     monkeypatch.setattr(main.anthropic, "AsyncAnthropic", lambda **kw: NS(beta=NS(messages=NS(parse=parse))))
     r = c.post("/vibe/profile", headers=H, files=[("images", ("a.jpg", jpeg(40, 40)))])
     assert r.status_code == 502 and "2-word" in r.text
+
+
+def test_restyle_keeps_the_room():
+    """Vibe restyle: geometry from image 1 is fixed, and the inspiration photo's room is never copied."""
+    p = main.render_prompt("cutaway", "Room exactly 4 x 3 m", "Japandi", has_structure=True, has_style_ref=True)
+    assert "Never add walls" in p and "plain background" in p and "add no furniture" in p.lower()
+    assert "Image 2 is a structure map" in p and "Image 3 is only a style reference" in p
+    assert "Never copy its room" in p
+    assert main.RENDER_RULES not in p

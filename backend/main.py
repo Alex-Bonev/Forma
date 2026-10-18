@@ -122,10 +122,15 @@ RENDER_RULES = (
 )
 # Vibe mode restyles on purpose (style words and/or an inspiration image): the faithful rules would fight it.
 RESTYLE_RULES = (
-    "Keep the room shape and every wall, window and door exactly where it is. Furniture in image 1 is a "
-    "simplified stand-in: keep each piece's type, footprint, height, position and facing, restyled to the style "
-    "below (a numbered product keeps the look of its product photo). Keep empty floor mostly empty; small decor that fits the style is fine. Remove all text labels. "
-    "No people, no text, no watermark."
+    "Restyle only the looks: the geometry of image 1 is fixed. Keep the camera, framing and the room's exact size and "
+    "proportions from image 1: every wall, wall corner, window and door stays at the same place in the frame, and the "
+    "room is not made wider, longer or taller. Never add walls, partitions, floors, platforms, steps, ceilings, "
+    "columns, rooms, halls or doors. Everything outside the walls, including any notch or corner cut out of the "
+    "floor, stays plain background. Furniture in image 1 is a simplified stand-in: keep each piece's type, "
+    "footprint, height, position and facing, restyled to the style below (a numbered product keeps the look of its "
+    "product photo). Change wall and floor finishes, colors and materials only on the surfaces that already exist. "
+    "Add no furniture; at most a few small decor items placed on existing furniture or walls, and keep empty floor "
+    "empty. Remove all text labels. No people, no text, no watermark."
 )
 MAX_PHOTOS = 3
 MAX_PRODUCTS = 3  # shopped products sent with their photo; the rest stay named stand-ins
@@ -147,7 +152,8 @@ def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_s
                      "brighter means closer to the camera. Match its outlines exactly, but do not copy its colors.")
         n += 1
     if has_style_ref:
-        parts.append(f"Image {n} is only a style reference for materials, colors and decor.")
+        parts.append(f"Image {n} is only a style reference for materials, colors and decor. Never copy its room: "
+                     "not its walls, floor plan, windows, architecture, camera angle or furniture layout.")
         n += 1
     if photos:
         which = f"Image {n} is a real photo" if photos == 1 else f"Images {n} to {n + photos - 1} are real photos"
