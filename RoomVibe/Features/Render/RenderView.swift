@@ -90,7 +90,8 @@ struct RenderView: View {
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
                 model.setRoom(project: project, room: room, objects: store.objects)
             }
-            model.start()
+            // The room's last render shows right away; ↻ (toolbar) renders this view again.
+            if !model.showSaved() { model.start() }
         }
         .onDisappear { model.cancel() }
         .sensoryFeedback(trigger: model.result != nil) { _, done in done ? .success : nil }
@@ -115,6 +116,9 @@ struct RenderView: View {
                         Button("Try again") { model.start() }
                             .buttonStyle(PillButtonStyle(filled: false))
                             .frame(maxWidth: 200)
+                    } else if let at = model.savedAt {
+                        Text("Last render · \(at.formatted(.relative(presentation: .named))) · ↻ to redo")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
                     } else {
                         Text("Drag the divider to compare").font(.forma(11)).foregroundStyle(Theme.muted)
                     }
@@ -189,8 +193,19 @@ final class RenderModel {
     private var structure: StructureMap.Output?
     var view = View.cutaway
     private(set) var phase: Phase = .loading
-    /// Snapshot the offline-fallback render was made from, else nil.
+    /// Snapshot the shown saved render was made from (reopened last render or offline fallback), else nil.
     private(set) var savedBefore: UIImage?
+    /// When the shown saved render was made; nil once a fresh one is shown.
+    private(set) var savedAt: Date?
+
+    /// Shows the room's last render, if any. Returns false when there is none.
+    func showSaved() -> Bool {
+        guard let cacheURL, let data = try? Data(contentsOf: cacheURL), let image = UIImage(data: data) else { return false }
+        savedBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
+        savedAt = (try? FileManager.default.attributesOfItem(atPath: cacheURL.path(percentEncoded: false)))?[.modificationDate] as? Date
+        phase = .done(image, isStale: false)
+        return true
+    }
 
     init(snapshot: UIImage, projectID: UUID?, camera: RenderCamera? = nil, prompt: String, styleRef: UIImage?) {
         self.snapshot = snapshot.croppedToRenderAspect()
@@ -282,6 +297,7 @@ final class RenderModel {
             }
             guard gen == generation else { return }
             savedBefore = nil
+            savedAt = nil
             phase = .done(image, isStale: false)
         } catch {
             guard gen == generation, !Task.isCancelled else { return }
