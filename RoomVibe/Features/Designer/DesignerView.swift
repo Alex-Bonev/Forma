@@ -182,11 +182,16 @@ struct DesignerView: View {
                         hint.allowsHitTesting(false)
                         if !showObjects {
                             // One row for the room's look: its vibe on the left, Feng-shui-ify on the right.
-                            HStack(alignment: .bottom) {
+                            // Two equal halves, so the gap sits on the center line.
+                            HStack(alignment: .bottom, spacing: 10) {
                                 RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                                ink: lightBackdrop ? Theme.ground : Theme.ink, opensUp: true) { EmptyView() }
-                                Spacer(minLength: 8)
-                                if balancing != nil || canFengShui { fengShuiButton.transition(.opacity) }
+                                                ink: lightBackdrop ? Theme.ground : Theme.ink, opensUp: true, fillsWidth: true) { EmptyView() }
+                                    .frame(maxWidth: .infinity)
+                                if balancing != nil || canFengShui {
+                                    fengShuiButton.frame(maxWidth: .infinity).transition(.opacity)
+                                } else {
+                                    Color.clear.frame(maxWidth: .infinity, maxHeight: 44)   // keeps the vibe pill at half width
+                                }
                             }
                             .padding(.horizontal, 16)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -1419,7 +1424,7 @@ struct DesignerView: View {
                 Text(balancing != nil ? "Balancing chi…" : "Feng-shui-ify").font(.forma(13, bold: true)).lineLimit(1).fixedSize()
             }
             .foregroundStyle(lightBackdrop ? Theme.ground : Theme.ink)
-            .padding(.horizontal, 16).frame(height: 44)
+            .padding(.horizontal, 16).frame(maxWidth: .infinity).frame(height: 44)
             .background(lightBackdrop ? Theme.wood : Theme.sand, in: Capsule())
         }
         .disabled(balancing != nil)

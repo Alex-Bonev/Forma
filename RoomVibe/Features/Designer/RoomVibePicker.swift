@@ -12,6 +12,8 @@ struct RoomVibeControl<Leading: View>: View {
     var ink = Theme.ink
     /// The dropdown opens above the pill (for a pill near the bottom of the screen).
     var opensUp = false
+    /// The pill stretches to the width it is offered (half of a two-button row).
+    var fillsWidth = false
     @ViewBuilder var leading: Leading
     @State private var showMenu = false
 
@@ -63,6 +65,7 @@ struct RoomVibeControl<Leading: View>: View {
             }
             .padding(.horizontal, compact ? 0 : 16)
             .frame(width: compact ? 44 : nil, height: 44)
+            .frame(maxWidth: fillsWidth ? .infinity : nil)
             .background(fill, in: Capsule())
             .overlay(Capsule().strokeBorder(Theme.sage, lineWidth: 1.5))
         }
