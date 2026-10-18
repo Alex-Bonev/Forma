@@ -6,19 +6,23 @@ Providers (checked against docs 2026-10-17):
   /vibe/analyze    Claude (vision optional) + structured output (LLM_API_KEY)
   /vibe/products   SerpAPI Google Shopping (SHOPPING_API_KEY)
   /vibe/shop       Browser Use Cloud API V4 agents, one per shopping-list item (BROWSER_USE_API_KEY)
+  /vibe/model3d    fal SAM 3D Objects (product photo -> GLB), converted to USDZ by usdz.py (FAL_KEY)
 """
 import asyncio
 import base64
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import logging
 import math
 import os
 import re
 import secrets
+import socket
 import time
+from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -44,6 +48,12 @@ BROWSER_USE_MODEL = os.getenv("BROWSER_USE_MODEL", "")  # empty: the provider's 
 BROWSER_USE_MAX_COST = float(os.getenv("BROWSER_USE_MAX_COST", "0.5"))  # USD cap per agent run
 BROWSER_USE_URL = "https://api.browser-use.com/api/v4"
 SHOP_TIMEOUT = 6 * 60  # an agent still running after this counts as failed
+FAL_KEY = os.getenv("FAL_KEY", "")
+FAL_QUEUE = "https://queue.fal.run"
+FAL_MODEL = "fal-ai/sam-3/3d-objects"
+FAL_API_HOSTS = ("fal.run", "fal.ai")  # status/result URLs from the submit response must be on these (or subdomains)
+FAL_CDN_HOSTS = ("fal.media", "fal.run", "fal.ai")  # where model files are downloaded from (no API key sent)
+MAX_GLB = 40 * 1024 * 1024
 MAX_UPLOAD = 4 * 1024 * 1024  # Vercel caps bodies at 4.5 MB
 TIMEOUT = 90
 MAX_RESPONSE_B64 = 4_400_000  # base64 render must fit Vercel's 4.5 MB response cap
@@ -448,9 +458,9 @@ def agent_products(output, item: dict) -> list[Product]:
 RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
 
 
-def job_signature(body: str) -> str:
+def job_signature(body: str, purpose: str = "vibe-shop") -> str:
     # Signed so a client can't change run ids, caps, budget or start time. Key: the app secret (empty in local mock).
-    return hmac.new(f"vibe-shop:{APP_SHARED_SECRET}".encode(), body.encode(), hashlib.sha256).hexdigest()[:32]
+    return hmac.new(f"{purpose}:{APP_SHARED_SECRET}".encode(), body.encode(), hashlib.sha256).hexdigest()[:32]
 
 
 def encode_job(job: dict) -> str:
@@ -572,3 +582,165 @@ async def vibe_shop_status(job: str):
         result["chosen"] = [p["product_url"] for p in chosen]
         result["total_usd"] = round(sum(p["price_usd"] for p in chosen), 2)
     return result
+
+
+class Model3DRequest(BaseModel):
+    image_url: str
+    category: str = ""
+
+
+MOCK_MODEL_ID = "mock-model"
+
+
+def fal_headers() -> dict:
+    return {"Authorization": f"Key {FAL_KEY}"}
+
+
+def on_hosts(url: str, hosts: tuple[str, ...]) -> bool:
+    if not allowed_url(url):
+        return False
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    return any(host == h or host.endswith("." + h) for h in hosts)
+
+
+def encode_model_job(status_url: str, response_url: str) -> str:
+    """fal's own status/result URLs, signed into the request id so the backend stays stateless."""
+    body = base64.urlsafe_b64encode(json.dumps([status_url, response_url]).encode()).decode().rstrip("=")
+    return f"{body}.{job_signature(body, 'vibe-model3d')}"
+
+
+def decode_model_job(token: str) -> tuple[str, str]:
+    body, _, sig = token.partition(".")
+    if not hmac.compare_digest(sig.encode(), job_signature(body, "vibe-model3d").encode()):
+        raise HTTPException(400, "bad request id")
+    try:
+        status_url, response_url = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        assert on_hosts(status_url, FAL_API_HOSTS) and on_hosts(response_url, FAL_API_HOSTS)
+        return status_url, response_url
+    except Exception:
+        raise HTTPException(400, "bad request id")
+
+
+def json_dict(r: httpx.Response) -> dict:
+    """A provider's 2xx body as a dict; anything else is a provider fault (502)."""
+    try:
+        body = r.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(502, "3D model provider sent an unexpected response")
+    return body
+
+
+@lru_cache(maxsize=1)
+def mock_usdz() -> bytes:
+    import trimesh  # imported lazily: only the 3D endpoints need trimesh and numpy
+    import usdz
+    return usdz.glb_to_usdz(trimesh.creation.box(extents=[0.8, 0.75, 0.8]).export(file_type="glb"))
+
+
+@app.post("/vibe/model3d")
+async def vibe_model3d(req: Model3DRequest):
+    """Starts SAM 3D Objects on a product photo. Poll GET /vibe/model3d/{request_id} for the USDZ."""
+    if not allowed_url(req.image_url):
+        raise HTTPException(400, "image_url must be an https link")
+    if MOCK:
+        return {"request_id": MOCK_MODEL_ID}
+    require(FAL_KEY, "FAL_KEY")
+    prompt = req.category.replace("_", " ").strip() if req.category and req.category != "decor" else "object"
+    body = {"image_url": req.image_url, "prompt": prompt, "export_textured_glb": True}
+    try:
+        async with http() as client:
+            r = await client.post(f"{FAL_QUEUE}/{FAL_MODEL}", json=body, headers=fal_headers())
+    except httpx.HTTPError:
+        raise HTTPException(502, "3D model provider unreachable")
+    if r.status_code in (401, 403):
+        raise HTTPException(502, "3D model provider rejected the API key")
+    if r.status_code >= 300:
+        raise HTTPException(502, f"3D model provider error {r.status_code}")
+    submitted = json_dict(r)
+    status_url, response_url = submitted.get("status_url"), submitted.get("response_url")
+    if not (isinstance(status_url, str) and isinstance(response_url, str)
+            and on_hosts(status_url, FAL_API_HOSTS) and on_hosts(response_url, FAL_API_HOSTS)):
+        raise HTTPException(502, "3D model provider sent unexpected request links")
+    return {"request_id": encode_model_job(status_url, response_url)}
+
+
+def check_public_host(url: str) -> None:
+    """Refuses IP-literal hosts and hosts that resolve to private, loopback or link-local addresses."""
+    host = urlsplit(url).hostname or ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass  # a host name, as expected
+    else:
+        raise ValueError("model link must use a host name")
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        raise ValueError("model host does not resolve")
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise ValueError("model host is not public")
+
+
+async def download_glb(client: httpx.AsyncClient, url: str) -> bytearray:
+    """The model file from fal's CDN (FAL_CDN_HOSTS only, https, no API key, no redirects), at most MAX_GLB."""
+    if not on_hosts(url, FAL_CDN_HOSTS):
+        raise ValueError("model link is not on fal's CDN")
+    await asyncio.to_thread(check_public_host, url)
+    data = bytearray()
+    async with client.stream("GET", url) as r:
+        if r.status_code != 200:
+            raise ValueError(f"model download failed ({r.status_code})")
+        if int(r.headers.get("content-length") or 0) > MAX_GLB:
+            raise ValueError("model file too large")
+        async for chunk in r.aiter_bytes():
+            if len(data) + len(chunk) > MAX_GLB:
+                raise ValueError("model file too large")
+            data += chunk
+    return data
+
+
+@app.get("/vibe/model3d/{request_id}")
+async def vibe_model3d_status(request_id: str):
+    """{status: running|done|failed}. When done, `usdz_base64` is a RealityKit-ready model (not to real scale)."""
+    if MOCK:
+        if request_id != MOCK_MODEL_ID:
+            raise HTTPException(404, "unknown request id")
+        return {"status": "done", "usdz_base64": base64.b64encode(mock_usdz()).decode()}
+    status_url, response_url = decode_model_job(request_id)
+    require(FAL_KEY, "FAL_KEY")
+    import usdz  # imported lazily: only the 3D endpoints need trimesh and numpy
+    try:
+        async with http() as client:
+            r = await client.get(status_url, headers=fal_headers())
+            if r.status_code in (401, 403):
+                raise HTTPException(502, "3D model provider rejected the API key")
+            if r.status_code == 404:
+                raise HTTPException(404, "unknown request id")
+            if r.status_code >= 300:
+                return {"status": "running"}  # transient; the app polls again
+            status = json_dict(r)
+            if status.get("status") != "COMPLETED":
+                return {"status": "running"}
+            if status.get("error"):
+                return {"status": "failed", "error": str(status["error"])[:300]}
+            result = await client.get(response_url, headers=fal_headers())
+            if result.status_code >= 300:
+                return {"status": "failed", "error": f"provider result error {result.status_code}"}
+            model = json_dict(result).get("model_glb")
+            glb_url = model.get("url") if isinstance(model, dict) else None
+            if not isinstance(glb_url, str):
+                return {"status": "failed", "error": "provider returned no model"}
+            glb = await download_glb(client, glb_url)
+    except httpx.HTTPError:
+        return {"status": "running"}
+    except ValueError as e:
+        return {"status": "failed", "error": str(e)[:300]}
+    try:
+        out = await asyncio.to_thread(usdz.glb_to_usdz, glb)
+    except ValueError as e:
+        return {"status": "failed", "error": str(e)[:300]}
+    return {"status": "done", "usdz_base64": base64.b64encode(out).decode()}

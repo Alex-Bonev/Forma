@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import os
@@ -280,3 +281,88 @@ def test_shop_ignores_non_finite_budget(monkeypatch):
         done = c.get(f"/vibe/shop/{start.json()['job']}", headers=H).json()
         assert done["budget_usd"] is None and len(done["chosen"]) == 4  # no budget: first product of each item
         monkeypatch.undo()
+
+
+def test_model3d_mock():
+    assert c.post("/vibe/model3d", headers=H, json={"image_url": "http://x/a.jpg"}).status_code == 400
+    rid = c.post("/vibe/model3d", headers=H, json={"image_url": "https://x/a.jpg", "category": "sofa"}).json()["request_id"]
+    done = c.get(f"/vibe/model3d/{rid}", headers=H).json()
+    assert done["status"] == "done" and base64.b64decode(done["usdz_base64"])[:2] == b"PK"
+    assert c.get("/vibe/model3d/other", headers=H).status_code == 404
+
+
+STATUS_URL = "https://queue.fal.run/fal-ai/sam-3/requests/abc-123/status"
+RESULT_URL = "https://queue.fal.run/fal-ai/sam-3/requests/abc-123"
+GLB_URL = "https://v3.fal.media/files/m.glb"
+
+
+def fake_fal(monkeypatch, state, glb):
+    seen = []
+
+    def handler(req):
+        url = str(req.url)
+        seen.append((url, req.headers.get("Authorization")))
+        if req.method == "POST":
+            assert req.headers["Authorization"] == "Key fk" and url == "https://queue.fal.run/fal-ai/sam-3/3d-objects"
+            state["sent"] = json.loads(req.content)
+            return httpx.Response(200, json={"request_id": "abc-123", "status_url": STATUS_URL, "response_url": RESULT_URL})
+        if url == STATUS_URL:
+            return httpx.Response(200, json={k: v for k, v in state.items() if k in ("status", "error")})
+        if url == RESULT_URL:
+            return httpx.Response(200, json={"model_glb": {"url": state.get("glb", GLB_URL)}})
+        if url == GLB_URL:
+            return httpx.Response(200, content=glb)
+        return httpx.Response(404)
+
+    fake_provider(monkeypatch, handler)
+    monkeypatch.setattr(main, "FAL_KEY", "fk")
+    monkeypatch.setattr(main, "check_public_host", lambda url: None)  # no DNS in tests
+    return seen
+
+
+def test_model3d_provider(monkeypatch):
+    import trimesh
+    state = {"status": "IN_PROGRESS"}
+    seen = fake_fal(monkeypatch, state, trimesh.creation.box().export(file_type="glb"))
+    rid = c.post("/vibe/model3d", headers=H, json={"image_url": "https://x/a.jpg", "category": "floor_lamp"}).json()["request_id"]
+    assert state["sent"]["prompt"] == "floor lamp" and state["sent"]["export_textured_glb"] is True
+    assert main.decode_model_job(rid) == (STATUS_URL, RESULT_URL)  # fal's own links, carried in the signed id
+    assert c.get(f"/vibe/model3d/{rid}", headers=H).json() == {"status": "running"}
+    state["status"] = "COMPLETED"
+    done = c.get(f"/vibe/model3d/{rid}", headers=H).json()
+    assert done["status"] == "done" and base64.b64decode(done["usdz_base64"])[:2] == b"PK"
+    assert (GLB_URL, None) in seen  # the API key never goes to the CDN
+    for bad in ("http://v3.fal.media/m.glb", "https://evil.example/m.glb"):
+        state["glb"] = bad
+        assert c.get(f"/vibe/model3d/{rid}", headers=H).json()["status"] == "failed"
+    state.pop("glb")
+    monkeypatch.setattr(main, "MAX_GLB", 100)
+    assert c.get(f"/vibe/model3d/{rid}", headers=H).json() == {"status": "failed", "error": "model file too large"}
+    state.update(error="segmentation failed")
+    assert c.get(f"/vibe/model3d/{rid}", headers=H).json() == {"status": "failed", "error": "segmentation failed"}
+    fake_provider(monkeypatch, lambda req: httpx.Response(401))
+    assert c.get(f"/vibe/model3d/{rid}", headers=H).status_code == 502
+    assert c.post("/vibe/model3d", headers=H, json={"image_url": "https://x/a.jpg"}).status_code == 502
+    fake_provider(monkeypatch, lambda req: httpx.Response(200, content=b"<html>"))
+    assert c.post("/vibe/model3d", headers=H, json={"image_url": "https://x/a.jpg"}).status_code == 502
+    assert c.get(f"/vibe/model3d/{rid}", headers=H).status_code == 502
+
+
+def test_model3d_token_tampering(monkeypatch):
+    monkeypatch.setattr(main, "MOCK", False)
+    monkeypatch.setattr(main, "FAL_KEY", "fk")
+    rid = main.encode_model_job(STATUS_URL, RESULT_URL)
+    body = rid.split(".")[0]
+    assert c.get(f"/vibe/model3d/{body}.{'0' * 32}", headers=H).status_code == 400
+    forged = main.encode_model_job("https://evil.example/status", RESULT_URL)  # signed, but not fal
+    assert c.get(f"/vibe/model3d/{forged}", headers=H).status_code == 400
+    assert c.get("/vibe/model3d/mock-model", headers=H).status_code == 400
+    shop = main.encode_job({"items": [], "t": 0})  # a shopping token is not a model token
+    assert c.get(f"/vibe/model3d/{shop}", headers=H).status_code == 400
+
+
+def test_check_public_host():
+    import pytest
+    for bad in ("https://127.0.0.1/m.glb", "https://[::1]/m.glb", "https://localhost/m.glb"):
+        with pytest.raises(ValueError):
+            main.check_public_host(bad)
