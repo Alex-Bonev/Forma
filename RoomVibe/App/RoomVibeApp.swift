@@ -3,6 +3,9 @@ import SwiftUI
 @main
 struct RoomVibeApp: App {
     @State private var store = ProjectStore()
+    /// nil without a cloud config: the library then stays on this device.
+    @State private var sync: CloudSync?
+    @Environment(\.scenePhase) private var scenePhase
     @State private var connectivity = Connectivity()
     @AppStorage("forma.seenStart") private var seenStart = false
     @State private var splash = true
@@ -29,6 +32,14 @@ struct RoomVibeApp: App {
             .task {
                 // Wake a cold Vercel function now, so the first "Make it real" doesn't pay for the cold start.
                 _ = try? await APIClient.shared.health()
+            }
+            .task {
+                // A pass now pulls rooms and objects from other sessions; later passes follow local changes.
+                if sync == nil { sync = CloudSync(store: store) }
+                sync?.schedule(after: .zero)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { sync?.schedule(after: .zero) }   // back from the background: catch up
             }
             .task {
                 // One full loop of the mark, then hand over to Start (first launch) or Home.
