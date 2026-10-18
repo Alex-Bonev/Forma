@@ -85,8 +85,9 @@ RENDER_VIEWS = {
     ),
 }
 RENDER_RULES = (
-    "Be faithful, not creative: this is a check of how a real room looks, not a redesign. Keep the room shape "
-    "and every wall, window and door exactly where it is. Furniture in image 1 is a simplified stand-in: keep "
+    "Be faithful, not creative: this is a check of how a real room looks, not a redesign. Keep the camera, "
+    "framing and the room's exact size and proportions from image 1: every wall corner, window, door and piece of "
+    "furniture stays at the same place in the frame, and the room is not made wider, longer or taller. Furniture in image 1 is a simplified stand-in: keep "
     "each piece's type, footprint, height, position and facing, and make it look like a real piece of that type. "
     "Add nothing that is not in image 1: no extra furniture, plants, rugs, art, lamps, curtains or decor, and "
     "keep empty floor and bare walls empty. Everything outside the walls, including any notch or corner cut out "
@@ -122,7 +123,9 @@ def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_s
         which = f"Image {n} is a real photo" if photos == 1 else f"Images {n} to {n + photos - 1} are real photos"
         parts.append(f"{which} of this same room, taken during the scan from other angles. They are the ground "
                      "truth for how the room looks: wall color and texture, flooring, the real furniture's materials "
-                     "and colors, and the light. Give each stand-in the look of the matching real piece in the photos. Image 1 is the ground truth for the camera, the layout and where each "
+                     "and colors, and the light. Give each stand-in the look of the matching real piece in the photos. Use the photos "
+                     "only for looks: never copy furniture, objects or clutter from them, because the 3D model leaves "
+                     "some things out on purpose. Image 1 is the ground truth for the camera, the layout and where each "
                      "piece stands. Where they disagree on looks, follow the photos; on positions, follow image 1. "
                      "Ignore clutter, people and anything moved since in the photos, and never add a photo's objects "
                      "that image 1 does not show.")

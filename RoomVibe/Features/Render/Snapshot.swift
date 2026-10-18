@@ -25,27 +25,27 @@ func captureDesignerSnapshot(opaque: Bool = true, size: CGSize? = nil, fallbackT
     }
 }
 
-/// On-screen view with a CAMetalLayer in its layer tree (a few levels deep): the one matching `size` if given,
-/// else the biggest.
+/// On-screen view with a CAMetalLayer in its layer tree (a few levels deep). With `size`: the one closest to it
+/// (within 25%; on a tie the innermost, i.e. the RealityView rather than a same-sized host holding the chrome).
+/// Without: the biggest.
 @MainActor
 private func metalView(in root: UIView, size: CGSize?) -> UIView? {
-    var best: UIView?
+    var best: (view: UIView, score: CGFloat)?
     func area(_ v: UIView) -> CGFloat { v.bounds.width * v.bounds.height }
     func hasMetal(_ layer: CALayer, depth: Int = 0) -> Bool {
         layer is CAMetalLayer || (depth < 3 && (layer.sublayers ?? []).contains { hasMetal($0, depth: depth + 1) })
     }
-    func fits(_ v: UIView) -> Bool {
-        guard let size else { return true }
-        return abs(v.bounds.width - size.width) < 4 && abs(v.bounds.height - size.height) < 4
+    func score(_ v: UIView) -> CGFloat? {
+        guard let size else { return -area(v) }   // lower is better: biggest wins
+        let dw = abs(v.bounds.width - size.width), dh = abs(v.bounds.height - size.height)
+        guard dw < size.width * 0.25, dh < size.height * 0.25 else { return nil }
+        return dw + dh
     }
     func visit(_ v: UIView) {
         guard !v.isHidden, v.alpha > 0 else { return }
-        if hasMetal(v.layer), fits(v) {
-            // With a size: the innermost match (smallest); without: the biggest, as before.
-            if best == nil || (size == nil ? area(v) > area(best!) : area(v) <= area(best!)) { best = v }
-        }
-        v.subviews.forEach(visit)
+        if hasMetal(v.layer), let sc = score(v), sc <= (best?.score ?? .greatestFiniteMagnitude) { best = (v, sc) }
+        v.subviews.forEach(visit)   // children after parents: ties go to the innermost
     }
     visit(root)
-    return best
+    return best?.view
 }

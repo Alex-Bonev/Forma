@@ -4,6 +4,9 @@ import simd
 /// What "Make it real" describes, built from the project the way the Designer shows it, plus real scan photos
 /// as ground truth for how the room looks.
 enum RenderInputs {
+    /// "Real-photo look" switch (Make it real angle bar). Off by default: without photos the layout stays exact.
+    static let usePhotosKey = "renderUsesPhotos"
+
     /// Room for LayoutDescription and StructureMap: hidden/replaced scanned objects dropped, every placement
     /// (library scans and catalog items) as a sized object. Catalog items are stand-ins, listed in `standIns`.
     static func scene(project: Project, room: RoomModel, objects: [ScannedObject])
