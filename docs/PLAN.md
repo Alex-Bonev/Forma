@@ -145,6 +145,13 @@ Fallbacks: bundled demo data if a scan fails; cached render if Wi-Fi fails; scre
 | 7 | App name/branding final? ("RoomVibe" assumed) | Team | H20 |
 | 8 | Venue Wi-Fi reliability — decides how much we lean on cached AI results | Alex | H34 |
 
+C's proposals (not yet confirmed by the team):
+
+- **#3:** Gemini image editing (Interactions API), `IMAGE_MODEL=gemini-nano-banana-2.1` (~$0.034/image at 1K, no free tier).
+  Check current pricing on the provider page before relying on it.
+- **#4:** Claude (`claude-opus-5-5`, structured output) for vibe analysis, SerpAPI Google Shopping for products.
+- **#5:** still open. C deploys from `backend/`; provider keys live only in Vercel env vars.
+
 ## 9. Rules for Claude Code sessions (all three of us)
 
 - Read `docs/PLAN.md` and your own handoff file first. Stay inside your owned files.
