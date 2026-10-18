@@ -131,6 +131,45 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Demo Chair at") == true, "undo brings the chair back")
     }
 
+    /// The Lock pill shows only after a tap on a placed object, hides on any other touch, and locks drag.
+    func testLockPill() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        let pill = app.buttons["Lock in place"], unlockPill = app.buttons["Unlock in place"]
+        XCTAssertFalse(pill.exists, "adding an object must not show the pill")
+
+        let empty = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08))
+        let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
+        empty.tap()
+        chair.tap()
+        XCTAssertTrue(pill.waitForExistence(timeout: 2), "tapping the chair shows the pill")
+        empty.tap()
+        XCTAssertFalse(pill.exists, "tapping elsewhere hides the pill")
+
+        chair.tap()
+        XCTAssertTrue(pill.waitForExistence(timeout: 2))
+        pill.tap()
+        XCTAssertTrue(unlockPill.waitForExistence(timeout: 2), "the pill flips to Unlock once locked")
+        let before = canvas.value as? String
+        chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.62)))
+        sleep(1)
+        XCTAssertFalse(unlockPill.exists, "a drag hides the pill")
+        chair.tap()
+        XCTAssertEqual(canvas.value as? String, before, "a locked chair must not move")
+
+        XCTAssertTrue(unlockPill.waitForExistence(timeout: 2))
+        unlockPill.tap()
+        chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.62)))
+        sleep(1)
+        XCTAssertGreaterThan(abs(x(canvas.value as? String) - x(before)), 0.3, "unlocked, the chair moves again")
+    }
+
     /// Rooms are renamed from the Name field on Room detail.
     /// Opens the render sheet. Shows a result only with a backend running (`MOCK=1 uvicorn main:app`).
     func testMakeItRealOpens() {

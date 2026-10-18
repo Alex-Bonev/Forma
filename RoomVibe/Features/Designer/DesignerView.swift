@@ -63,6 +63,7 @@ struct DesignerView: View {
         let camera: RenderCamera
     }
     @State private var renderShot: RenderShot?
+    @State private var lockMenuFor: UUID?   // placement whose Lock pill is showing
 
     /// Capture before presenting: the snapshot and the camera must describe the same frame.
     /// Selection markers are cleared first so the image model doesn't render them as objects.
@@ -141,6 +142,10 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) { undoBar; hint.allowsHitTesting(false) }.padding(.bottom, 36)
+                }
+                .overlay(alignment: .bottomLeading) {
+                    lockMenu().padding(.leading, 16).padding(.bottom, 36)
+                        .animation(.spring(duration: 0.25, bounce: 0), value: lockMenuFor)   // scoped: on the whole view it froze the Designer
                 }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
@@ -264,13 +269,14 @@ struct DesignerView: View {
         var h = TouchSurface.Handlers()
         h.touchDown = {
             camera.grab()
+            lockMenuFor = nil   // the menu belongs to a tap on the item; any new touch hides it
             if showHint { showHint = false }
         }
         h.touchUp = { camera.release() }
         h.oneFinger = { phase, location, delta, velocity in
             switch phase {
             case .began:
-                if let id = hitPlacement(at: location), let e = placed[id],
+                if let id = hitPlacement(at: location), !isLocked(id), let e = placed[id],
                    let start = floorPoint(at: location) {
                     moving = (id, e.position - start)
                     selected = id
@@ -306,7 +312,7 @@ struct DesignerView: View {
             }
         }
         h.twist = { phase, delta in
-            if phase == .began { twistingObject = selected != nil }
+            if phase == .began { twistingObject = selected.map { !isLocked($0) } ?? false }
             if twistingObject, let selected, let e = placed[selected] {
                 if phase == .ended { commit() }
                 else { e.orientation = simd_quatf(angle: -Float(delta), axis: [0, 1, 0]) * e.orientation }
@@ -316,7 +322,7 @@ struct DesignerView: View {
             if phase == .ended { twistingObject = false }
         }
         h.tap = { location in
-            if let id = hitPlacement(at: location) { selected = id }
+            if let id = hitPlacement(at: location) { selected = id; lockMenuFor = id }
             else if let i = hitRoomObject(at: location) { selected = nil; selectedRoomObject = i }
             else { selected = nil; selectedRoomObject = nil }
         }
@@ -689,6 +695,37 @@ struct DesignerView: View {
         e.scale = p.scale ?? .one
         scene.addChild(e)
         placed[p.id] = e
+    }
+
+    private func isLocked(_ id: UUID) -> Bool {
+        project?.placements.first { $0.id == id }?.locked ?? false
+    }
+
+    private func toggleLock(_ id: UUID) {
+        guard var project, let i = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        project.placements[i].locked = !(project.placements[i].locked ?? false)
+        store.update(project)
+        lifts += 1
+    }
+
+    /// Tiny quick menu, shown only after a tap on a placed object and hidden by any other touch. Bottom-left keeps
+    /// it clear of the room and of the Objects panel, which opens on the right whenever something is selected.
+    @ViewBuilder private func lockMenu() -> some View {
+        if let id = lockMenuFor, id == selected, project?.placements.contains(where: { $0.id == id }) == true {
+            let locked = isLocked(id)
+            Button { toggleLock(id) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: locked ? "lock.fill" : "lock.open").font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.sageDeep)
+                    Text(locked ? "Locked" : "Lock").font(.forma(12, bold: true)).foregroundStyle(Theme.ink)
+                }
+                .padding(.horizontal, 14).frame(height: 36)
+                .background(Theme.sand, in: Capsule())
+                .overlay(Capsule().strokeBorder(Theme.sage, lineWidth: 1.5))
+            }
+            .accessibilityLabel(locked ? "Unlock in place" : "Lock in place")
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        }
     }
 
     private func baseScale(_ id: UUID) -> SIMD3<Float> {
