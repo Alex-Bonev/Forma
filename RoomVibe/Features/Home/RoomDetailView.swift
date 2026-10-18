@@ -71,11 +71,17 @@ struct RoomDetailView: View {
                 }
             }
             .foregroundStyle(Theme.ink).padding(.bottom, 8)
+            if let summary = shoppedSummary(project) {
+                Text(summary).font(.forma(11)).foregroundStyle(Theme.muted).padding(.bottom, 8)
+                    .accessibilityIdentifier("shoppedSummary")
+            }
             ForEach(project.placements) { p in
                 let item = CatalogItem.item(p.catalogItem)
                 let object = store.objects.first { $0.id == p.objectID }
-                ItemRow(name: item?.name ?? object?.name ?? "Item", symbol: item?.symbol ?? "chair.lounge",
-                        size: (item?.size ?? object?.boundingBox ?? .zero) * (p.scale ?? .one), isNew: p.id == added)
+                ItemRow(name: p.product?.title ?? item?.name ?? object?.name ?? "Item",
+                        symbol: p.product != nil ? "bag" : item?.symbol ?? "chair.lounge",
+                        size: (item?.size ?? object?.boundingBox ?? .zero) * (p.scale ?? .one), isNew: p.id == added,
+                        product: p.product)
                     .onTapGesture { router.path.append(.designer(projectID)) }
             }
             ForEach(Array(room.objects.enumerated()), id: \.offset) { i, box in
@@ -90,6 +96,20 @@ struct RoomDetailView: View {
                     .font(.forma(12)).foregroundStyle(Theme.muted).padding(.vertical, 12)
             }
         }
+    }
+
+    /// "3 shopped products · $612.97 before shipping and tax" for the products added from Vibe shopping; nil when none.
+    private func shoppedSummary(_ project: Project) -> String? {
+        let products = project.placements.compactMap(\.product)
+        guard !products.isEmpty else { return nil }
+        let priced = products.compactMap(\.priceUSD)
+        var text = products.count == 1 ? "1 shopped product" : "\(products.count) shopped products"
+        if !priced.isEmpty {
+            text += " · " + priced.reduce(0, +).formatted(.currency(code: "USD"))
+            if priced.count < products.count { text += " + unpriced" }
+            text += " before shipping and tax"
+        }
+        return text
     }
 
     private func addedName(_ project: Project) -> String? {
@@ -137,20 +157,32 @@ struct RoomDetailView: View {
 
 private struct ItemRow: View {
     let name: String, symbol: String, size: SIMD3<Float>, isNew: Bool
+    /// Set for products added from Vibe shopping: price and store under the size, and a link to the listing.
+    var product: ShopProduct? = nil
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: symbol).font(.system(size: 17)).foregroundStyle(Theme.wood)
                 .frame(width: 40, height: 40).background(Theme.tiles[1], in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+                Text(name).font(.forma(14, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
                 Text(String(format: "%.0f × %.0f × %.0f cm", size.x * 100, size.z * 100, size.y * 100))
                     .font(.forma(11)).foregroundStyle(Theme.muted)
+                if let product {
+                    Text("\(product.price) · \(product.retailer)").font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1)
+                }
             }
             if isNew {
                 Text("New").font(.forma(11)).foregroundStyle(Theme.onSage)
                     .padding(.horizontal, 10).frame(height: 24).background(Theme.sage, in: Capsule())
             }
             Spacer(minLength: 8)
+            if let product {
+                Link(destination: product.productURL) {
+                    Image(systemName: "arrow.up.right.square").font(.system(size: 17)).foregroundStyle(Theme.wood)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Open product \(product.title)")
+            }
             Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
         }
         .padding(.vertical, 10)
