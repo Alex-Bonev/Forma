@@ -4,6 +4,7 @@ import RealityKit
 /// Paper "G · Object detail", "H · Object fullscreen 3D" and "I · Add to room".
 struct ObjectDetailView: View {
     let objectID: UUID
+    var picks = false   // open "Add to a room" on arrival (fresh scan)
     @Environment(ProjectStore.self) private var store
     @Environment(Router.self) private var router
     @Environment(\.dismiss) private var dismiss
@@ -43,6 +44,11 @@ struct ObjectDetailView: View {
             .background(Theme.ground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { name = object.name }
+            .task {
+                guard picks, !store.projects.isEmpty else { return }
+                try? await Task.sleep(for: .milliseconds(650))   // after the push settles
+                picking = true
+            }
             .fullScreenCover(isPresented: $fullscreen) {
                 ObjectStage(object: object, fullscreen: true) { fullscreen = false }
             }
@@ -91,7 +97,7 @@ struct ObjectDetailView: View {
             store.update(project)
         }
         store.delete(old)
-        router.path = router.path.map { $0 == .object(old.id) ? .object(fresh.id) : $0 }
+        router.path = router.path.map { if case .object(old.id, _) = $0 { .object(fresh.id) } else { $0 } }
     }
 }
 

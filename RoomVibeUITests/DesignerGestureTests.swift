@@ -221,7 +221,7 @@ final class DesignerGestureTests: XCTestCase {
     /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
     func testMarkedItemSuggestion() {
         let app = XCUIApplication()
-        app.launchArguments = ["-demo"]
+        app.launchArguments = ["-demo", "-fresh"]   // an earlier test may have used up the marked item
         app.launch()
         let canvas = app.otherElements["designer-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))

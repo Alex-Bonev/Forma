@@ -84,6 +84,7 @@ struct RenderView: View {
             model.start()
         }
         .onDisappear { model.cancel() }
+        .sensoryFeedback(trigger: model.result != nil) { _, done in done ? .success : nil }
     }
 
     @ViewBuilder private var content: some View {

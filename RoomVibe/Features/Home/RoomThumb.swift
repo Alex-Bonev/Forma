@@ -12,7 +12,10 @@ struct RoomThumb: View {
         Group {
             if let image { Image(uiImage: image).resizable().scaledToFill() } else { RoomGlyph() }
         }
-        .onAppear { image = UIImage(contentsOfFile: Self.url(projectID).path(percentEncoded: false)) }   // reload after edits
+        .onAppear {   // reload after edits; fade the snapshot in over the glyph
+            let fresh = UIImage(contentsOfFile: Self.url(projectID).path(percentEncoded: false))
+            withAnimation(.easeOut(duration: 0.25)) { image = fresh }
+        }
         .accessibilityHidden(true)
     }
 }

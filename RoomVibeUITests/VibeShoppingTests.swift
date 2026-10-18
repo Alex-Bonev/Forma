@@ -9,13 +9,19 @@ final class VibeShoppingTests: XCTestCase {
 
         let makeItReal = app.buttons["Make it real"]
         XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
-        makeItReal.firstMatch.tap()
         let openVibe = app.buttons["openVibe"]
-        XCTAssertTrue(openVibe.waitForExistence(timeout: 10))
+        // A tap during launch (the Designer still settling) can be swallowed: retry until the render sheet opens.
+        for _ in 0..<3 where !openVibe.exists {
+            makeItReal.firstMatch.tap()
+            _ = openVibe.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(openVibe.exists)
         let start = app.buttons["vibeStart"]
         // The render sheet may still be animating in, which can swallow the first tap.
+        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: openVibe)
+        wait(for: [hittable], timeout: 10)   // exists while still sliding in offscreen; tapping then fails hard
         for _ in 0..<3 where !start.exists {
-            openVibe.tap()
+            if openVibe.isHittable { openVibe.tap() }
             _ = start.waitForExistence(timeout: 3)
         }
         XCTAssertTrue(start.exists)

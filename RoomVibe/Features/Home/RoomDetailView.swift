@@ -46,7 +46,7 @@ struct RoomDetailView: View {
             .onAppear { name = project.name }
             .task {
                 guard added != nil else { return }
-                withAnimation(.easeOut(duration: 0.3)) { toastVisible = true }
+                withAnimation(.spring(duration: 0.35, bounce: 0.25)) { toastVisible = true }
                 try? await Task.sleep(for: .seconds(2.5))
                 withAnimation(.easeOut(duration: 0.3)) { toastVisible = false }
             }
