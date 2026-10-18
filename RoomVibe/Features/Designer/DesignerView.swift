@@ -71,16 +71,17 @@ struct DesignerView: View {
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
         } else if let project, let room = store.room(for: project) {
             realityView(project: project, room: room)
+                .padding(.trailing, showObjects ? 268 : 0)   // room slides left of the Objects panel (Paper E2/E3)
                 .toolbar(.hidden, for: .navigationBar)
                 .onAppear { if opensCatalog { showCatalog = true } }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
-                    if new != nil { selectedRoomObject = nil }
+                    if new != nil { selectedRoomObject = nil; showObjects = true }
                     highlight(new.flatMap { placed[$0] })
                 }
                 .onChange(of: selectedRoomObject) { _, new in
-                    if new != nil { selected = nil }
+                    if new != nil { selected = nil; showObjects = true }
                     highlight(new.flatMap(roomObjectEntity))
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
@@ -94,7 +95,7 @@ struct DesignerView: View {
                     if showObjects { objectsPanel(project).transition(.move(edge: .trailing).combined(with: .opacity)) }
                 }
                 .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
-                .safeAreaInset(edge: .bottom) { bottomPanel(project) }
+                .overlay(alignment: .bottom) { hint.padding(.bottom, 36).allowsHitTesting(false) }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
             ContentUnavailableView("Room not found", systemImage: "cube.transparent")
@@ -426,12 +427,7 @@ struct DesignerView: View {
                                 }
                                 .accessibilityLabel(info.hidden ? "Show \(info.name)" : "Hide \(info.name)")
                             }
-                            if info.selected, case .placement(let id) = row {
-                                HStack(spacing: 8) {
-                                    PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
-                                    PanelAction("Remove", icon: "trash") { remove(id) }
-                                }
-                            }
+                            if info.selected { rowActions(row, project: project) }
                         }
                         .padding(10)
                         .background(info.selected ? Theme.tiles[0] : .clear, in: RoundedRectangle(cornerRadius: 18))
@@ -481,122 +477,78 @@ struct DesignerView: View {
         commit()
     }
 
-    // MARK: Panel
+    // MARK: Hint and selected-row actions
 
-    @ViewBuilder private func bottomPanel(_ project: Project) -> some View {
-        VStack(spacing: 12) {
-            if showHint || objectHint {
-                Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
-                                : "Drag to look around · Two fingers to pan · Pinch to zoom")
-                    .font(.forma(11))
-                    .foregroundStyle(Theme.muted)
-                    .transition(.opacity)
+    @ViewBuilder private var hint: some View {
+        if objectHint { HintPill("Drag to move · Twist to rotate") }
+        else if showHint { HintPill("Drag to orbit · Pinch to zoom") }
+    }
+
+    /// Actions for the selected row in the Objects panel. Move = drag, rotate = twist or the Rotate button.
+    @ViewBuilder private func rowActions(_ row: ObjectRow, project: Project) -> some View {
+        switch row {
+        case .placement(let id):
+            HStack(spacing: 8) {
+                PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
+                PanelAction("Remove", icon: "trash") { remove(id) }
             }
-            if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
-                roomObjectCard(i, room: room)
-            } else if let selected, placed[selected] != nil {
-                placementCard(selected, project: project)
-            } else if let hidden = project.hiddenRoomObjects, !hidden.isEmpty {
-                Button("Show \(hidden.count) hidden scanned item\(hidden.count == 1 ? "" : "s")") { restoreHidden() }
-                    .font(.footnote)
+            HStack(spacing: 8) {
+                PanelAction("Size", icon: "slider.horizontal.3") { editing = true }
+                if Capabilities.canScanObject { PanelAction("Scan real", icon: "camera.viewfinder") { scanTarget = .placement(id) } }
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    Button { showCatalog = true } label: { Label("Add Item", systemImage: "plus") }
-                        .font(.forma(13)).foregroundStyle(Theme.onSage)
-                        .padding(.horizontal, 16).frame(height: 40).background(Theme.sage, in: Capsule())
-                    ForEach(store.objects) { object in
-                        Button { Task { await add(object) } } label: {
-                            if adding == object.name {
-                                HStack(spacing: 6) { ProgressView().controlSize(.small); Text(object.name) }
-                            } else {
-                                Label(object.name, systemImage: "plus.circle.fill")
+        case .room(let i):
+            if let room = store.room(for: project), room.objects.indices.contains(i) {
+                let box = room.objects[i]
+                let marked = box.label == RoomModel.markedLabel
+                // Vision suggestion for marked items (SceneClassifier), offered first.
+                let suggestion = CatalogItem.item(box.attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) })
+                if let suggestion {
+                    PanelAction("Use \(suggestion.name)", icon: suggestion.symbol, filled: true) {
+                        Task { await replaceRoomObject(i, catalog: suggestion) }
+                    }
+                }
+                HStack(spacing: 8) {
+                    Menu {
+                        if !store.objects.isEmpty {
+                            Section("Your scans") {
+                                ForEach(store.objects) { o in Button(o.name) { Task { await replaceRoomObject(i, object: o) } } }
                             }
                         }
-                        .font(.forma(13)).foregroundStyle(Theme.ink)
-                        .padding(.horizontal, 14).frame(height: 40)
-                        .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.8), lineWidth: 1))
-                        .disabled(adding != nil)
-                    }
+                        Section("Catalog") {
+                            ForEach(CatalogItem.all) { c in
+                                Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
+                            }
+                        }
+                    } label: { PanelLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
+                        .accessibilityLabel("Replace")
+                    if !marked { PanelAction("Size", icon: "slider.horizontal.3") { Task { await editRoomObject(i, room: room) } } }
                 }
-                .padding(.horizontal)
+                if Capabilities.canScanObject { PanelAction("Scan real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) } }
             }
         }
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity)
-        .background(Theme.ground.opacity(0.85)).background(.ultraThinMaterial)
-        .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
-        .animation(.spring(duration: 0.3, bounce: 0), value: selected)
-        .animation(.spring(duration: 0.3, bounce: 0), value: selectedRoomObject)
-    }
-
-    // MARK: Selection cards
-    // One card per selection: name + at most 4 labeled actions. Move = drag, rotate = twist, deselect = tap empty space.
-
-    private func placementCard(_ id: UUID, project: Project) -> some View {
-        selectionCard(title: selectionDescription(project)?.components(separatedBy: " at ").first ?? "Item",
-                      subtitle: "Drag to move · Twist to rotate") {
-            ActionButton("Size", icon: "slider.horizontal.3") { editing = true }
-            if Capabilities.canScanObject {
-                ActionButton("Scan Real", icon: "camera.viewfinder") { scanTarget = .placement(id) }
-            }
-            ActionButton("Delete", icon: "trash", role: .destructive) { remove(id) }
-        }
-    }
-
-    private func roomObjectCard(_ i: Int, room: RoomModel) -> some View {
-        let box = room.objects[i]
-        let marked = box.label == RoomModel.markedLabel
-        // Vision suggestion for marked items (SceneClassifier), offered as the first action.
-        let suggestion = CatalogItem.item(box.attributes?.first { $0.hasPrefix("Suggest.") }.map { String($0.dropFirst(8)) })
-        return selectionCard(title: marked ? "Marked Item" : "Scanned \(box.label.capitalized)",
-                             subtitle: suggestion.map { "Looks like a \($0.name)" } ?? "From your room scan") {
-            if let suggestion {
-                ActionButton("Use \(suggestion.name)", icon: suggestion.symbol, prominent: true) {
-                    Task { await replaceRoomObject(i, catalog: suggestion) }
-                }
-            }
-            Menu {
-                if !store.objects.isEmpty {
-                    Section("Your scans") {
-                        ForEach(store.objects) { o in Button(o.name) { Task { await replaceRoomObject(i, object: o) } } }
-                    }
-                }
-                Section("Catalog") {
-                    ForEach(CatalogItem.all) { c in
-                        Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
-                    }
-                }
-            } label: { ActionLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
-                .accessibilityLabel("Replace")
-            if !marked {
-                ActionButton("Size", icon: "slider.horizontal.3") { Task { await editRoomObject(i, room: room) } }
-            }
-            if Capabilities.canScanObject {
-                ActionButton("Scan Real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) }
-            }
-            ActionButton("Hide", icon: "eye.slash") { hideRoomObject(i) }
-        }
-    }
-
-    private func selectionCard<Actions: View>(title: String, subtitle: String,
-                                              @ViewBuilder actions: () -> Actions) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.forma(15, bold: true)).foregroundStyle(Theme.ink)
-                Text(subtitle).font(.forma(11)).foregroundStyle(Theme.muted)
-            }
-            .lineLimit(1)
-            HStack(spacing: 8) { actions() }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var catalogSheet: some View {
         NavigationStack {
             ScrollView {
+                if !store.objects.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your scans").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                        ForEach(store.objects) { object in
+                            Button {
+                                showCatalog = false
+                                Task { await add(object) }
+                            } label: {
+                                Label(object.name, systemImage: "plus.circle.fill").font(.forma(13)).foregroundStyle(Theme.ink)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).frame(height: 44)
+                                    .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1))
+                            }
+                        }
+                    }
+                    .padding([.horizontal, .top])
+                    Text("Catalog").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .top])
+                }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
                     ForEach(CatalogItem.all) { item in
                         Button {
@@ -618,7 +570,7 @@ struct DesignerView: View {
                 .padding()
             }
             .background(Theme.ground)
-            .navigationTitle("Add Item")
+            .navigationTitle("Add object")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showCatalog = false } } }
         }
@@ -779,9 +731,11 @@ struct DesignerView: View {
                     Text("Raise wall-mounted items like sinks, shelves, TVs or lamps.")
                 }
             }
+            .font(.forma(14)).tint(Theme.sage)
+            .scrollContentBackground(.hidden).background(Theme.ground)
             .navigationTitle(selectionDescription(project!)?.components(separatedBy: " at ").first ?? "Edit")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { editing = false } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { editing = false }.font(.forma(14, bold: true)).foregroundStyle(Theme.ink) } }
         }
         .presentationDetents([.medium])
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
@@ -847,13 +801,21 @@ struct DesignerView: View {
         guard let e else { return }
         let b = e.visualBounds(relativeTo: e)
         let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
-        var m = UnlitMaterial(color: UIColor(Theme.sage))
-        m.blending = .transparent(opacity: 0.4)
-        let disc = ModelEntity(mesh: .generateCylinder(height: 0.004, radius: radius), materials: [m])
-        disc.name = "selection"
+        // Dashed ring, as in the design: a dash every other slot around the object.
+        let ring = Entity()
+        ring.name = "selection"
+        let dash = UnlitMaterial(color: UIColor(Theme.ink).withAlphaComponent(0.65))
+        let slots = 32
+        for k in stride(from: 0, to: slots, by: 2) {
+            let a = Float(k) / Float(slots) * 2 * .pi
+            let d = ModelEntity(mesh: .generateBox(size: [0.08, 0.004, 0.014]), materials: [dash])
+            d.position = [radius * cos(a), 0, radius * sin(a)]
+            d.orientation = simd_quatf(angle: -a - .pi / 2, axis: [0, 1, 0])   // along the tangent
+            ring.addChild(d)
+        }
         // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
-        disc.position.y = 0.003 - e.position(relativeTo: scene).y
-        e.addChild(disc)
+        ring.position.y = 0.003 - e.position(relativeTo: scene).y
+        e.addChild(ring)
     }
 
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.
@@ -923,43 +885,6 @@ final class WallCutaway {
     }
 }
 
-/// Icon over a short caption: every action says what it does.
-struct ActionLabel: View {
-    let title: String
-    let icon: String
-    var prominent = false
-    var role: ButtonRole? = nil
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 18, weight: .medium))
-            Text(title).font(.forma(11)).lineLimit(1).minimumScaleFactor(0.8)
-        }
-        .foregroundStyle(prominent ? Theme.onSage : role == .destructive ? Color(hex: 0x9A4B3C) : Theme.ink)
-        .frame(maxWidth: .infinity, minHeight: 54)
-        .background(prominent ? Theme.sage : Theme.hairline, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-struct ActionButton: View {
-    let title: String
-    let icon: String
-    var prominent = false
-    var role: ButtonRole? = nil
-    let action: () -> Void
-
-    init(_ title: String, icon: String, prominent: Bool = false, role: ButtonRole? = nil, action: @escaping () -> Void) {
-        self.title = title; self.icon = icon; self.prominent = prominent; self.role = role; self.action = action
-    }
-
-    var body: some View {
-        Button(role: role, action: action) { ActionLabel(title: title, icon: icon, prominent: prominent, role: role) }
-            .buttonStyle(.plain)
-            .accessibilityLabel(title)
-    }
-}
-
 /// Small capsule hint over the 3D view ("Drag to orbit · Pinch to zoom").
 struct HintPill: View {
     let text: String
@@ -971,16 +896,27 @@ struct HintPill: View {
     }
 }
 
-/// Outlined pill used inside the Objects panel's selected row.
-private struct PanelAction: View {
-    let title: String, icon: String, action: () -> Void
-    init(_ title: String, icon: String, action: @escaping () -> Void) { self.title = title; self.icon = icon; self.action = action }
+/// Pill used inside the Objects panel's selected row: outlined, or sage-filled for the suggested action.
+private struct PanelLabel: View {
+    let title: String, icon: String
+    var filled = false
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon).font(.forma(12)).foregroundStyle(Theme.ink)
-                .frame(maxWidth: .infinity, minHeight: 34)
-                .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1))
-        }
-        .accessibilityLabel(title)
+        Label(title, systemImage: icon).font(.forma(12)).foregroundStyle(filled ? Theme.onSage : Theme.ink)
+            .lineLimit(1).minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background(filled ? Theme.sage : .clear, in: Capsule())
+            .overlay { if !filled { Capsule().strokeBorder(Theme.ink, lineWidth: 1) } }
+            .contentShape(Capsule())
+    }
+}
+
+private struct PanelAction: View {
+    let title: String, icon: String, filled: Bool, action: () -> Void
+    init(_ title: String, icon: String, filled: Bool = false, action: @escaping () -> Void) {
+        self.title = title; self.icon = icon; self.filled = filled; self.action = action
+    }
+    var body: some View {
+        Button(action: action) { PanelLabel(title: title, icon: icon, filled: filled) }
+            .accessibilityLabel(title)
     }
 }

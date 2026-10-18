@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(ProjectStore.self) private var store
     @State private var router = Router()
+    @State private var openedDemo = false
     @State private var scanningRoom = false
     @State private var scanningObject = false
     @State private var error: String?
@@ -64,7 +65,8 @@ struct HomeView: View {
             }
             .task {
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
-                guard ProcessInfo.processInfo.arguments.contains("-demo") else { return }
+                guard ProcessInfo.processInfo.arguments.contains("-demo"), !openedDemo else { return }
+                openedDemo = true   // .task reruns whenever Home reappears; jump in only once
                 if store.projects.isEmpty { try? store.loadDemoData() }
                 if let first = store.projects.first { router.path = [.designer(first.id)] }
             }
