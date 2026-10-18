@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 
 import anthropic
 import httpx
+import jwt
 from google import genai
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from PIL import Image
@@ -45,6 +46,29 @@ if os.getenv("DOTENV", "1") != "0":
 
 MOCK = os.getenv("MOCK", "1") == "1"
 APP_SHARED_SECRET = os.getenv("APP_SHARED_SECRET", "")
+# Supabase project URL: when set, a request may also pass with the app user's access token (Authorization: Bearer).
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+JWKS_TIMEOUT = 5  # seconds for one JWKS fetch
+JWKS_TTL = 10 * 60  # cached keys are refreshed after this
+JWKS_MAX_AGE = 60 * 60  # keys older than this are dropped while refreshes keep failing
+JWKS_MIN_REFETCH = 30  # at most one fetch per this many seconds, however many unknown kids arrive
+JWT_ALGORITHMS = ("ES256", "RS256")  # asymmetric only: never accept HS256 or "none"
+# Every app user is an anonymous Supabase user, so anyone can mint tokens: cap paid calls per user (0 = no cap).
+RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "30"))
+
+
+def check_supabase_url(url: str) -> str:
+    """The URL tokens are verified against: https, or http only to this machine (local Supabase)."""
+    if not url:
+        return url
+    parts = urlsplit(url)
+    loopback = parts.hostname in ("localhost", "127.0.0.1", "::1")
+    if not parts.hostname or not (parts.scheme == "https" or (parts.scheme == "http" and loopback)):
+        raise RuntimeError(f"SUPABASE_URL must be https://<project-ref>.supabase.co (http only for localhost), got {url!r}")
+    return url
+
+
+SUPABASE_URL = check_supabase_url(SUPABASE_URL)
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gemini-nano-banana-2.1")
 IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1K")  # 512 / 1K / 2K
@@ -134,11 +158,120 @@ def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_s
     return " ".join(parts)
 
 
-def check_secret(x_app_secret: str = Header("")):
-    if not MOCK and not APP_SHARED_SECRET:
-        raise HTTPException(500, "APP_SHARED_SECRET must be set when MOCK=0")  # never run real providers unguarded
-    if APP_SHARED_SECRET and not secrets.compare_digest(x_app_secret.encode(), APP_SHARED_SECRET.encode()):
-        raise HTTPException(401, "bad app secret")
+class JWKSUnavailable(Exception):
+    pass
+
+
+_jwks: dict = {"keys": {}, "fetched": -math.inf, "attempted": -math.inf}  # kid -> PyJWK; monotonic times
+_jwks_lock = asyncio.Lock()
+
+
+async def fetch_jwks() -> dict:
+    """The Supabase project's public signing keys (swapped for a fake in tests)."""
+    async with httpx.AsyncClient(timeout=JWKS_TIMEOUT) as client:
+        r = await client.get(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+        r.raise_for_status()
+        return r.json()
+
+
+def parse_jwks(data: dict) -> dict:
+    keys = {}
+    for k in data.get("keys", []) if isinstance(data, dict) else []:
+        try:
+            jwk = jwt.PyJWK(k)
+        except (jwt.PyJWKError, jwt.InvalidKeyError, TypeError, ValueError):
+            continue  # unsupported or malformed key: skip it, keep the rest
+        if jwk.key_id and jwk.algorithm_name in JWT_ALGORITHMS:
+            keys[jwk.key_id] = jwk
+    return keys
+
+
+async def signing_key(kid: str) -> jwt.PyJWK | None:
+    """Cached key for kid. Refetches when stale or kid is unknown, at most once per JWKS_MIN_REFETCH seconds.
+    Raises JWKSUnavailable when no keys newer than JWKS_MAX_AGE can be had."""
+    now = time.monotonic()
+    if kid in _jwks["keys"] and now - _jwks["fetched"] < JWKS_TTL:
+        return _jwks["keys"][kid]
+    async with _jwks_lock:
+        now = time.monotonic()
+        if now - _jwks["attempted"] >= JWKS_MIN_REFETCH:
+            _jwks["attempted"] = now
+            try:
+                keys = parse_jwks(await fetch_jwks())
+                if keys:
+                    _jwks["keys"], _jwks["fetched"] = keys, now
+                else:
+                    logging.warning("Supabase JWKS had no usable keys; keeping the cached ones")
+            except (httpx.HTTPError, ValueError) as e:
+                logging.warning("Supabase JWKS fetch failed: %s", type(e).__name__)
+        # Stale keys are still used while a refresh fails (an outage should not lock out known users), up to a limit.
+        if now - _jwks["fetched"] > JWKS_MAX_AGE:
+            _jwks["keys"] = {}
+            raise JWKSUnavailable()
+        return _jwks["keys"].get(kid)
+
+
+async def verify_supabase_token(token: str) -> dict:
+    """Claims of a valid Supabase user access token, else HTTPException. Never logs the token."""
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError:
+        raise HTTPException(401, "bad token")
+    kid = header.get("kid")
+    if not isinstance(kid, str) or header.get("alg") not in JWT_ALGORITHMS:
+        raise HTTPException(401, "bad token")
+    try:
+        key = await signing_key(kid)
+    except JWKSUnavailable:
+        raise HTTPException(503, "cannot verify token right now")
+    if key is None or key.algorithm_name != header["alg"]:
+        raise HTTPException(401, "bad token")
+    try:
+        claims = jwt.decode(token, key, algorithms=[key.algorithm_name], audience="authenticated",
+                            issuer=f"{SUPABASE_URL}/auth/v1", leeway=30,
+                            options={"require": ["exp", "iss", "aud", "sub"]})
+    except jwt.PyJWTError:
+        raise HTTPException(401, "bad token")
+    if claims.get("role") != "authenticated":
+        raise HTTPException(401, "bad token")
+    return claims
+
+
+async def check_secret(x_app_secret: str = Header(""), authorization: str = Header("")):
+    """X-App-Secret, or with SUPABASE_URL set a Supabase user's Bearer token. MOCK=1 without a secret stays open."""
+    if not MOCK and not APP_SHARED_SECRET and not SUPABASE_URL:
+        # never run real providers unguarded
+        raise HTTPException(500, "APP_SHARED_SECRET or SUPABASE_URL must be set when MOCK=0")
+    if MOCK and not APP_SHARED_SECRET:
+        return
+    if APP_SHARED_SECRET and secrets.compare_digest(x_app_secret.encode(), APP_SHARED_SECRET.encode()):
+        return
+    scheme, _, token = authorization.partition(" ")
+    if SUPABASE_URL and scheme.lower() == "bearer" and token.strip():
+        claims = await verify_supabase_token(token.strip())
+        if not MOCK:
+            rate_limit(claims["sub"])
+        return
+    raise HTTPException(401, "bad app secret")
+
+
+_calls: dict = {}  # sub -> [minute window, calls in it]
+
+
+def rate_limit(sub: str):
+    """At most RATE_LIMIT_PER_MIN calls per user per clock minute (in memory: resets with the server)."""
+    if RATE_LIMIT_PER_MIN <= 0:
+        return
+    window = int(time.monotonic() // 60)
+    if len(_calls) > 10_000:  # bound memory: forget users from past windows
+        for k in [k for k, (w, _) in _calls.items() if w != window]:
+            del _calls[k]
+    w, n = _calls.get(sub, (window, 0))
+    if w != window:
+        n = 0
+    if n >= RATE_LIMIT_PER_MIN:
+        raise HTTPException(429, "too many requests; try again in a minute")
+    _calls[sub] = (window, n + 1)
 
 
 app = FastAPI(dependencies=[Depends(check_secret)])

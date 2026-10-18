@@ -23,9 +23,12 @@ enum CloudError: LocalizedError {
 
 /// Thin REST client for Supabase Auth, PostgREST and Storage. Every install signs in anonymously once; the
 /// session lives in the Keychain so a reinstall keeps the same user (and so the same cloud library).
-/// Use one instance per process (CloudSync owns it): refresh tokens rotate, and a second copy would reuse a
+/// Use one instance per process (`CloudClient.shared`): refresh tokens rotate, and a second copy would reuse a
 /// spent one.
 actor CloudClient {
+    /// The process's only client, from `APIConfig.json`'s cloud section. nil = no cloud config.
+    static let shared: CloudClient? = APIConfig.current.cloud.map { CloudClient(config: $0) }
+
     struct Session: Codable {
         var accessToken: String
         var refreshToken: String
@@ -40,6 +43,7 @@ actor CloudClient {
     private let session: URLSession
     private var auth: Session?
     private var signingIn: Task<Session, Error>?
+    private var tokenFailedAt: Date?   // last failed sign-in: `accessToken()` waits 30 s after it
     private let log = Logger(subsystem: "RoomVibe", category: "CloudClient")
 
     init(config: CloudConfig) {
@@ -64,13 +68,34 @@ actor CloudClient {
     /// The signed-in user, signing in (or refreshing the token) first when needed.
     func user() async throws -> UUID { try await validSession().userID }
 
+    /// The current access token for the backend, or nil. Refresh only: never signs up a new user (only
+    /// `validSession()` does, for CloudSync), never waits behind a sign-in already running, and after any failed
+    /// sign-in waits 30 s before trying again, so backend calls can't stall or start a sign-in storm.
+    func accessToken() async -> String? {
+        if let auth, auth.expiresAt.timeIntervalSinceNow > 60 { return auth.accessToken }
+        guard signingIn == nil, let previous = auth, (tokenFailedAt?.timeIntervalSinceNow ?? -.infinity) < -30 else {
+            return nil
+        }
+        return try? await startSignIn(previous: previous, signUp: false).value.accessToken
+    }
+
     private func validSession() async throws -> Session {
         if let auth, auth.expiresAt.timeIntervalSinceNow > 60 { return auth }
         if let signingIn { return try await signingIn.value }   // one sign-in at a time
-        let previous = auth
+        return try await startSignIn(previous: auth, signUp: true).value
+    }
+
+    /// Starts the one sign-in in flight. `signUp: false` only refreshes `previous` and fails when that is rejected.
+    private func startSignIn(previous: Session?, signUp: Bool) -> Task<Session, Error> {
         let task = Task {
             defer { self.signingIn = nil }
-            let new = try await self.signIn(refresh: previous?.refreshToken)
+            let new: Session
+            do {
+                new = try await self.signIn(refresh: previous?.refreshToken, signUp: signUp)
+            } catch {
+                self.tokenFailedAt = .now   // every failure, whoever started it, pauses `accessToken()`
+                throw error
+            }
             if let previous, previous.userID != new.userID {
                 // The old session was revoked: its cloud rows stay with the old user, and local data re-uploads.
                 self.log.warning("cloud user changed from \(previous.userID, privacy: .public) to \(new.userID, privacy: .public)")
@@ -80,7 +105,7 @@ actor CloudClient {
             return new
         }
         signingIn = task
-        return try await task.value
+        return task
     }
 
     /// The token was rejected mid-session (revoked, or the clock is off): sign in again on the next request.
@@ -88,9 +113,9 @@ actor CloudClient {
         auth?.expiresAt = .distantPast
     }
 
-    /// Refreshes the stored session, or signs up a new anonymous user when there is none or the refresh token is
-    /// no longer valid. Rate limits, server errors and network errors throw: they must not cost the user their library.
-    private func signIn(refresh: String?) async throws -> Session {
+    /// Refreshes the stored session, or (with `signUp`) signs up a new anonymous user when there is none or the refresh
+    /// token is no longer valid. Rate limits, server errors and network errors throw: they must not cost the user their library.
+    private func signIn(refresh: String?, signUp: Bool = true) async throws -> Session {
         struct Token: Decodable {
             var accessToken: String, refreshToken: String, expiresIn: Double, user: User
             enum CodingKeys: String, CodingKey {
@@ -112,7 +137,7 @@ actor CloudClient {
         let token: Token
         do {
             token = try decode(Token.self, await send(req))
-        } catch CloudError.http(let code, let detail) where refresh != nil && [400, 401].contains(code) && detail.contains("refresh_token") {
+        } catch CloudError.http(let code, let detail) where signUp && refresh != nil && [400, 401].contains(code) && detail.contains("refresh_token") {
             return try await signIn(refresh: nil)   // refresh_token_not_found / refresh_token_already_used
         }
         return Session(accessToken: token.accessToken, refreshToken: token.refreshToken,
@@ -137,17 +162,25 @@ actor CloudClient {
     }
 
     /// Inserts the row, or replaces its columns when its id exists.
-    func upsert<T: Encodable>(_ table: String, _ row: T) async throws {
-        let url = config.url.appending(path: "rest/v1/\(table)").appending(queryItems: [.init(name: "on_conflict", value: "id")])
+    /// Returns whether the row was stored: the last-writer-wins trigger skips a stale write, which PostgREST still
+    /// reports as success, just with no row in the response.
+    private struct Stored: Decodable { var id: UUID }
+
+    @discardableResult
+    func upsert<T: Encodable>(_ table: String, _ row: T) async throws -> Bool {
+        let url = config.url.appending(path: "rest/v1/\(table)").appending(queryItems: [
+            .init(name: "on_conflict", value: "id"), .init(name: "select", value: "id"),
+        ])
         let body = try Self.encoder.encode([row])
-        _ = try await send {
+        let data = try await send {
             var req = try await self.authorized(URLRequest(url: url))
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+            req.setValue("resolution=merge-duplicates,return=representation", forHTTPHeaderField: "Prefer")
             req.httpBody = body
             return req
         }
+        return try decode([Stored].self, data).count == 1
     }
 
     /// Sets the given columns on the row with `id`, if there is one.
