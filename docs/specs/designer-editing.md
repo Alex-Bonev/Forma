@@ -14,7 +14,11 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
   - Placements: **Rotate** (22.5°), **Remove**, **Size**, **Scan real** (LiDAR only).
   - Scanned furniture: **Replace**, **Size**, **Scan real**.
   - Marked items: **Use <suggestion>** (if Vision found one), **Replace**, **Scan real**.
-  - Twist also rotates. No Done buttons (tap empty space deselects).
+  - Twist also rotates, unless the item is locked. No Done buttons (tap empty space deselects).
+- **Lock pill** (fullscreen Designer only, not the Room detail card):
+  - Tapping a placement shows a small `Lock` / `Locked` pill at the bottom-left, clear of the room and of the Objects panel.
+  - Any other touch hides it: tapping empty space or another item, orbit, pan, zoom, or a drag. Selecting from the Objects panel or adding an item does not show it.
+  - Tapping the pill toggles the lock. A locked placement ignores one-finger drag and twist. Rotate, Size and Remove in the Objects panel still work.
 - **Undo:** Remove and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.
 - **Drag bounds:** the footprint stays inside the walls' rectangle, then inside `RoomModel.floorOutline` (`FloorClamp`).
 - **Size** opens a sheet with live changes:
@@ -41,9 +45,11 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
 - `Placement.scale`
 - `Placement.position.y` = mounting height
 - `Placement.catalogItem`
+- `Placement.locked` (nil = unlocked)
 - `Project.hiddenRoomObjects` (user Hide only), `removedRoomObjects` (replaced), `Placement.fitScale`, `wallFinish` (preset id or `paint:#RRGGBB`), `floorFinish`
 - `RoomModel.Box.attributes`
 
 ## Tests
 
-`RoomVibeUITests`: drag/orbit/pinch, catalog + select/hide/show/replace through the Objects panel, Custom Box editor, Reset Size, delete undo, rename object and room. `scripts/clamp_check`. Uninstall the app before running so saved state doesn't leak between tests.
+`RoomVibeUITests`: drag/orbit/pinch, lock pill (shows on tap, hides on other touches, locked chair does not move),
+catalog + select/hide/show/replace through the Objects panel, Custom Box editor, Reset Size, delete undo, rename object and room. `scripts/clamp_check`. Uninstall the app before running so saved state doesn't leak between tests.
