@@ -238,6 +238,25 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "dorm-b", to: self)
     }
 
+    /// Bottom bar: Make it real + Add object. Add object offers a real scan or a preset; a preset drops in selected,
+    /// with the move/turn hint.
+    func testAddObjectChoice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Make it real"].firstMatch.exists)
+        app.buttons["Add object"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Scan a real one"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Scan a real one"].isEnabled, "no LiDAR in the Simulator")
+        XCUIScreen.main.screenshot().attach(named: "add-choice", to: self)
+        app.buttons["Choose a preset"].tap()
+        let plant = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Plant'")).firstMatch
+        XCTAssertTrue(plant.waitForExistence(timeout: 3))
+        plant.tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "the preset drops in selected")
+    }
+
     func testRenameRoom() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
@@ -308,9 +327,16 @@ final class DesignerGestureTests: XCTestCase {
 }
 
 /// Fullscreen Designer: Objects panel > "Add object" opens the catalog sheet.
+/// Add object (bottom bar) → Choose a preset → the catalog.
 private func openCatalog(_ app: XCUIApplication) {
-    if !app.buttons["Add object"].exists { app.buttons["Objects"].tap() }
-    app.buttons["Add object"].tap()
+    app.buttons["Add object"].firstMatch.tap()
+    let preset = app.buttons["Choose a preset"]
+    XCTAssertTrue(preset.waitForExistence(timeout: 3))
+    preset.tap()
+    let cancel = app.navigationBars["Add object"].buttons["Cancel"]
+    XCTAssertTrue(cancel.waitForExistence(timeout: 3))
+    let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: cancel)
+    _ = XCTWaiter.wait(for: [settled], timeout: 3)   // the catalog sheet slides in after the choice sheet leaves
 }
 
 private extension XCUIElement {
