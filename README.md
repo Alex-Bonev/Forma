@@ -59,6 +59,7 @@ RoomVibe/
   Features/Designer/       RealityView dollhouse, RoomBuilder, drag/rotate/delete placements
   Resources/DemoData/      sample_room.json (hand-made room for no-LiDAR devices)
 backend/                   FastAPI: /health, /render, /vibe/* (MOCK=1 by default), run locally with scripts/run_local.sh
+supabase/migrations/       cloud library schema (Supabase Postgres + Storage)
 project.yml                XcodeGen spec (optional, see below)
 ```
 
@@ -66,7 +67,42 @@ The Xcode project uses folder-synced groups: drop a new `.swift` file anywhere u
 up with no `.pbxproj` change. Only regenerate with `xcodegen generate` if you change `project.yml`.
 
 Storage: `Application Support/library.json` is the index; room and object files live in
-`Application Support/Projects/<id>/` and `Application Support/Objects/<id>/`.
+`Application Support/Projects/<id>/` and `Application Support/Objects/<id>/`. With a cloud config the library is
+also mirrored to Supabase (see "Cloud library" below); the local copy stays the working copy.
+
+## Cloud library (Supabase)
+
+`Core/Cloud/CloudSync.swift` mirrors the library to a Supabase project; `Core/Cloud/CloudClient.swift` is a thin
+REST client for Auth, PostgREST and Storage (no SDK dependency). Without a cloud config the app works as before,
+on this device only.
+
+What goes where:
+
+| Local | Supabase |
+| --- | --- |
+| `library.json` entry for a room (`Project`: name, placements, finishes, hidden objects) | `projects.doc` (jsonb) |
+| `Projects/<id>/room.json` (`RoomModel`) | `projects.room` (jsonb) |
+| `library.json` entry for an object (`ScannedObject`) | `scanned_objects.doc` (jsonb) |
+| other files in `Projects/<id>/` (`thumb.jpg`, `captured.json`, `room.usdz`, `photos/`) | bucket `library`: `<user>/projects/<id>/...` |
+| files in `Objects/<id>/` (`model.usdz`, `thumb.jpg`; not the scan's `Images/`, `Checkpoint/`) | bucket `library`: `<user>/objects/<id>/...` |
+| `@AppStorage` flags (intro seen, demo seeded, realistic furniture) | not synced: per-device settings |
+
+Each row also holds a `files` manifest (size and modification time per file). A sync pass runs on launch, on return
+to the foreground and 2 s after a change. Rooms and objects are last-writer-wins on `updatedAt` (a database trigger
+rejects stale writes), files per file by modification time. Deletes are tombstones (`deleted_at`), sent once online.
+The backend stores nothing.
+
+Setup, once per Supabase project:
+
+1. Apply `supabase/migrations/` (tables, row-level security, the private `library` bucket and its policies), with the
+   Supabase CLI (`supabase db push`) or the SQL editor.
+2. Dashboard > Authentication > Sign In / Providers: turn on **Allow anonymous sign-ins**. Each install signs in as
+   its own anonymous user; row-level security keeps every user to their own rows and files.
+3. In `backend/.env` set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (Project Settings > API Keys), then run
+   `scripts/run_local.sh` and rebuild: the script adds them to `APIConfig.json`. It refuses secret / service_role keys.
+
+Limits: the anonymous session lives in the Keychain, so it survives a reinstall, but a second device is a different
+user (no shared library) until accounts get a real sign-in. Files are capped at 50 MB each.
 
 ## Backend (run locally)
 
@@ -138,3 +174,5 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
   network comes back (not yet tested).
 - Vibe mode (`Features/Vibe/`) is built and was tested in the Simulator against `MOCK=1`, but nothing opens it.
 - Not built yet: AR view, generic furniture USDZ swap.
+- Cloud library: built and compiled, not yet tested end to end against the Supabase project (anonymous sign-ins
+  must be on first).
