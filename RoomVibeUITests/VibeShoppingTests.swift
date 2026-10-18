@@ -62,7 +62,7 @@ final class VibeShoppingTests: XCTestCase {
             app.staticTexts[name].firstMatch.tap()
             XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3),
                           "\(name) should be the shopped one")
-            app.buttons["Remove"].tap()
+            removeSelected(app)
         }
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.exists)
     }
@@ -93,7 +93,7 @@ final class VibeShoppingTests: XCTestCase {
         sleep(1)   // the panel slides in: a tap mid-slide can land on the row's eye button instead
         app.staticTexts["Sofa"].firstMatch.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3))
-        app.buttons["Remove"].tap()
+        removeSelected(app)
     }
 
     func testPromptStreamsProductsWithinBudget() {
@@ -127,20 +127,18 @@ final class VibeShoppingTests: XCTestCase {
         let make3D = app.buttons["Make it 3D (beta)"]
         XCTAssertTrue(make3D.waitForExistence(timeout: 3))
         make3D.tap()
-        // Installed = the catalog "Sofa" row is renamed after the product, leaving only the demo room's scanned Sofa.
+        // Installed = the selection card's title becomes the product's name.
         // (The label flips to "Making 3D…" first, so waiting for the button to go away is not enough.)
         let installed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            app.staticTexts.matching(identifier: "Sofa").count == 1 || app.buttons["3D failed, try again"].exists
+            app.staticTexts["Linen Low Sofa 1"].exists || app.buttons["3D failed, try again"].exists
         }, object: nil)
         wait(for: [installed], timeout: 20)
         XCTAssertFalse(app.buttons["3D failed, try again"].exists, "the mock model should load")
-        XCTAssertEqual(app.staticTexts.matching(identifier: "Sofa").count, 1)
-        XCTAssertGreaterThanOrEqual(app.staticTexts.matching(identifier: "Linen Low Sofa 1").count, 1)
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         shot.name = "vibe-shopping"
         shot.lifetime = .keepAlways
         add(shot)
-        app.buttons["Remove"].tap()   // the demo room persists across launches; leave it as other tests expect
+        removeSelected(app)   // the demo room persists across launches; leave it as other tests expect
         XCTAssertEqual(app.staticTexts.matching(identifier: "Sofa").count, 1)
         XCTAssertEqual(app.staticTexts.matching(identifier: "Linen Low Sofa 1").count, 0)
 

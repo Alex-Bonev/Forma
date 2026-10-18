@@ -64,7 +64,6 @@ final class DesignerGestureTests: XCTestCase {
         openCatalog(app)
         app.buttons["Demo Chair"].tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
-        app.buttons["Close objects"].tap()   // full-size room: the sofa is clear of the chair
         sleep(1)
         saveShot("sticky-selected")
         let sofa = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.41))
@@ -105,7 +104,7 @@ final class DesignerGestureTests: XCTestCase {
         plant.tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "catalog item should be placed and selected")
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
-        app.buttons["Remove"].tap()
+        removeSelected(app)
 
         // Scanned sofa (demo room): select from the Objects panel, hide and show with the eye.
         app.staticTexts["Sofa"].firstMatch.tap()
@@ -138,7 +137,7 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(width.waitForExistence(timeout: 3), "custom box starts 0.5 m wide")
         width.buttons["Increment"].tap()   // +5 cm
         XCTAssertTrue(app.steppers["Width, 55 cm"].waitForExistence(timeout: 2), "width should update live")
-        app.buttons["Done"].firstMatch.tap()
+        app.buttons["sizeDone"].tap()
         XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
     }
 
@@ -165,7 +164,7 @@ final class DesignerGestureTests: XCTestCase {
         let width = app.steppers.matching(NSPredicate(format: "label BEGINSWITH 'Width, '")).firstMatch
         XCTAssertTrue(width.waitForExistence(timeout: 3))
         XCTAssertTrue(width.label.hasSuffix(" cm"), "sizes read in cm, like the Objects panel")
-        XCUIScreen.main.screenshot().attach(named: "size-sheet", to: self)
+        saveShot("size-inline")
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()   // deselect through the half sheet
         sleep(1)
         XCTAssertFalse(width.exists, "deselecting closes the Size sheet instead of leaving it empty or stale")
@@ -187,7 +186,7 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(app.steppers["Width, 115 cm"].waitForExistence(timeout: 2))
         app.buttons["Reset Size"].tap()
         XCTAssertTrue(app.steppers["Width, 110 cm"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
-        app.buttons["Done"].firstMatch.tap()
+        app.buttons["sizeDone"].tap()
         canvas.tap()   // deselect
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show'")).firstMatch.waitForExistence(timeout: 2),
                        "a replaced scanned object is removed, not hidden")
@@ -203,15 +202,15 @@ final class DesignerGestureTests: XCTestCase {
         openCatalog(app)
         app.buttons["Demo Chair"].tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
-        app.buttons["Remove"].tap()
+        removeSelected(app)
         XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2))
         app.buttons["Undo"].tap()
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)).tap()   // the chair dropped at the view center
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Demo Chair at") == true, "undo brings the chair back")
     }
 
-    /// The Lock pill shows only after a tap on a placed object, hides on any other touch, and locks drag.
-    func testLockPill() {
+    /// The lock icon in the selection card locks drag; unlocked, the chair moves again.
+    func testLockIcon() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
         app.launch()
@@ -219,34 +218,36 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         openCatalog(app)
         app.buttons["Demo Chair"].tap()
-        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
-        let pill = app.buttons["Lock in place"], unlockPill = app.buttons["Unlock in place"]
-        XCTAssertFalse(pill.exists, "adding an object must not show the pill")
-
-        let empty = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
-        let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
-        empty.tap()
-        chair.tap()
-        XCTAssertTrue(pill.waitForExistence(timeout: 2), "tapping the chair shows the pill")
-        empty.tap()
-        XCTAssertFalse(pill.exists, "tapping elsewhere hides the pill")
-
-        chair.tap()
-        XCTAssertTrue(pill.waitForExistence(timeout: 2))
-        pill.tap()
-        XCTAssertTrue(unlockPill.waitForExistence(timeout: 2), "the pill flips to Unlock once locked")
-        let before = canvas.value as? String
-        chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.62)))
+        XCTAssertTrue(app.buttons["Lock"].waitForExistence(timeout: 5))
         sleep(1)
-        XCTAssertFalse(unlockPill.exists, "a drag hides the pill")
-        chair.tap()
+        saveShot("selection-card")
+        app.buttons["Lock"].tap()
+        XCTAssertTrue(app.buttons["Unlock"].waitForExistence(timeout: 2), "the icon flips to Unlock once locked")
+        let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.4))
+        let before = canvas.value as? String
+        chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45)))
+        sleep(1)
         XCTAssertEqual(canvas.value as? String, before, "a locked chair must not move")
-
-        XCTAssertTrue(unlockPill.waitForExistence(timeout: 2))
-        unlockPill.tap()
-        chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.62)))
+        app.buttons["Unlock"].tap()
+        chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45)))
         sleep(1)
         XCTAssertGreaterThan(abs(x(canvas.value as? String) - x(before)), 0.3, "unlocked, the chair moves again")
+    }
+
+    /// Remove asks first; Undo brings it back.
+    func testRemoveConfirms() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        app.buttons["Remove"].tap()
+        XCTAssertTrue(app.buttons["Remove from room"].waitForExistence(timeout: 2), "Remove asks before deleting")
+        saveShot("remove-confirm")
+        app.buttons["Remove from room"].tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2), "removed, with Undo")
     }
 
     /// Rooms are renamed from the Name field on Room detail.
@@ -371,6 +372,14 @@ final class DesignerGestureTests: XCTestCase {
 
 /// Fullscreen Designer: Objects panel > "Add object" opens the catalog sheet.
 /// Add object (bottom bar) → Select a preset → the catalog.
+/// Remove on the selection card, then confirm.
+func removeSelected(_ app: XCUIApplication) {
+    app.buttons["Remove"].tap()
+    let confirm = app.buttons["Remove from room"]
+    XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+    confirm.tap()
+}
+
 private func openCatalog(_ app: XCUIApplication) {
     app.buttons["Add object"].firstMatch.tap()
     let preset = app.buttons["Select a preset"]

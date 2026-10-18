@@ -82,7 +82,8 @@ struct DesignerView: View {
         let camera: RenderCamera
     }
     @State private var renderShot: RenderShot?
-    @State private var lockMenuFor: UUID?   // placement whose Lock pill is showing
+    @State private var confirmRemove: UUID?   // placement awaiting "Remove from room"
+    @State private var panelHeight: CGFloat = 0   // measured Objects panel / selection card height; the room recenters above it
 
     private func renderCamera() -> RenderCamera {
         RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
@@ -134,7 +135,7 @@ struct DesignerView: View {
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
         } else if let project, let room = store.room(for: project) {
             realityView(project: project, room: room)
-                .padding(.bottom, showObjects ? min(objectsHeight(), ObjectsDetent.medium.height(in: viewSize.height)) : 0)   // room recenters above the Objects sheet (Paper E2/E3)
+                .padding(.bottom, showObjects ? min(panelHeight, ObjectsDetent.medium.height(in: viewSize.height)) : 0)   // room recenters above the Objects sheet (Paper E2/E3)
                 .toolbar(.hidden, for: .navigationBar)
                 .onAppear {
                     if opensCatalog { showAddChoice = true }
@@ -154,8 +155,10 @@ struct DesignerView: View {
                 .sheet(isPresented: $showAddChoice) { addChoiceSheet }
                 .sheet(isPresented: $showCart) { CartSheet(projectID: projectID) }
                 .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
-                .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
-                    if let editing { editor(editing) }
+                .confirmationDialog("Remove \(confirmRemove.flatMap(name(of:)) ?? "this item")?",
+                                    isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }),
+                                    titleVisibility: .visible) {
+                    Button("Remove from room", role: .destructive) { if let id = confirmRemove { remove(id) } }
                 }
                 .fullScreenCover(item: $scanTarget) { target in
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
@@ -203,10 +206,6 @@ struct DesignerView: View {
                         }
                     }
                     .padding(.bottom, 24)
-                }
-                .overlay(alignment: .bottomLeading) {
-                    lockMenu().padding(.leading, 16).padding(.bottom, showObjects ? objectsHeight(drag: objectsDrag) + 12 : 36)   // rides the Objects sheet's top edge
-                        .animation(.spring(duration: 0.25, bounce: 0), value: lockMenuFor)   // scoped: on the whole view it froze the Designer
                 }
                 .sensoryFeedback(.selection, trigger: selected)
                 .sensoryFeedback(.success, trigger: balanced)
@@ -344,7 +343,6 @@ struct DesignerView: View {
         h.touchDown = {
             touched = true
             camera.grab()
-            lockMenuFor = nil   // the menu belongs to a tap on the item; any new touch hides it
             if showHint { showHint = false }
         }
         h.touchUp = { camera.release() }
@@ -401,10 +399,8 @@ struct DesignerView: View {
             if hit == nil && hitRoom == nil {
                 selected = nil; selectedRoomObject = nil   // only a tap on nothing deselects
             } else if selected == nil && selectedRoomObject == nil {
-                if let hit { selected = hit; lockMenuFor = hit } else { selectedRoomObject = hitRoom }
-            } else if let hit, hit == selected {
-                lockMenuFor = hit
-            }   // else: another object while one is selected; switching takes a long press
+                if let hit { selected = hit } else { selectedRoomObject = hitRoom }
+            }   // else: an object while one is selected; switching takes a long press
         }
         h.longPress = { location in
             if let id = hitPlacement(at: location, prefer: selected) {
@@ -564,7 +560,61 @@ struct DesignerView: View {
         }
     }
 
-    private func objectsPanel(_ project: Project) -> some View {
+    /// Bottom panel. With a selection it is a compact card for that item, sized to its content so nothing covers it;
+    /// otherwise the resizable list of every object with Add object.
+    @ViewBuilder private func objectsPanel(_ project: Project) -> some View {
+        Group {
+            if let row = selectedRow { selectionCard(row, project: project) } else { objectsList(project) }
+        }
+        .padding(.horizontal, 16).padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
+        .background {
+            UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
+                .fill(Theme.ground).ignoresSafeArea(edges: .bottom)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 20)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
+    }
+
+    /// The selected item: name and size with lock, show/hide and close, then its actions (or the inline Size editor).
+    private func selectionCard(_ row: ObjectRow, project: Project) -> some View {
+        let info = rowInfo(row, project: project)
+        let placement: UUID? = if case .placement(let id) = row { id } else { nil }
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: info.symbol).font(.system(size: 16)).foregroundStyle(Theme.wood)
+                    .frame(width: 40, height: 40).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(info.name).font(.forma(15, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                    Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.9)
+                }
+                Spacer(minLength: 4)
+                if let placement {
+                    let locked = isLocked(placement)
+                    headerIcon(locked ? "lock.fill" : "lock.open", on: locked, label: locked ? "Unlock" : "Lock") { toggleLock(placement) }
+                }
+                headerIcon(info.hidden ? "eye.slash" : "eye", on: info.hidden,
+                           label: info.hidden ? "Show \(info.name)" : "Hide \(info.name)") { toggleVisibility(row) }
+                headerIcon("xmark", on: false, label: "Deselect") { selected = nil; selectedRoomObject = nil; showObjects = false }
+            }
+            .padding(.top, 18)
+            if let placement, editing == placement { sizeEditor(placement) } else { rowActions(row, project: project) }
+            undoBar.frame(maxWidth: .infinity)
+        }
+        .animation(.spring(duration: 0.3, bounce: 0), value: editing)
+    }
+
+    private func headerIcon(_ icon: String, on: Bool, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(on ? Theme.onSage : Theme.ink)
+                .frame(width: 40, height: 40)
+                .background(on ? Theme.sage : Theme.hairline, in: Circle())
+        }
+        .accessibilityLabel(label)
+    }
+
+    private func objectsList(_ project: Project) -> some View {
         let rows = objectRows(project)
         return VStack(alignment: .leading, spacing: 12) {
             // Drag the grabber to resize: it snaps to the nearest of peek, medium and large.
@@ -584,53 +634,41 @@ struct DesignerView: View {
                 .accessibilityLabel("Close objects")
             }
             .foregroundStyle(Theme.ink)
-            ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(rows) { row in
                         let info = rowInfo(row, project: project)
-                        VStack(spacing: 8) {
-                            HStack(spacing: 12) {
-                                Image(systemName: info.symbol).font(.system(size: 16)).foregroundStyle(Theme.wood)
-                                    .frame(width: 36, height: 36).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 10))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
-                                    Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.9)
-                                }
-                                Spacer(minLength: 4)
-                                Button { toggleVisibility(row) } label: {
-                                    Image(systemName: info.hidden ? "eye.slash" : "eye").foregroundStyle(Theme.ink)
-                                        .frame(width: 36, height: 36)
-                                }
-                                .accessibilityLabel(info.hidden ? "Show \(info.name)" : "Hide \(info.name)")
+                        HStack(spacing: 12) {
+                            Image(systemName: info.symbol).font(.system(size: 16)).foregroundStyle(Theme.wood)
+                                .frame(width: 36, height: 36).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 10))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                                Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.9)
                             }
-                            if info.selected { rowActions(row, project: project) }
+                            Spacer(minLength: 4)
+                            if case .placement(let id) = row, isLocked(id) {
+                                Image(systemName: "lock.fill").font(.system(size: 12)).foregroundStyle(Theme.muted)
+                                    .accessibilityLabel("Locked")
+                            }
+                            Button { toggleVisibility(row) } label: {
+                                Image(systemName: info.hidden ? "eye.slash" : "eye").foregroundStyle(Theme.ink)
+                                    .frame(width: 36, height: 36)
+                            }
+                            .accessibilityLabel(info.hidden ? "Show \(info.name)" : "Hide \(info.name)")
                         }
                         .padding(10)
-                        .background(info.selected ? Theme.tiles[0] : .clear, in: RoundedRectangle(cornerRadius: 18))
                         .contentShape(Rectangle())
                         .onTapGesture { select(row) }
-                        .overlay(alignment: .top) { if !info.selected { Theme.hairline.frame(height: 1) } }
-                        .id(row)
+                        .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
                     }
                 }
             }
             .scrollIndicators(.hidden)
-            // An object tapped in the room may sit far down the list: bring its row (and actions) into view.
-            .task(id: selectedRow) { if let selectedRow { withAnimation { proxy.scrollTo(selectedRow, anchor: .center) } } }
-            }
             undoBar.frame(maxWidth: .infinity)
             Button { showAddChoice = true } label: { Label("Add object", systemImage: "plus") }
                 .buttonStyle(PillButtonStyle())
         }
-        .padding(.horizontal, 16).padding(.bottom, 16)
-        .frame(maxWidth: .infinity)
         .frame(height: objectsHeight(drag: objectsDrag), alignment: .top)
-        .background {
-            UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
-                .fill(Theme.ground).ignoresSafeArea(edges: .bottom)
-        }
-        .shadow(color: .black.opacity(0.08), radius: 20)
     }
 
     private enum ObjectsDetent: CaseIterable {
@@ -739,12 +777,11 @@ struct DesignerView: View {
                 }
             }
             let locked = isLocked(id)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }.disabled(locked)   // locked = stays put, like drag/twist
-                PanelAction("Size", icon: "slider.horizontal.3") { editing = id }
-                PanelAction(locked ? "Unlock" : "Lock", icon: locked ? "lock.fill" : "lock.open") { toggleLock(id) }
-                PanelAction("Remove", icon: "trash") { remove(id) }
-                if Capabilities.canScanObject { PanelAction("Scan real", icon: "camera.viewfinder") { scanTarget = .placement(id) } }
+            HStack(spacing: 8) {
+                ActionTile("Rotate", icon: "arrow.clockwise") { rotate(id) }.disabled(locked)   // locked = stays put, like drag/twist
+                ActionTile("Size", icon: "ruler") { editing = id }
+                if Capabilities.canScanObject { ActionTile("Scan real", icon: "camera.viewfinder") { scanTarget = .placement(id) } }
+                ActionTile("Remove", icon: "trash", tint: Theme.terracotta) { confirmRemove = id }
             }
         case .room(let i):
             if let room = store.room(for: project), room.objects.indices.contains(i) {
@@ -769,11 +806,11 @@ struct DesignerView: View {
                                 Button(c.name, systemImage: c.symbol) { Task { await replaceRoomObject(i, catalog: c) } }
                             }
                         }
-                    } label: { PanelLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
+                    } label: { ActionTileLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
                         .accessibilityLabel("Replace")
-                    if !marked { PanelAction("Size", icon: "slider.horizontal.3") { Task { await editRoomObject(i, room: room) } } }
+                    if !marked { ActionTile("Size", icon: "ruler") { Task { await editRoomObject(i, room: room) } } }
+                    if Capabilities.canScanObject { ActionTile("Scan real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) } }
                 }
-                if Capabilities.canScanObject { PanelAction("Scan real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) } }
             }
         }
     }
@@ -961,24 +998,6 @@ struct DesignerView: View {
 
     /// Tiny quick menu, shown only after a tap on a placed object and hidden by any other touch. Bottom-left keeps
     /// it clear of the room and of the Objects panel, which opens at the bottom whenever something is selected.
-    @ViewBuilder private func lockMenu() -> some View {
-        if let id = lockMenuFor, id == selected, project?.placements.contains(where: { $0.id == id }) == true {
-            let locked = isLocked(id)
-            Button { toggleLock(id) } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: locked ? "lock.fill" : "lock.open").font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.sageDeep)
-                    Text(locked ? "Locked" : "Lock").font(.forma(12, bold: true)).foregroundStyle(Theme.ink)
-                }
-                .padding(.horizontal, 14).frame(height: 36)
-                .background(Theme.sand, in: Capsule())
-                .overlay(Capsule().strokeBorder(Theme.sage, lineWidth: 1.5))
-            }
-            .accessibilityLabel(locked ? "Unlock in place" : "Lock in place")
-            .transition(.opacity.combined(with: .scale(scale: 0.96)))
-        }
-    }
-
     /// Products added from Vibe shopping (VibeView writes them to the store while this view stays open underneath).
     private func spawnShoppedProducts() {
         Task {
@@ -1203,51 +1222,32 @@ struct DesignerView: View {
 
     // MARK: Editor
 
-    /// Size (per axis) and mounting height of one placement, applied live. Centimeters, like the Objects panel.
-    private func editor(_ id: UUID) -> some View {
-        NavigationStack {
-            Form {
-                Section {
-                    dimensionRow("Width", id: id, axis: 0)
-                    dimensionRow("Depth", id: id, axis: 2)
-                    dimensionRow("Height", id: id, axis: 1)
-                    Button("Reset Size") { setScale(id) { _ in fitScale(id) } }
-                        .font(.forma(14, bold: true)).foregroundStyle(Theme.sageDeep)
-                } header: { editorHeader("Size") }
-                Section {
-                    LabeledContent {
-                        Text(Self.cm(elevation(id))).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
-                    } label: { Text("Above floor") }
-                    Slider(value: Binding(get: { Double(elevation(id)) }, set: { setElevation(id, Float($0)) }), in: 0...2.4, step: 0.01)
-                        .accessibilityLabel("Height above floor")
-                    Button("Put on Floor") { setElevation(id, 0) }
-                        .font(.forma(14, bold: true)).foregroundStyle(Theme.sageDeep)
-                        .disabled(elevation(id) == 0)
-                } header: { editorHeader("Mounting") } footer: {
-                    Text("Raise wall-mounted items like sinks, shelves, TVs or lamps.").font(.forma(11)).foregroundStyle(Theme.muted)
-                }
+    /// Size (per axis) and mounting height of one placement, inline in the selection card so the room stays in view
+    /// and every change shows live. Centimeters, like the Objects panel.
+    private func sizeEditor(_ id: UUID) -> some View {
+        VStack(spacing: 4) {
+            dimensionRow("Width", id: id, axis: 0)
+            dimensionRow("Depth", id: id, axis: 2)
+            dimensionRow("Height", id: id, axis: 1)
+            HStack(spacing: 12) {
+                Text("Above floor").font(.forma(13))
+                Slider(value: Binding(get: { Double(elevation(id)) }, set: { setElevation(id, Float($0)) }), in: 0...2.4, step: 0.01)
+                    .accessibilityLabel("Height above floor")
+                Text(Self.cm(elevation(id))).font(.forma(13, bold: true)).monospacedDigit().frame(width: 56, alignment: .trailing)
             }
-            .font(.forma(14)).foregroundStyle(Theme.ink).tint(Theme.sage)
-            .scrollContentBackground(.hidden).background(Theme.ground)
-            .navigationTitle(name(of: id) ?? "Size")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(name(of: id) ?? "Size").font(.forma(15, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+            .frame(minHeight: 44)
+            HStack(spacing: 8) {
+                Button("Reset Size") { setScale(id) { _ in fitScale(id) } }
+                    .buttonStyle(PillButtonStyle(filled: false))
+                if elevation(id) > 0 {
+                    Button("Put on Floor") { setElevation(id, 0) }.buttonStyle(PillButtonStyle(filled: false))
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { editing = nil }.font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
-                }
+                Button("Done") { editing = nil }.buttonStyle(PillButtonStyle())
+                    .accessibilityIdentifier("sizeDone")
             }
+            .padding(.top, 6)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Theme.ground)
-        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-    }
-
-    private func editorHeader(_ title: String) -> some View {
-        Text(title).font(.forma(11, bold: true)).foregroundStyle(Theme.muted).textCase(nil)
+        .foregroundStyle(Theme.ink).tint(Theme.sage)
     }
 
     private static func cm(_ meters: Float) -> String { String(format: "%.0f cm", meters * 100) }
@@ -1260,9 +1260,10 @@ struct DesignerView: View {
             set: { v in setScale(id) { s in var s = s; s[axis] = max(Float(v), 0.05) / max(natural[axis], 0.001); return s } }
         ), in: 0.05...6, step: 0.05) {
             LabeledContent {
-                Text(Self.cm(size[axis])).font(.forma(14, bold: true)).foregroundStyle(Theme.ink).monospacedDigit()
-            } label: { Text(title) }
+                Text(Self.cm(size[axis])).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).monospacedDigit()
+            } label: { Text(title).font(.forma(13)) }
         }
+        .frame(minHeight: 40)
     }
 
     private func setScale(_ id: UUID, _ change: (SIMD3<Float>) -> SIMD3<Float>) {
@@ -1675,6 +1676,36 @@ private struct PanelLabel: View {
             .contentShape(Capsule())
             .opacity(enabled ? 1 : 0.4)
             .animation(nil, value: title)   // Lock ⇄ Unlock swaps instantly; a cross-fade overlapped the two words
+    }
+}
+
+/// Icon over a short label: one of the selected item's actions in a single row (Rotate, Size, Scan real, Remove).
+private struct ActionTileLabel: View {
+    let title: String, icon: String
+    var tint = Theme.ink
+    @Environment(\.isEnabled) private var enabled
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 17, weight: .medium))
+            Text(title).font(.forma(10)).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(tint)
+        .frame(maxWidth: .infinity, minHeight: 60)
+        .background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .opacity(enabled ? 1 : 0.4)
+    }
+}
+
+private struct ActionTile: View {
+    let title: String, icon: String, tint: Color, action: () -> Void
+    init(_ title: String, icon: String, tint: Color = Theme.ink, action: @escaping () -> Void) {
+        self.title = title; self.icon = icon; self.tint = tint; self.action = action
+    }
+    var body: some View {
+        Button(action: action) { ActionTileLabel(title: title, icon: icon, tint: tint) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
     }
 }
 
