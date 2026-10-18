@@ -26,21 +26,34 @@ struct StartView: View {
     }
 }
 
-/// Splash and busy screen (Paper "0b · Loading"). The sage square circles the ring clockwise:
-/// path radius 40 of 200, 1.2 s linear, loops. Reduced motion holds it still.
+/// Splash and busy screen (Paper "0b · Loading"). The sage square slides clockwise around the inside of the ring,
+/// flush against its edge, 1.2 s linear, loops. Reduced motion holds it still.
 struct LoadingView: View {
-    /// Small line under the wordmark; nil shows just "forma".
     var status: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let period = 1.2
+
+    /// Center of the sage square on the logo's 200-unit grid after `loops` laps. The ring's inner edge spans
+    /// 28...172 and the square is 60 wide, so its center runs along the 58...142 rectangle. Starts bottom-right,
+    /// then bottom-left, top-left, top-right (clockwise on screen).
+    static func position(at loops: Double) -> CGPoint {
+        let lo = 58.0, hi = 142.0
+        let u = (loops - loops.rounded(.down)) * 4   // 0..<4: which side, and how far along it
+        let f = u - u.rounded(.down)
+        switch Int(u) {
+        case 0: return CGPoint(x: hi - (hi - lo) * f, y: hi)   // bottom edge, moving left
+        case 1: return CGPoint(x: lo, y: hi - (hi - lo) * f)   // left edge, moving up
+        case 2: return CGPoint(x: lo + (hi - lo) * f, y: lo)   // top edge, moving right
+        default: return CGPoint(x: hi, y: lo + (hi - lo) * f)  // right edge, moving down
+        }
+    }
 
     var body: some View {
         ZStack {
             Theme.ground.ignoresSafeArea()
             TimelineView(.animation(paused: reduceMotion)) { timeline in
                 let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-                let a = t / Self.period * 2 * .pi + .pi / 4   // starts bottom-right; +angle is clockwise on screen
-                Logo(size: 96, square: CGPoint(x: 100 + 40 * cos(a), y: 100 + 40 * sin(a)))
+                Logo(size: 96, square: Self.position(at: t / Self.period))
             }
             VStack(spacing: 4) {
                 Spacer()
