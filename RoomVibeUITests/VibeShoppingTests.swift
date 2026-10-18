@@ -11,17 +11,16 @@ final class VibeShoppingTests: XCTestCase {
         let makeItReal = app.buttons["Make it real"].firstMatch
         XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
         let openVibe = app.buttons["openVibe"]
-        // Right after launch the Designer can swallow the first tap: tap again until the render sheet is up.
-        for _ in 0..<3 where !openVibe.exists {
-            if makeItReal.isHittable { makeItReal.tap() }
-            _ = openVibe.waitForExistence(timeout: 5)
-        }
+        // A tap during launch (the Designer still settling) can be swallowed: retry until the render sheet opens.
+        generate(app)
+        _ = openVibe.waitForExistence(timeout: 8)
         XCTAssertTrue(openVibe.exists)
         let start = app.buttons["vibeStart"]
-        // The render sheet may still be animating in, which can swallow the first tap, and the render's loading
-        // overlay can briefly take the toolbar away: only tap when the button is really there.
-        for _ in 0..<5 where !start.exists {
-            if openVibe.waitForExistence(timeout: 3), openVibe.isHittable { openVibe.tap() }
+        // The render sheet may still be animating in, which can swallow the first tap.
+        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: openVibe)
+        wait(for: [hittable], timeout: 10)   // exists while still sliding in offscreen; tapping then fails hard
+        for _ in 0..<3 where !start.exists {
+            if openVibe.isHittable { openVibe.tap() }
             _ = start.waitForExistence(timeout: 3)
         }
         XCTAssertTrue(start.exists)
@@ -142,6 +141,7 @@ final class VibeShoppingTests: XCTestCase {
 
         // The 3D model also went into the object library: delete it there (Home, long-press, Delete).
         app.buttons["Close fullscreen"].tap()
+        app.openObjectsTab()
         let tile = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Linen Low Sofa 1")).firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 5))
         tile.press(forDuration: 1.0)
@@ -150,4 +150,41 @@ final class VibeShoppingTests: XCTestCase {
         expectation(for: deleted, evaluatedWith: tile)
         waitForExpectations(timeout: 5)
     }
+
+    /// Make it real result has two tabs (Compare, Image) and reopens on the room's latest render.
+    func testMakeItRealTabs() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let makeItReal = app.buttons["Make it real"].firstMatch
+        XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
+        let image = app.buttons["Image"]
+        generate(app)
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Drag the divider to compare"].exists)
+        add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("compare"))
+        image.tap()
+        XCTAssertTrue(app.images["Render"].waitForExistence(timeout: 2))
+        add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("image"))
+        XCTAssertFalse(app.staticTexts["Drag the divider to compare"].exists, "Image tab is the render alone")
+        // The room keeps its latest render: Make it real again shows it at once.
+        app.buttons["Close"].firstMatch.tap()
+        sleep(1)
+        generate(app)
+        let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
+    }
+}
+
+/// Make it real (wide bottom bar) opens the render sheet. A tap during launch can be swallowed, so retry.
+func generate(_ app: XCUIApplication) {
+    let makeItReal = app.buttons["Make it real"].firstMatch, sheet = app.navigationBars["Make it real"]
+    for _ in 0..<3 where !sheet.exists {
+        if makeItReal.waitForExistence(timeout: 10) { makeItReal.tap() }
+        _ = sheet.waitForExistence(timeout: 4)
+    }
+}
+
+private extension XCTAttachment {
+    func named(_ n: String) -> XCTAttachment { name = n; lifetime = .keepAlways; return self }
 }

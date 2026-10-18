@@ -1,4 +1,3 @@
-import CryptoKit
 import SwiftUI
 
 /// "Make it real": sends a Designer snapshot to /render and shows a before/after slider.
@@ -9,6 +8,10 @@ struct RenderView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(ProjectStore.self) private var store
     @Environment(Connectivity.self) private var connectivity
+    @State private var tab = Tab.compare
+
+    /// Result tabs: the before/after slider, or the render alone.
+    enum Tab: String, CaseIterable { case compare = "Compare", image = "Image" }
 
     /// `camera`: the Designer camera at capture time. With it, a structure map of the same view is sent too,
     /// and a low camera starts in Photo mode.
@@ -23,9 +26,9 @@ struct RenderView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.ground.ignoresSafeArea())
                 .safeAreaInset(edge: .bottom) {
-                    ViewPicker(selection: Binding(get: { model.view }, set: { model.view = $0 }))
-                        .disabled(model.isLoading)
-                        .padding(.horizontal, 24).padding(.bottom, 8)
+                    if model.result != nil {
+                        TabPicker(selection: $tab).padding(.horizontal, 24).padding(.bottom, 8)
+                    }
                 }
                 .navigationTitle("Make it real")
                 .navigationBarTitleDisplayMode(.inline)
@@ -45,6 +48,13 @@ struct RenderView: View {
                             Label("Shop a vibe", systemImage: "sparkles").font(.forma(13)).foregroundStyle(Theme.ink)
                         }
                         .accessibilityIdentifier("openVibe")
+                    }
+                    if model.result != nil, !model.isRunning {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button { model.start() } label: { Image(systemName: "arrow.clockwise") }
+                                .foregroundStyle(Theme.ink)
+                                .accessibilityLabel("Render again")
+                        }
                     }
                     if let result = model.result {
                         ToolbarItem(placement: .primaryAction) {
@@ -71,7 +81,6 @@ struct RenderView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: model.isLoading)
-        .onChange(of: model.view) { model.start() }
         // Back online after an offline failure or a cached render: try again without a tap.
         .onChange(of: connectivity.online) { _, online in
             if online, model.needsRetry { model.start() }
@@ -81,9 +90,11 @@ struct RenderView: View {
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
                 model.setRoom(project: project, room: room, objects: store.objects)
             }
-            model.start()
+            // The room's last render shows right away; ↻ (toolbar) renders this view again.
+            if !model.showSaved() { model.start() }
         }
         .onDisappear { model.cancel() }
+        .sensoryFeedback(trigger: model.result != nil) { _, done in done ? .success : nil }
     }
 
     @ViewBuilder private var content: some View {
@@ -91,21 +102,30 @@ struct RenderView: View {
         case .loading:
             Color.clear   // covered by the loading screen overlay in `body`
         case .done(let after, let isStale):
-            VStack(spacing: 14) {
-                Spacer(minLength: 0)
-                BeforeAfterSlider(before: isStale ? model.staleBefore ?? model.snapshot : model.snapshot, after: after)
-                if isStale {
-                    Label("Offline · showing the last render of this room", systemImage: "clock.arrow.circlepath")
-                        .font(.forma(11)).foregroundStyle(Theme.muted)
-                    Button("Try again") { model.start() }
-                        .buttonStyle(PillButtonStyle(filled: false))
-                        .frame(maxWidth: 200)
-                } else {
-                    Text("Drag the divider to compare").font(.forma(11)).foregroundStyle(Theme.muted)
+            switch tab {
+            case .image:
+                Image(uiImage: after).resizable().scaledToFit().padding(.vertical)
+                    .accessibilityLabel("Render")
+            case .compare:
+                VStack(spacing: 14) {
+                    Spacer(minLength: 0)
+                    BeforeAfterSlider(before: model.savedBefore ?? model.snapshot, after: after)
+                    if isStale {
+                        Label("Offline · showing the last render of this room", systemImage: "clock.arrow.circlepath")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
+                        Button("Try again") { model.start() }
+                            .buttonStyle(PillButtonStyle(filled: false))
+                            .frame(maxWidth: 200)
+                    } else if let at = model.savedAt {
+                        Text("Last render · \(at.formatted(.relative(presentation: .named))) · ↻ to redo")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
+                    } else {
+                        Text("Drag the divider to compare").font(.forma(11)).foregroundStyle(Theme.muted)
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .padding(.vertical)
             }
-            .padding(.vertical)
         case .failed(let message):
             VStack(spacing: 12) {
                 Image(systemName: "wifi.exclamationmark").font(.system(size: 32, weight: .semibold))
@@ -122,16 +142,16 @@ struct RenderView: View {
     }
 }
 
-/// Dollhouse / Photo switch: sage pill on the chosen side, ink outline around both.
-private struct ViewPicker: View {
-    @Binding var selection: RenderModel.View
+/// Compare / Image switch: sage pill on the chosen side, ink outline around both.
+private struct TabPicker: View {
+    @Binding var selection: RenderView.Tab
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(RenderModel.View.allCases, id: \.self) { view in
+            ForEach(RenderView.Tab.allCases, id: \.self) { view in
                 let on = view == selection
                 Button { selection = view } label: {
-                    Text(view.title).font(.forma(13, bold: on))
+                    Text(view.rawValue).font(.forma(13, bold: on))
                         .foregroundStyle(on ? Theme.onSage : Theme.ink)
                         .frame(maxWidth: .infinity, minHeight: 40)
                         .background(on ? Theme.sage : .clear, in: Capsule())
@@ -144,7 +164,7 @@ private struct ViewPicker: View {
         .padding(4)
         .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("View")
+        .accessibilityLabel("Result view")
         .animation(.spring(duration: 0.25, bounce: 0), value: selection)
         .sensoryFeedback(.selection, trigger: selection)
     }
@@ -180,8 +200,19 @@ final class RenderModel {
     private var structure: StructureMap.Output?
     var view = View.cutaway
     private(set) var phase: Phase = .loading
-    /// The snapshot the cached render was made from, so a stale slider compares the same room.
-    private(set) var staleBefore: UIImage?
+    /// Snapshot the shown saved render was made from (reopened last render or offline fallback), else nil.
+    private(set) var savedBefore: UIImage?
+    /// When the shown saved render was made; nil once a fresh one is shown.
+    private(set) var savedAt: Date?
+
+    /// Shows the room's last render, if any. Returns false when there is none.
+    func showSaved() -> Bool {
+        guard let cacheURL, let data = try? Data(contentsOf: cacheURL), let image = UIImage(data: data) else { return false }
+        savedBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
+        savedAt = (try? FileManager.default.attributesOfItem(atPath: cacheURL.path(percentEncoded: false)))?[.modificationDate] as? Date
+        phase = .done(image, isStale: false)
+        return true
+    }
 
     init(snapshot: UIImage, projectID: UUID?, camera: RenderCamera? = nil, prompt: String, styleRef: UIImage?) {
         self.snapshot = snapshot.croppedToRenderAspect()
@@ -191,10 +222,9 @@ final class RenderModel {
         if let camera, abs(camera.transform.columns.2.y) < 0.4 { view = .interior }
         self.prompt = prompt
         self.styleRef = styleRef
-        cacheKey = Self.cacheKey(prompt: prompt, styleRef: styleRef)
     }
 
-    /// Describes the room as the Designer shows it (RenderInputs.scene) and picks scan photos as ground truth.
+    /// Describes the room as the Designer shows it (RenderInputs.scene).
     func setRoom(project: Project, room: RoomModel, objects: [ScannedObject]) {
         let s = RenderInputs.scene(project: project, room: room, objects: objects)
         self.room = (s.room, s.placements, s.objects)
@@ -204,7 +234,6 @@ final class RenderModel {
         products = nil
         structure = nil   // drawn with the product colors
         layout = describe(products: [])
-        photos = RenderInputs.photos(projectID: project.id)
     }
 
     private func describe(products: [UUID]) -> String {
@@ -229,8 +258,6 @@ final class RenderModel {
         layout = describe(products: products?.map(\.id) ?? [])
     }
 
-    /// Real photos of the room from the scan (≤ 3), sent so the render matches how the room really looks.
-    private(set) var photos: [UIImage] = []
 
     var isLoading: Bool { if case .loading = phase { true } else { false } }
 
@@ -246,18 +273,12 @@ final class RenderModel {
         if case .done(let image, _) = phase { image } else { nil }
     }
 
-    /// Last successful render per room, view, style prompt and reference image; used when the network fails.
+    /// The room's most recent render (one per room, overwritten each time): reopened instantly, and the offline fallback.
     private var cacheURL: URL? {
-        guard let projectID else { return nil }
-        return ProjectStore.projectDir(projectID).appending(path: "render-\(view.rawValue)\(cacheKey).jpg")
+        guard let projectID, prompt.isEmpty, styleRef == nil else { return nil }   // style variants aren't "the room"
+        return ProjectStore.projectDir(projectID).appending(path: "render-latest.jpg")
     }
-    private let cacheKey: String
 
-    private static func cacheKey(prompt: String, styleRef: UIImage?) -> String {
-        var key = Data(prompt.utf8)
-        if let ref = styleRef?.uploadJPEG() { key.append(ref) }
-        return key.isEmpty ? "" : "-" + SHA256.hash(data: key).prefix(8).map { String(format: "%02x", $0) }.joined()
-    }
 
     private var beforeURL: URL? { cacheURL?.deletingPathExtension().appendingPathExtension("before.jpg") }
 
@@ -299,19 +320,27 @@ final class RenderModel {
             let fullLayout = [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
             let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: fullLayout, view: view.rawValue,
                                                         structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef,
-                                                        photos: photos, products: products.map { ($0.name, $0.image) })
+                                                        products: products.map { ($0.name, $0.image) })
             if let cacheURL, let beforeURL {
-                try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let dir = cacheURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)
                 try? snapshot.jpegData(compressionQuality: 0.8)?.write(to: beforeURL, options: .atomic)
+                // Only the latest is kept: drop older per-view / per-style caches from earlier builds.
+                for f in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+                where f.lastPathComponent.hasPrefix("render-") && !f.lastPathComponent.hasPrefix("render-latest") {
+                    try? FileManager.default.removeItem(at: f)
+                }
             }
             guard gen == generation else { return }
+            savedBefore = nil
+            savedAt = nil
             phase = .done(image, isStale: false)
         } catch {
             guard gen == generation, !Task.isCancelled else { return }
             if Self.isNetworkFailure(error), let cacheURL, let data = try? Data(contentsOf: cacheURL),
                let cached = UIImage(data: data) {
-                staleBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
+                savedBefore = beforeURL.flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
                 phase = .done(cached, isStale: true)
             } else {
                 phase = .failed(error.localizedDescription)

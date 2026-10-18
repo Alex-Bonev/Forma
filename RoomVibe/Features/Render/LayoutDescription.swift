@@ -19,8 +19,11 @@ enum LayoutDescription {
         let windows = room.windows.map { SIMD2($0.transform.columns.3.x, $0.transform.columns.3.z) }
 
         // Without walls the outline is just the furniture, so its size would be misleading.
-        var lines = walls.isEmpty ? [] : [String(format: "Room about %.1f x %.1f m, ceiling %.1f m.", size.x, size.y, height)
-                                          + " " + finishes]
+        var lines = walls.isEmpty ? [] : [String(format: "Room exactly %.1f x %.1f m, ceiling %.1f m; keep this size and these proportions.",
+                                                 size.x, size.y, height) + " " + finishes]
+        if let o = room.floorOutline, o.count > 4 {
+            lines.append("The floor plan is not a rectangle (\(o.count) corners, e.g. L-shaped): follow image 1's outline exactly.")
+        }
         var openings: [String] = []
         if !room.doors.isEmpty { openings.append(count(room.doors.count, "door") + " (brown panels)") }
         if !room.windows.isEmpty { openings.append(count(room.windows.count, "window") + " (light blue panels)") }
@@ -49,7 +52,10 @@ enum LayoutDescription {
             items.append(String(format: "%@ (%@, %.1f m wide, %.1f m deep, %.1f m tall, %@)", o.name, kind,
                                 o.boundingBox.x, o.boundingBox.z, o.boundingBox.y, spot(p, depth: min(o.boundingBox.x, o.boundingBox.z))))
         }
-        lines.append(items.isEmpty ? "No furniture." : "Furniture: " + items.joined(separator: "; ") + ".")
+        // An exact count: the image model otherwise "completes" rooms with furniture that isn't there.
+        lines.append(items.isEmpty ? "No furniture: the room is empty."
+                     : "Furniture, exactly \(items.count) piece\(items.count == 1 ? "" : "s") and nothing else: "
+                       + items.joined(separator: "; ") + ".")
         return lines.joined(separator: " ")
     }
 

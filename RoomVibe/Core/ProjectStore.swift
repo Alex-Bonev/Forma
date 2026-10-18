@@ -139,7 +139,7 @@ final class ProjectStore {
             let photos = dir.appending(path: "photos")
             try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
             if let thumb = Bundle.main.url(forResource: "dorm_thumb", withExtension: "jpg") {
-                try FileManager.default.copyItem(at: thumb, to: dir.appending(path: "thumb.jpg"))   // until first open
+                try FileManager.default.copyItem(at: thumb, to: dir.appending(path: "preview.jpg"))   // until first open
             }
             if let index = Bundle.main.url(forResource: "dorm_photos", withExtension: "json") {
                 try FileManager.default.copyItem(at: index, to: photos.appending(path: "photos.json"))
@@ -161,7 +161,7 @@ final class ProjectStore {
         let model = try JSONDecoder().decode(RoomModel.self, from: Data(contentsOf: url))
         try addRoom(name: "Demo Living Room", model: model) { dir in
             if let thumb = Bundle.main.url(forResource: "sample_room_thumb", withExtension: "jpg") {
-                try FileManager.default.copyItem(at: thumb, to: dir.appending(path: "thumb.jpg"))
+                try FileManager.default.copyItem(at: thumb, to: dir.appending(path: "preview.jpg"))
             }
         }
         let bundled = Bundle.main.url(forResource: "sample_chair", withExtension: "usdz")

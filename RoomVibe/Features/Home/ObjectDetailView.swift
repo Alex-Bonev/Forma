@@ -4,6 +4,7 @@ import RealityKit
 /// Paper "G · Object detail", "H · Object fullscreen 3D" and "I · Add to room".
 struct ObjectDetailView: View {
     let objectID: UUID
+    var picks = false   // open "Add to a room" on arrival (fresh scan)
     @Environment(ProjectStore.self) private var store
     @Environment(Router.self) private var router
     @Environment(\.dismiss) private var dismiss
@@ -11,6 +12,7 @@ struct ObjectDetailView: View {
     @State private var fullscreen = false
     @State private var picking = false
     @State private var rescanning = false
+    @State private var showStage = false   // 3D preview mounts after the push settles, then fades in
 
     private var object: ScannedObject? { store.objects.first { $0.id == objectID } }
 
@@ -21,13 +23,17 @@ struct ObjectDetailView: View {
                     DetailBar(backTitle: "Library", actionTitle: "Rescan", actionIcon: "arrow.clockwise",
                               actionDisabled: !Capabilities.canScanObject,
                               back: { dismiss() }, action: { rescanning = true })
-                    NameField(text: $name, commit: rename)
+                    NameField(text: Binding(get: { name.isEmpty ? object.name : name }, set: { name = $0 }), commit: rename)
                     HStack {
                         Measure(label: "Width", value: cm(object.boundingBox.x))
                         Measure(label: "Depth", value: cm(object.boundingBox.z))
                         Measure(label: "Height", value: cm(object.boundingBox.y))
                     }
-                    StageCard { ObjectStage(object: object, fullscreen: false) { fullscreen = true } }
+                    StageCard {
+                        Color.clear.overlay {   // fixed space from the first frame, so nothing below jumps
+                            if showStage { ObjectStage(object: object, fullscreen: false) { fullscreen = true }.transition(.opacity) }
+                        }
+                    }
                     Button { picking = true } label: { Label("Add to room", systemImage: "plus") }
                         .buttonStyle(PillButtonStyle())
                         .disabled(store.projects.isEmpty)
@@ -43,6 +49,15 @@ struct ObjectDetailView: View {
             .background(Theme.ground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { name = object.name }
+            .task {
+                try? await Task.sleep(for: .milliseconds(800))   // after the zoom push has fully landed
+                withAnimation(.easeInOut(duration: 0.8)) { showStage = true }
+            }
+            .task {
+                guard picks, !store.projects.isEmpty else { return }
+                try? await Task.sleep(for: .milliseconds(650))   // after the push settles
+                picking = true
+            }
             .fullScreenCover(isPresented: $fullscreen) {
                 ObjectStage(object: object, fullscreen: true) { fullscreen = false }
             }
@@ -91,7 +106,7 @@ struct ObjectDetailView: View {
             store.update(project)
         }
         store.delete(old)
-        router.path = router.path.map { $0 == .object(old.id) ? .object(fresh.id) : $0 }
+        router.path = router.path.map { if case .object(old.id, _) = $0 { .object(fresh.id) } else { $0 } }
     }
 }
 

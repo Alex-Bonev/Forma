@@ -2,6 +2,18 @@ import XCTest
 
 /// Drives real touches in the Designer (Simulator). Run: xcodebuild test -scheme RoomVibe -destination '<simulator>'
 /// The canvas's accessibility value is the selected object's saved position, so moves are checked end to end.
+extension XCUIApplication {
+    /// Home keeps objects on their own tab; the first tap can land while Home is still popping in, so retry.
+    func openObjectsTab() {
+        let tab = buttons["tabObjects"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !tab.isSelected {
+            tab.tap()
+            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: tab)], timeout: 2)
+        }
+    }
+}
+
 final class DesignerGestureTests: XCTestCase {
     func testPlaceDragOrbitZoom() {
         let app = XCUIApplication()
@@ -18,8 +30,8 @@ final class DesignerGestureTests: XCTestCase {
 
         // Chair sits on the camera target, which projects to the canvas center.
         let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
-        // Hit testing alone: deselect (tap empty floor near the top), then tap the chair to select it again.
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08)).tap()
+        // Hit testing alone: deselect (tap empty space above the room), then tap the chair to select it again.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
         XCTAssertFalse(app.buttons["Remove"].exists)
         chair.tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 2), "tap on the chair should select it")
@@ -84,12 +96,41 @@ final class DesignerGestureTests: XCTestCase {
         let edit = app.buttons["Size"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
-        let width = app.steppers["Width, 0.50 m"]
+        let width = app.steppers["Width, 50 cm"]
         XCTAssertTrue(width.waitForExistence(timeout: 3), "custom box starts 0.5 m wide")
         width.buttons["Increment"].tap()   // +5 cm
-        XCTAssertTrue(app.steppers["Width, 0.55 m"].waitForExistence(timeout: 2), "width should update live")
+        XCTAssertTrue(app.steppers["Width, 55 cm"].waitForExistence(timeout: 2), "width should update live")
         app.buttons["Done"].firstMatch.tap()
         XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
+    }
+
+    /// The panel's Lock disables Rotate; the Size sheet belongs to one item and closes when the selection changes.
+    func testPanelLockAndSizeSheetFollowsSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        let rotate = app.buttons["Rotate"]
+        XCTAssertTrue(rotate.waitForExistence(timeout: 5))
+        XCTAssertTrue(rotate.isEnabled)
+        app.buttons["Lock"].tap()
+        XCTAssertTrue(app.buttons["Unlock"].waitForExistence(timeout: 2))
+        XCTAssertFalse(rotate.isEnabled, "a locked item can't be rotated from the panel")
+        app.buttons["Unlock"].tap()
+        XCTAssertTrue(rotate.isEnabled)
+        XCUIScreen.main.screenshot().attach(named: "objects-panel", to: self)
+
+        app.buttons["Size"].tap()
+        let width = app.steppers.matching(NSPredicate(format: "label BEGINSWITH 'Width, '")).firstMatch
+        XCTAssertTrue(width.waitForExistence(timeout: 3))
+        XCTAssertTrue(width.label.hasSuffix(" cm"), "sizes read in cm, like the Objects panel")
+        XCUIScreen.main.screenshot().attach(named: "size-sheet", to: self)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()   // deselect through the half sheet
+        sleep(1)
+        XCTAssertFalse(width.exists, "deselecting closes the Size sheet instead of leaving it empty or stale")
     }
 
     /// Size on scanned furniture swaps in one fitted item; Reset Size returns to that fit, and the original is gone for good.
@@ -103,11 +144,11 @@ final class DesignerGestureTests: XCTestCase {
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.58, dy: 0.45)).tap()   // scanned coffee table
         XCTAssertTrue(app.buttons["Size"].waitForExistence(timeout: 3))
         app.buttons["Size"].tap()
-        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 5))
-        app.steppers["Width, 1.10 m"].buttons["Increment"].tap()
-        XCTAssertTrue(app.steppers["Width, 1.15 m"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.steppers["Width, 110 cm"].waitForExistence(timeout: 5))
+        app.steppers["Width, 110 cm"].buttons["Increment"].tap()
+        XCTAssertTrue(app.steppers["Width, 115 cm"].waitForExistence(timeout: 2))
         app.buttons["Reset Size"].tap()
-        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
+        XCTAssertTrue(app.steppers["Width, 110 cm"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
         app.buttons["Done"].firstMatch.tap()
         canvas.tap()   // deselect
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show'")).firstMatch.waitForExistence(timeout: 2),
@@ -144,7 +185,7 @@ final class DesignerGestureTests: XCTestCase {
         let pill = app.buttons["Lock in place"], unlockPill = app.buttons["Unlock in place"]
         XCTAssertFalse(pill.exists, "adding an object must not show the pill")
 
-        let empty = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08))
+        let empty = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
         let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
         empty.tap()
         chair.tap()
@@ -178,7 +219,7 @@ final class DesignerGestureTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
         sleep(2)
-        app.buttons["Make it real"].firstMatch.tap()
+        generate(app)   // the wide bottom bar renders the current view directly
         XCTAssertTrue(app.navigationBars["Make it real"].waitForExistence(timeout: 5))
     }
 
@@ -221,15 +262,19 @@ final class DesignerGestureTests: XCTestCase {
     /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
     func testMarkedItemSuggestion() {
         let app = XCUIApplication()
-        app.launchArguments = ["-demo"]
+        app.launchArguments = ["-demo", "-fresh"]   // an earlier test may have used up the marked item
         app.launch()
         let canvas = app.otherElements["designer-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         sleep(2)
         app.buttons["Objects"].tap()
-        app.staticTexts["Marked item"].firstMatch.tap()
         let use = app.buttons["Use Plant"]
-        XCTAssertTrue(use.waitForExistence(timeout: 3), "marked item should offer its Vision suggestion")
+        for _ in 0..<3 where !use.exists {   // the panel may still be sliding in and swallow the row tap
+            let row = app.staticTexts["Marked item"].firstMatch
+            if row.waitForExistence(timeout: 3), row.isHittable { row.tap() }
+            _ = use.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(use.exists, "marked item should offer its Vision suggestion")
         XCUIScreen.main.screenshot().attach(named: "after-suggestion", to: self)
         use.tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
@@ -241,6 +286,7 @@ final class DesignerGestureTests: XCTestCase {
         app.launchArguments = ["-demo"]
         app.launch()
         app.buttons["Close fullscreen"].tap()   // -demo opens the Designer straight from Home
+        app.openObjectsTab()
         // Library tiles are navigation links whose label starts with the object's name.
         func tile(_ name: String) -> XCUIElement {
             app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch

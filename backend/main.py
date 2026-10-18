@@ -6,6 +6,7 @@ MOCK=1 (default) returns canned responses so the app works offline / without key
 Providers (checked against docs 2026-10-17):
   /render          Gemini image editing via the Interactions API (IMAGE_API_KEY, IMAGE_MODEL)
   /vibe/analyze    Claude (vision optional) + structured output (LLM_API_KEY)
+  /vibe/profile    Claude vision, 1-15 inspiration images -> saved-vibe profile (LLM_API_KEY)
   /vibe/products   SerpAPI Google Shopping (SHOPPING_API_KEY)
   /vibe/shop       Browser Use Cloud API V4 agents, one per shopping-list item (BROWSER_USE_API_KEY)
   /vibe/model3d    fal SAM 3D Objects (product photo -> GLB), converted to USDZ by usdz.py (FAL_KEY)
@@ -85,8 +86,9 @@ RENDER_VIEWS = {
     ),
 }
 RENDER_RULES = (
-    "Be faithful, not creative: this is a check of how a real room looks, not a redesign. Keep the room shape "
-    "and every wall, window and door exactly where it is. Furniture in image 1 is a simplified stand-in: keep "
+    "Be faithful, not creative: this is a check of how a real room looks, not a redesign. Keep the camera, "
+    "framing and the room's exact size and proportions from image 1: every wall corner, window, door and piece of "
+    "furniture stays at the same place in the frame, and the room is not made wider, longer or taller. Furniture in image 1 is a simplified stand-in: keep "
     "each piece's type, footprint, height, position and facing, and make it look like a real piece of that type "
     "(a numbered product looks like its product photo instead). "
     "Add nothing that is not in image 1: no extra furniture, plants, rugs, art, lamps, curtains or decor, and "
@@ -128,7 +130,9 @@ def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_s
         parts.append(f"{which} of this same room, taken during the scan from other angles. They are the ground "
                      "truth for how the room looks: wall color and texture, flooring, the real furniture's materials "
                      "and colors, and the light. Give each stand-in the look of the matching real piece in the photos"
-                     + (", except the numbered products" if products else "") + ". Image 1 is the ground truth for the camera, the layout and where each "
+                     + (", except the numbered products" if products else "") + ". Use the photos "
+                     "only for looks: never copy furniture, objects or clutter from them, because the 3D model leaves "
+                     "some things out on purpose. Image 1 is the ground truth for the camera, the layout and where each "
                      "piece stands. Where they disagree on looks, follow the photos; on positions, follow image 1. "
                      "Ignore clutter, people and anything moved since in the photos, and never add a photo's objects "
                      "that image 1 does not show.")
@@ -400,6 +404,127 @@ async def vibe_analyze(image: UploadFile | None = File(None), prompt: str = Form
     if msg.stop_reason == "refusal" or msg.parsed_output is None:
         raise HTTPException(502, "style model returned no style")
     return clean_style(msg.parsed_output)
+
+
+MAX_VIBE_IMAGES = 15
+IMAGE_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "GIF": "image/gif"}
+HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+# The brief asks for ~80-120 words; the model is allowed a margin so a 78-word brief is not a failed request.
+DESC_WORDS = (70, 130)
+
+
+class VibeColor(BaseModel):
+    name: str
+    hex: str
+
+
+class VibeProfile(BaseModel):
+    name: str
+    styles: list[str]
+    mood: list[str]
+    colors: list[VibeColor]
+    materials: list[str]
+    textures: list[str]
+    motifs: list[str]
+    lighting: list[str]
+    furniture_characteristics: list[str]
+    avoid: list[str]
+    description: str
+
+
+PROFILE_PROMPT = (
+    "These images are one person's aesthetic inspiration: rooms, furniture, mood boards, posters, art, nature, "
+    "fashion, fantasy, textures or objects. Do not list what is pictured. Read them together as one taste and "
+    "translate the shared visual themes into interior design preferences. name: 2-3 evocative words. styles: "
+    "2-4 named aesthetics. mood: 3-5 words. colors: 4-6 dominant colors, each with a name and a #RRGGBB hex. "
+    "materials, textures, motifs, lighting, furniture_characteristics: 2-5 short items each. avoid: things that "
+    "clash with this taste, empty if unclear. description: 80-120 words, written as a design brief for an agent "
+    "that shops for furniture and decor to fit a room in this aesthetic: say what to look for, colors, materials, "
+    "silhouettes, and what to skip."
+)
+
+MOCK_PROFILE = VibeProfile(
+    name="Enchanted Cottage",
+    styles=["cottagecore", "fairycore"],
+    mood=["whimsical", "cozy", "nostalgic"],
+    colors=[VibeColor(name="sage green", hex="#A3B18A"), VibeColor(name="warm ivory", hex="#F1E8D8")],
+    materials=["natural wood", "linen", "lace"],
+    textures=["soft", "organic", "vintage"],
+    motifs=["botanical", "floral", "woodland"],
+    lighting=["warm", "soft", "ambient"],
+    furniture_characteristics=["vintage-inspired", "curved silhouettes", "natural wood finishes"],
+    avoid=["chrome", "stark minimalism"],
+    description=(
+        "A whimsical cottagecore and fairycore aesthetic inspired by enchanted forests, vintage botanical "
+        "illustrations and cozy countryside interiors. Look for furniture with soft curved silhouettes and "
+        "vintage-inspired detailing in natural, lightly worn wood. Favor sage green, warm ivory and muted "
+        "floral accents, with linen, lace and cotton upholstery. Add botanical and woodland motifs through "
+        "textiles, art and ceramics. Lighting should be warm and ambient: fabric shades, small lamps, candle "
+        "glow. Prefer handmade, nostalgic pieces. Skip chrome, glossy plastic, hard angles and stark minimalism."
+    ),
+)
+
+
+def clean_profile(p: VibeProfile) -> VibeProfile:
+    """Keeps the model's profile usable: trimmed strings, capped lists, only valid #RRGGBB colors."""
+    def tags(xs: list[str], n: int = 8) -> list[str]:
+        return [t for t in dict.fromkeys(x.strip() for x in xs) if t][:n]
+    colors = [VibeColor(name=c.name.strip(), hex=c.hex.upper()) for c in p.colors if HEX.match(c.hex.strip())][:8]
+    return p.model_copy(update={
+        "name": p.name.strip()[:60] or "My Vibe", "description": p.description.strip(), "colors": colors,
+        **{f: tags(getattr(p, f)) for f in ("styles", "mood", "materials", "textures", "motifs", "lighting",
+                                            "furniture_characteristics", "avoid")}})
+
+
+@app.post("/vibe/profile", response_model=VibeProfile)
+async def vibe_profile(images: list[UploadFile] = File(...)):
+    """1-15 inspiration images, read together in one model call -> a reusable aesthetic profile."""
+    if not 1 <= len(images) <= MAX_VIBE_IMAGES:
+        raise HTTPException(400, f"send 1 to {MAX_VIBE_IMAGES} images")
+    content, total = [], 0
+    for f in images:
+        raw = await read_image(f)
+        total += len(raw)
+        if total > MAX_UPLOAD:
+            raise HTTPException(413, "images too large together; send JPEGs <= 1024px")
+        try:
+            kind = IMAGE_TYPES.get(Image.open(io.BytesIO(raw)).format or "")
+        except Exception:
+            kind = None
+        if kind is None:
+            raise HTTPException(415, "unsupported image; send JPEG, PNG, WebP or GIF")
+        content.append({"type": "image", "source": {"type": "base64", "media_type": kind,
+                                                    "data": base64.standard_b64encode(raw).decode()}})
+    if MOCK:
+        return MOCK_PROFILE
+    require(LLM_API_KEY, "LLM_API_KEY")
+    content.append({"type": "text", "text": PROFILE_PROMPT})
+    client = anthropic.AsyncAnthropic(api_key=LLM_API_KEY, timeout=TIMEOUT)
+    try:
+        msg = await client.beta.messages.parse(
+            model=LLM_MODEL,
+            max_tokens=2048,
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            output_config={"effort": "low"},
+            output_format=VibeProfile,
+            messages=[{"role": "user", "content": content}],
+        )
+    except anthropic.APITimeoutError:
+        raise HTTPException(504, "vibe model timed out")
+    except anthropic.APIStatusError as e:
+        raise HTTPException(502, f"vibe model error {e.status_code}: {e.message[:300]}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(502, "vibe model unreachable")
+    except (anthropic.APIResponseValidationError, ValidationError):
+        raise HTTPException(502, "vibe model returned an invalid profile")
+    if msg.stop_reason == "refusal" or msg.parsed_output is None:
+        raise HTTPException(502, "vibe model returned no profile")
+    profile = clean_profile(msg.parsed_output)
+    words = len(profile.description.split())
+    if not DESC_WORDS[0] <= words <= DESC_WORDS[1]:
+        raise HTTPException(502, f"vibe model wrote a {words}-word description; expected about 80-120")
+    return profile
 
 
 async def shop(client: httpx.AsyncClient, query: str) -> list[Product]:

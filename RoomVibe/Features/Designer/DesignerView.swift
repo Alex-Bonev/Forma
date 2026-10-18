@@ -31,7 +31,7 @@ struct DesignerView: View {
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
     @State private var highlighted: Entity?
     @State private var showCatalog = false
-    @State private var editing = false
+    @State private var editing: UUID?   // placement open in the Size sheet; not tied to `selected`, which taps can change
     @State private var showPhotos = false
     @State private var scanTarget: ScanTarget?
     @State private var undo: (title: String, snapshot: Project)?   // last Delete / Hide, offered for a few seconds
@@ -73,9 +73,17 @@ struct DesignerView: View {
     @State private var renderShot: RenderShot?
     @State private var lockMenuFor: UUID?   // placement whose Lock pill is showing
 
-    /// Capture before presenting: the snapshot and the camera must describe the same frame.
-    /// Selection markers are cleared first so the image model doesn't render them as objects.
+    private func renderCamera() -> RenderCamera {
+        RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
+                     verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
+                     viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
+    }
+
+    /// Make it real from exactly this view. Capture before presenting: the snapshot and the camera must describe the
+    /// same frame. Selection markers are cleared first so the image model doesn't render them as objects.
     private func makeItReal() {
+        guard renderShot == nil else { return }   // a second tap would replace the sheet mid-presentation
+        touched = true   // no thumbnail capture racing this snapshot and the sheet
         if selected != nil || selectedRoomObject != nil {
             selected = nil
             selectedRoomObject = nil
@@ -85,11 +93,8 @@ struct DesignerView: View {
             }
             return
         }
-        guard let image = captureDesignerSnapshot() else { return }
-        let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
-                               verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
-                               viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
-        renderShot = RenderShot(image: image, camera: cam)
+        guard let image = captureDesignerSnapshot(size: viewSize) else { return }
+        renderShot = RenderShot(image: image, camera: renderCamera())
     }
 
     var body: some View {
@@ -104,7 +109,6 @@ struct DesignerView: View {
             realityView(project: project, room: room)
                 .overlay(alignment: .topTrailing) {
                     HStack(spacing: 8) {
-                        MakeItRealButton(action: makeItReal)
                         Button { onExpand?() } label: {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -121,11 +125,14 @@ struct DesignerView: View {
             realityView(project: project, room: room)
                 .padding(.trailing, showObjects ? 268 : 0)   // room slides left of the Objects panel (Paper E2/E3)
                 .toolbar(.hidden, for: .navigationBar)
-                .onAppear { if opensCatalog { showCatalog = true } }
+                .onAppear {
+                    if opensCatalog { showCatalog = true }
+                }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
                     if new != nil { undo = nil; selectedRoomObject = nil; showObjects = true }
+                    if new != editing { editing = nil }   // the Size sheet edits one item; selecting another closes it
                     highlight(new.flatMap { placed[$0] })
                 }
                 .onChange(of: selectedRoomObject) { _, new in
@@ -134,17 +141,18 @@ struct DesignerView: View {
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
                 .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
-                .sheet(isPresented: $editing) { if let selected { editor(selected) } }
+                .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+                    if let editing { editor(editing) }
+                }
                 .fullScreenCover(item: $scanTarget) { target in
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
                 }
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
                 .overlay(alignment: .topLeading) {
-                    // Under the back button (Paper E); icon-only while the Objects panel is open (E2/E3).
-                    MakeItRealButton(compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                     ink: lightBackdrop ? Theme.ground : Theme.ink,
-                                     sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
-                        .padding(.leading, 16).padding(.top, 8 + 44 + 12)
+                    // Under the back button (Paper E): the room's vibe. Make it real is the wide bar at the bottom.
+                    RoomVibeControl(projectID: projectID, compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                    ink: lightBackdrop ? Theme.ground : Theme.ink) { EmptyView() }
+                    .padding(.leading, 16).padding(.top, 8 + 44 + 12)
                 }
                 .overlay(alignment: .trailing) {
                     if showObjects { objectsPanel(project).transition(.move(edge: .trailing).combined(with: .opacity)) }
@@ -152,7 +160,20 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .overlay(alignment: .bottom) {
-                    VStack(spacing: 12) { undoBar; hint.allowsHitTesting(false) }.padding(.bottom, 36)
+                    VStack(spacing: 12) {
+                        // With the Objects panel open, Undo lives in the panel instead of under it.
+                        if !showObjects { undoBar }
+                        hint.allowsHitTesting(false)
+                        // Renders exactly what's on screen: frame it by dragging, then tap.
+                        if !showObjects {
+                            MakeItRealButton(wide: true, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                             ink: lightBackdrop ? Theme.ground : Theme.ink,
+                                             sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.bottom, 24)
                 }
                 .overlay(alignment: .bottomLeading) {
                     lockMenu().padding(.leading, 16).padding(.bottom, 36)
@@ -270,10 +291,14 @@ struct DesignerView: View {
 
     /// VoiceOver (and UI tests) read the selected object's saved position.
     private func selectionDescription(_ project: Project) -> String? {
-        guard let selected, let p = project.placements.first(where: { $0.id == selected }),
-              let name = CatalogItem.item(p.catalogItem)?.name ?? store.objects.first(where: { $0.id == p.objectID })?.name
+        guard let selected, let p = project.placements.first(where: { $0.id == selected }), let name = name(of: selected)
         else { return nil }
         return String(format: "%@ at %.2f, %.2f m", name, p.position.x, p.position.z)
+    }
+
+    private func name(of id: UUID) -> String? {
+        guard let p = project?.placements.first(where: { $0.id == id }) else { return nil }
+        return CatalogItem.item(p.catalogItem)?.name ?? store.objects.first { $0.id == p.objectID }?.name
     }
 
     // MARK: Touch
@@ -433,7 +458,7 @@ struct DesignerView: View {
                     Image(systemName: "list.bullet")
                     Text("Objects").font(.forma(13, bold: true))
                     Text("\(objectRows(project).count)").font(.forma(11, bold: true)).foregroundStyle(Theme.onSage)
-                        .frame(minWidth: 22, minHeight: 22).background(Theme.sage, in: Circle())
+                        .padding(.horizontal, 6).frame(minWidth: 22, minHeight: 22).background(Theme.sage, in: Capsule())
                 }
                 .foregroundStyle(chrome.ink)
                 .padding(.horizontal, 14).frame(height: 44).background(chrome.fill, in: Capsule())
@@ -455,13 +480,14 @@ struct DesignerView: View {
     }
 
     private func rowInfo(_ row: ObjectRow, project: Project) -> (name: String, dims: String, symbol: String, hidden: Bool, selected: Bool) {
-        func cm(_ v: SIMD3<Float>) -> String { String(format: "%.0f × %.0f × %.0f cm", v.x * 100, v.z * 100, v.y * 100) }
+        // No spaces around ×: 3-digit sizes fit the panel row.
+        func cm(_ v: SIMD3<Float>) -> String { String(format: "%.0f×%.0f×%.0f cm", v.x * 100, v.z * 100, v.y * 100) }
         switch row {
         case .placement(let id):
             guard let p = project.placements.first(where: { $0.id == id }) else { return ("Item", "", "cube", false, false) }
             let item = CatalogItem.item(p.catalogItem)
             let object = store.objects.first { $0.id == p.objectID }
-            let base = item?.size ?? object?.boundingBox ?? .zero
+            let base = naturalSize[id] ?? item?.size ?? object?.boundingBox ?? .zero   // same source as the Size sheet
             return (item?.name ?? object?.name ?? "Item", cm(base * (p.scale ?? .one)), item?.symbol ?? "chair.lounge",
                     hiddenPlacements.contains(id), selected == id)
         case .room(let i):
@@ -486,6 +512,7 @@ struct DesignerView: View {
                 .accessibilityLabel("Close objects")
             }
             .foregroundStyle(Theme.ink)
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -496,7 +523,7 @@ struct DesignerView: View {
                                     .frame(width: 36, height: 36).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 10))
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
-                                    Text(info.dims).font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.7)
+                                    Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.9)
                                 }
                                 Spacer(minLength: 4)
                                 Button { toggleVisibility(row) } label: {
@@ -512,10 +539,15 @@ struct DesignerView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { select(row) }
                         .overlay(alignment: .top) { if !info.selected { Theme.hairline.frame(height: 1) } }
+                        .id(row)
                     }
                 }
             }
             .scrollIndicators(.hidden)
+            // An object tapped in the room may sit far down the list: bring its row (and actions) into view.
+            .task(id: selectedRow) { if let selectedRow { withAnimation { proxy.scrollTo(selectedRow, anchor: .center) } } }
+            }
+            undoBar.frame(maxWidth: .infinity)
             Button { showCatalog = true } label: { Label("Add object", systemImage: "plus") }
                 .buttonStyle(PillButtonStyle())
         }
@@ -526,6 +558,8 @@ struct DesignerView: View {
         .padding(.trailing, 12).padding(.top, 64).padding(.bottom, 12)
         .shadow(color: .black.opacity(0.08), radius: 20)
     }
+
+    private var selectedRow: ObjectRow? { selected.map { .placement($0) } ?? selectedRoomObject.map { .room($0) } }
 
     private func select(_ row: ObjectRow) {
         switch row {
@@ -603,12 +637,12 @@ struct DesignerView: View {
                         .disabled(making3D != nil)
                 }
             }
-            HStack(spacing: 8) {
-                PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
+            let locked = isLocked(id)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }.disabled(locked)   // locked = stays put, like drag/twist
+                PanelAction("Size", icon: "slider.horizontal.3") { editing = id }
+                PanelAction(locked ? "Unlock" : "Lock", icon: locked ? "lock.fill" : "lock.open") { toggleLock(id) }
                 PanelAction("Remove", icon: "trash") { remove(id) }
-            }
-            HStack(spacing: 8) {
-                PanelAction("Size", icon: "slider.horizontal.3") { editing = true }
                 if Capabilities.canScanObject { PanelAction("Scan real", icon: "camera.viewfinder") { scanTarget = .placement(id) } }
             }
         case .room(let i):
@@ -697,7 +731,7 @@ struct DesignerView: View {
     /// Saves the room's default view as its Home thumbnail, unless the user has already moved the camera.
     /// The snapshot's empty (transparent) background is trimmed and the room is fitted onto a square in the app's ground color.
     private func saveThumbnail() {
-        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false)?.cgImage, let box = Self.contentBounds(shot),
+        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false, size: viewSize, fallbackToWindow: false)?.cgImage, let box = Self.contentBounds(shot),
               let room = shot.cropping(to: box) else { return }
         let side: CGFloat = 360, pad: CGFloat = 18
         let scale = min((side - 2 * pad) / box.width, (side - 2 * pad) / box.height)
@@ -911,7 +945,7 @@ struct DesignerView: View {
         project.placements.append(p)
         store.update(project)
         await spawn(p)
-        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
         objectHint = true
         try? await Task.sleep(for: .seconds(4))
@@ -925,8 +959,19 @@ struct DesignerView: View {
         project.placements.append(p)
         store.update(project)
         await spawn(p)
-        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
+    }
+
+    /// New item falls in from a little above and settles, with a light tap. Purely visual: already committed.
+    private func dropIn(_ e: Entity) {
+        let rest = e.transform
+        var start = rest
+        start.translation.y += 0.35
+        start.scale = rest.scale * 0.9
+        e.transform = start
+        e.move(to: rest, relativeTo: e.parent, duration: 0.45, timingFunction: .easeOut)
+        lifts += 1
     }
 
     /// Remove a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
@@ -958,7 +1003,7 @@ struct DesignerView: View {
         }
         let item = CatalogItem.all.first { $0.model == key } ?? CatalogItem.item("custom_box")!
         await replaceRoomObject(i, catalog: item)
-        editing = true
+        editing = selected   // replaceRoomObject selects the new placement
     }
 
     /// Facing for things marked on a wall: front points into the room, away from the closest wall.
@@ -998,33 +1043,54 @@ struct DesignerView: View {
 
     // MARK: Editor
 
-    /// Size (per axis) and mounting height of the selected placement, applied live.
+    /// Size (per axis) and mounting height of one placement, applied live. Centimeters, like the Objects panel.
     private func editor(_ id: UUID) -> some View {
         NavigationStack {
             Form {
-                Section("Size") {
-                    dimensionRow("Width", id: id, axis: 0)
-                    dimensionRow("Height", id: id, axis: 1)
-                    dimensionRow("Depth", id: id, axis: 2)
-                    Button("Reset Size") { setScale(id) { _ in fitScale(id) } }
-                }
                 Section {
-                    LabeledContent("Height above floor", value: String(format: "%.2f m", elevation(id)))
+                    dimensionRow("Width", id: id, axis: 0)
+                    dimensionRow("Depth", id: id, axis: 2)
+                    dimensionRow("Height", id: id, axis: 1)
+                    Button("Reset Size") { setScale(id) { _ in fitScale(id) } }
+                        .font(.forma(14, bold: true)).foregroundStyle(Theme.sageDeep)
+                } header: { editorHeader("Size") }
+                Section {
+                    LabeledContent {
+                        Text(Self.cm(elevation(id))).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+                    } label: { Text("Above floor") }
                     Slider(value: Binding(get: { Double(elevation(id)) }, set: { setElevation(id, Float($0)) }), in: 0...2.4, step: 0.01)
+                        .accessibilityLabel("Height above floor")
                     Button("Put on Floor") { setElevation(id, 0) }
-                } header: { Text("Mounting") } footer: {
-                    Text("Raise wall-mounted items like sinks, shelves, TVs or lamps.")
+                        .font(.forma(14, bold: true)).foregroundStyle(Theme.sageDeep)
+                        .disabled(elevation(id) == 0)
+                } header: { editorHeader("Mounting") } footer: {
+                    Text("Raise wall-mounted items like sinks, shelves, TVs or lamps.").font(.forma(11)).foregroundStyle(Theme.muted)
                 }
             }
-            .font(.forma(14)).tint(Theme.sage)
+            .font(.forma(14)).foregroundStyle(Theme.ink).tint(Theme.sage)
             .scrollContentBackground(.hidden).background(Theme.ground)
-            .navigationTitle(selectionDescription(project!)?.components(separatedBy: " at ").first ?? "Edit")
+            .navigationTitle(name(of: id) ?? "Size")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { editing = false }.font(.forma(14, bold: true)).foregroundStyle(Theme.ink) } }
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(name(of: id) ?? "Size").font(.forma(15, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { editing = nil }.font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+                }
+            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Theme.ground)
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
     }
+
+    private func editorHeader(_ title: String) -> some View {
+        Text(title).font(.forma(11, bold: true)).foregroundStyle(Theme.muted).textCase(nil)
+    }
+
+    private static func cm(_ meters: Float) -> String { String(format: "%.0f cm", meters * 100) }
 
     private func dimensionRow(_ title: String, id: UUID, axis: Int) -> some View {
         let natural = naturalSize[id] ?? .one
@@ -1033,7 +1099,9 @@ struct DesignerView: View {
             get: { Double(size[axis]) },
             set: { v in setScale(id) { s in var s = s; s[axis] = max(Float(v), 0.05) / max(natural[axis], 0.001); return s } }
         ), in: 0.05...6, step: 0.05) {
-            LabeledContent(title, value: String(format: "%.2f m", size[axis]))
+            LabeledContent {
+                Text(Self.cm(size[axis])).font(.forma(14, bold: true)).foregroundStyle(Theme.ink).monospacedDigit()
+            } label: { Text(title) }
         }
     }
 
@@ -1054,6 +1122,7 @@ struct DesignerView: View {
 
     private func setElevation(_ id: UUID, _ y: Float) {
         guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        undo = nil   // restore() wouldn't move the live entity back down
         project.placements[k].position.y = y
         store.update(project)
         placed[id]?.position.y = y
@@ -1086,7 +1155,12 @@ struct DesignerView: View {
     private func remove(_ id: UUID) {
         guard var project else { return }
         offerUndo("Deleted", project)
-        placed.removeValue(forKey: id)?.removeFromParent()
+        if let e = placed.removeValue(forKey: id) {   // shrink away, then go
+            var gone = e.transform
+            gone.scale *= 0.01
+            e.move(to: gone, relativeTo: e.parent, duration: 0.22, timingFunction: .easeIn)
+            Task { try? await Task.sleep(for: .milliseconds(240)); e.removeFromParent() }
+        }
         project.placements.removeAll { $0.id == id }
         store.update(project)
         selected = nil
@@ -1138,6 +1212,13 @@ struct DesignerView: View {
         // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
         ring.position = [b.center.x, (0.003 - e.position(relativeTo: scene).y) / e.scale.y, b.center.z]
         e.addChild(ring)
+        // Pops in: a touch small and turned, then settles.
+        let rest = ring.transform
+        var start = rest
+        start.scale = [0.8, 1, 0.8]
+        start.rotation = simd_quatf(angle: -0.4, axis: [0, 1, 0])
+        ring.transform = start
+        ring.move(to: rest, relativeTo: e, duration: 0.25, timingFunction: .easeOut)
     }
 
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.
@@ -1238,13 +1319,16 @@ struct HintPill: View {
 private struct PanelLabel: View {
     let title: String, icon: String
     var filled = false
+    @Environment(\.isEnabled) private var enabled
     var body: some View {
         Label(title, systemImage: icon).font(.forma(12)).foregroundStyle(filled ? Theme.onSage : Theme.ink)
-            .lineLimit(1).minimumScaleFactor(0.8)
-            .frame(maxWidth: .infinity, minHeight: 34)
+            .lineLimit(1).minimumScaleFactor(0.85)
+            .frame(maxWidth: .infinity, minHeight: 40)
             .background(filled ? Theme.sage : .clear, in: Capsule())
             .overlay { if !filled { Capsule().strokeBorder(Theme.ink, lineWidth: 1) } }
             .contentShape(Capsule())
+            .opacity(enabled ? 1 : 0.4)
+            .animation(nil, value: title)   // Lock ⇄ Unlock swaps instantly; a cross-fade overlapped the two words
     }
 }
 

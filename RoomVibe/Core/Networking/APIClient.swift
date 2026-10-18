@@ -186,7 +186,7 @@ final class APIClient {
     /// `structure`: optional flat-color map of the same view, sent as PNG so its colors stay exact.
     /// `products`: shopped products' photos with their listing names, product 1 first (the backend numbers them).
     func render(_ image: UIImage, prompt: String = "", layout: String = "", view: String = "cutaway",
-                structure: UIImage? = nil, styleRef: UIImage? = nil, photos: [UIImage] = [],
+                structure: UIImage? = nil, styleRef: UIImage? = nil,
                 products: [(name: String, image: UIImage)] = []) async throws -> UIImage {
         struct Rendered: Decodable { var imageBase64: String }
         var form = Multipart()
@@ -196,7 +196,6 @@ final class APIClient {
         form.addField("view", view)
         if let structure { try form.addImage("structure", structure, png: true) }
         if let styleRef { try form.addImage("style_ref", styleRef) }
-        for p in photos { try form.addImage("photos", p) }   // real scan photos: ground truth for the room's look
         for p in products {   // same order for both fields: the backend pairs them by position
             try form.addImage("products", p.image)
             form.addField("product_names", p.name)
@@ -214,6 +213,13 @@ final class APIClient {
         if let image { try form.addImage("image", image) }
         if !prompt.isEmpty { form.addField("prompt", prompt) }
         return try await send(form.request(request("vibe/analyze")), as: VibeStyle.self)
+    }
+
+    /// All inspiration images (JPEG data, already resized by the caller) in one request. Nothing is saved here.
+    func extractVibe(_ images: [Data]) async throws -> VibeProfile {
+        var form = Multipart()
+        for data in images { form.addJPEG("images", data) }
+        return try await send(form.request(request("vibe/profile")), as: VibeProfile.self)
     }
 
     func products(for style: VibeStyle) async throws -> [ShopProduct] {
@@ -299,7 +305,12 @@ private struct Multipart {
 
     mutating func addImage(_ name: String, _ image: UIImage, png: Bool = false) throws {
         guard let data = png ? image.pngData() : image.uploadJPEG() else { throw APIError.badResponse }
-        let (ext, type) = png ? ("png", "image/png") : ("jpg", "image/jpeg")
+        addFile(name, data, ext: png ? "png" : "jpg", type: png ? "image/png" : "image/jpeg")
+    }
+
+    mutating func addJPEG(_ name: String, _ data: Data) { addFile(name, data, ext: "jpg", type: "image/jpeg") }
+
+    private mutating func addFile(_ name: String, _ data: Data, ext: String, type: String) {
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(name).\(ext)\"\r\n"
                     + "Content-Type: \(type)\r\n\r\n")
         body.append(data)

@@ -13,6 +13,9 @@ struct Project: Codable, Identifiable, Hashable {
     /// Finish.id for walls / floor (nil = default white / light).
     var wallFinish: String? = nil
     var floorFinish: String? = nil
+    /// Applied SavedVibe (Apply vibe in the room). A link only: independent of the render restyle. Dangles to nil
+    /// lookups if that vibe is deleted.
+    var vibeID: UUID? = nil
 }
 
 struct ScannedObject: Codable, Identifiable, Hashable {

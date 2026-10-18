@@ -15,7 +15,7 @@ Renders were more elaborate than the real room. Causes:
 
 ## Behavior
 
-- **App** (`Features/Render/RenderInputs.swift`):
+- **App** (`Features/Render/RenderInputs.swift`; photos were removed in round 2, see below):
   - `scene(project:room:objects:)` builds the input for `LayoutDescription` and `StructureMap`:
     - Drops `hiddenRoomObjects` and `removedRoomObjects`.
     - Adds every placement as a sized object, with `Placement.scale` baked in.
@@ -37,6 +37,19 @@ Renders were more elaborate than the real room. Causes:
 - **Vibe mode** (style words and/or `style_ref`) uses `RESTYLE_RULES` instead: same layout, restyled looks.
   Faithful rules apply only to a plain Make it real.
 - Shopped products (`Placement.product`, from Vibe) are named by their listing title in the layout.
+
+## Round 2: accuracy, and the angle is the view
+
+- **The angle is whatever the fullscreen Designer shows.** A wide Make it real bar spans its bottom (hidden while the Objects panel is open) and renders that exact view. The Room-detail card has no Make it real.
+  - An angle-preset bar was tried and dropped at Alex's request: frame it by dragging, then tap.
+- **Scan photos are no longer sent.** With them, a real dorm render copied a second loft bed and shelving that the 3D model doesn't have. Without them, the furniture, L-shape and size were exact. `/render` still accepts `photos`.
+- **Layout text:**
+  - "Room exactly W x D m … keep this size and these proportions".
+  - A note when the floor isn't a rectangle.
+  - "Furniture, exactly N pieces and nothing else".
+- **Prompt:** keep image 1's framing, size and proportions.
+- **Snapshot:** picks the Metal view closest to the Designer's measured size (on a tie, the innermost). Before, fullscreen fell back to the window and sent the app's buttons to the model.
+- **Latest render:** one per room (`render-latest.jpg` and its before snapshot). Make it real opens on it ("Last render · 5 min ago"); ↻ renders the current view and replaces it. It's also the offline fallback.
 
 ## Checks
 
