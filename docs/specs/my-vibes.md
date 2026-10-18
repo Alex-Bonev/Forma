@@ -58,6 +58,7 @@ All vibe screens use the app's Space Mono type (no system serif). Keep labels si
 - **Shop a vibe:**
   - When the room has a vibe, that vibe is the input: its first photo is the style reference, and `getRoomVibeBrief` is the prompt. What the user types goes first so a budget survives the 1000-character cap.
   - The x sets the vibe aside to use a one-off photo or words instead.
+  - Way in: the Make it real sheet has an outlined "Shop <vibe name>" (or "Shop a vibe") pill above Compare/Image. It also shows after a failed render.
   - Make it real stays faithful and ignores the vibe.
 
 ## Known gaps
