@@ -6,6 +6,7 @@ import SwiftUI
 /// and the photo as reference) + real products found by shopping agents (/vibe/shop), within the budget if one was
 /// given. Falls back to quick search (/vibe/products) per item. Pushed from RenderView's navigation stack.
 struct VibeView: View {
+    @Environment(ProjectStore.self) private var store
     @State private var model: VibeModel
     @State private var pick: PhotosPickerItem?
     @State private var photo: UIImage?
@@ -164,7 +165,7 @@ struct VibeView: View {
             .font(.footnote).foregroundStyle(.secondary)
             .padding(.horizontal)
             if let error = model.shopError {
-                errorCard(error.localizedDescription) { await model.reloadProducts() }
+                errorCard(error.localizedDescription) { model.retryProducts() }
             }
             ForEach(model.shopRows ?? []) { row in
                 shopRow(row)
@@ -187,7 +188,11 @@ struct VibeView: View {
             if !products.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 12) {
-                        ForEach(products) { ProductCard(product: $0, fitsBudget: model.chosen.contains($0.productURL)) }
+                        ForEach(products) { product in
+                            ProductCard(product: product, fitsBudget: model.chosen.contains(product.productURL),
+                                        added: isInRoom(product),
+                                        onAdd: model.projectID == nil ? nil : { addToRoom(product, row: row) })
+                        }
                     }
                     .padding(.horizontal)
                 }
@@ -199,7 +204,7 @@ struct VibeView: View {
                     if row.quick == nil && row.quickLoading {
                         ProgressView().controlSize(.small)
                     } else {
-                        Button("Try quick search") { Task { await model.quickSearch(row.id) } }
+                        Button("Try quick search") { model.background { await model.quickSearch(row.id) } }
                             .buttonStyle(.bordered).controlSize(.small)
                     }
                 }
@@ -207,7 +212,21 @@ struct VibeView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("shopRow-\(row.category)")
+        .accessibilityIdentifier("shopRow-\(row.id)-\(row.category)")
+    }
+
+    /// Drops the product into the room as its closest catalog item, sized to the listing when it gives dimensions.
+    private func addToRoom(_ product: ShopProduct, row: VibeModel.ShopRow) {
+        guard let id = model.projectID, var project = store.projects.first(where: { $0.id == id }),
+              !isInRoom(product) else { return }
+        project.placements.append(Placement.forProduct(product, category: product.category ?? row.category))
+        store.update(project)
+    }
+
+    /// Read from the project, so it survives leaving and reopening this screen.
+    private func isInRoom(_ product: ShopProduct) -> Bool {
+        store.projects.first { $0.id == model.projectID }?.placements
+            .contains { $0.product?.productURL == product.productURL } ?? false
     }
 
     @ViewBuilder private var productsSection: some View {
@@ -224,7 +243,7 @@ struct VibeView: View {
                     .padding(.horizontal)
                 }
             case .some(.failure(let error)):
-                errorCard(error.localizedDescription) { await model.reloadProducts() }
+                errorCard(error.localizedDescription) { model.retryProducts() }
             case nil:
                 ProgressView().frame(maxWidth: .infinity)
             }
@@ -246,6 +265,8 @@ struct VibeView: View {
 private struct ProductCard: View {
     let product: ShopProduct
     var fitsBudget = false
+    var added = false
+    var onAdd: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -273,10 +294,22 @@ private struct ProductCard: View {
                 Spacer()
                 Text(product.retailer).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Link(destination: product.productURL) {
-                Label("Open", systemImage: "arrow.up.right.square").frame(maxWidth: .infinity)
+            HStack(spacing: 6) {
+                if let onAdd {
+                    Button(action: onAdd) {
+                        Label(added ? "Added" : "Add", systemImage: added ? "checkmark" : "plus").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(added)
+                    .accessibilityLabel(added ? "Added to room" : "Add to room")
+                }
+                Link(destination: product.productURL) {
+                    Label("Open", systemImage: "arrow.up.right.square").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
+            .labelStyle(.titleOnly)
+            .controlSize(.small)
         }
         .frame(width: 150)
     }
@@ -315,9 +348,12 @@ final class VibeModel {
 
     private static let pollInterval: Duration = .seconds(4)
     private static let maxPollFailures = 3
+    private static let shopDeadline: Duration = .seconds(8 * 60)   // the backend gives up on an agent after 6 min
 
     /// The current pick's run. A newer pick cancels it so its results can't land under the new photo.
     private var run: Task<Void, Never>?
+    /// Retries and quick searches started from buttons, cancelled with `run` when the screen goes away.
+    private var side: [Task<Void, Never>] = []
 
     init(snapshot: UIImage, projectID: UUID?) {
         self.snapshot = snapshot.croppedToRenderAspect()
@@ -333,7 +369,18 @@ final class VibeModel {
         if started { begin(with: inspiration, prompt: prompt) }
     }
 
-    func cancel() { run?.cancel() }
+    func cancel() {
+        run?.cancel()
+        side.forEach { $0.cancel() }
+        side.removeAll()
+    }
+
+    func background(_ work: @escaping @MainActor () async -> Void) {
+        side.removeAll { $0.isCancelled }
+        side.append(Task { await work() })
+    }
+
+    func retryProducts() { background { await self.reloadProducts() } }
 
     func fail(_ message: String) { error = message }
 
@@ -393,7 +440,9 @@ final class VibeModel {
         do {
             let job = try await APIClient.shared.startShopping(style)
             var failures = 0
+            let deadline = ContinuousClock.now + Self.shopDeadline
             while !Task.isCancelled, style == self.style {
+                if ContinuousClock.now > deadline { throw APIError.timeout }
                 let status: ShopStatus
                 do {
                     status = try await APIClient.shared.pollShopping(job)
@@ -411,7 +460,13 @@ final class VibeModel {
                 try await Task.sleep(for: Self.pollInterval)
             }
         } catch {
-            if !Task.isCancelled && !(error is CancellationError), style == self.style { shopError = error }
+            if !Task.isCancelled && !(error is CancellationError), style == self.style {
+                shopError = error
+                if var rows = shopRows {   // no spinners left behind the error
+                    for i in rows.indices where rows[i].status == .running { rows[i].status = .failed }
+                    shopRows = rows
+                }
+            }
         }
     }
 
@@ -440,7 +495,8 @@ final class VibeModel {
             $0.quickLoading = false
             $0.quick = result
             if case .success(let p) = result, let cap = current.shoppingList?.first(where: { $0.query == row.query })?.maxPriceUsd {
-                $0.quick = .success(p.filter { ($0.priceUSD ?? 0) <= cap })   // keep only what fits that item's share
+                // Keep only what provably fits that item's share of the budget.
+                $0.quick = .success(p.filter { ($0.priceUSD ?? dollars($0.price)).map { $0 <= cap } ?? false })
             }
         }
     }
@@ -449,6 +505,14 @@ final class VibeModel {
         guard let i = shopRows?.firstIndex(where: { $0.id == id }) else { return }
         change(&shopRows![i])
     }
+}
+
+/// The first "$1,299.00"-style amount -> 1299; nil if there is none. Quick search prices are display text only.
+private func dollars(_ text: String) -> Double? {
+    // One plain amount only: "$10.99/mo, $1,200 total" or "Save $50 on $800" is not a price we can trust.
+    let amounts = text.matches(of: /\$\s?([\d,]+(?:\.\d+)?)/)
+    guard amounts.count == 1, !text.localizedCaseInsensitiveContains("/mo") else { return nil }
+    return Double(amounts[0].1.filter { $0 != "," })
 }
 
 private func usd(_ value: Double) -> String {
@@ -471,5 +535,22 @@ private extension Color {
     init(hex: String) {
         let v = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0x808080
         self.init(red: Double(v >> 16 & 0xFF) / 255, green: Double(v >> 8 & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+}
+
+extension Placement {
+    /// A catalog stand-in for a shopped product: the matching CatalogItem (or a Custom Box), scaled to the listing's
+    /// width/height/depth when it has them, at the room's center (the scene origin: RoomBuilder centers the room).
+    /// The Designer keeps it inside the walls.
+    static func forProduct(_ product: ShopProduct, category: String) -> Placement {
+        let item = CatalogItem.item(category) ?? CatalogItem.item("custom_box")!
+        var p = Placement(id: UUID(), objectID: Placement.catalogObjectID, position: .zero, yRotation: 0,
+                          catalogItem: item.id, product: product)
+        if let cm = product.dimensionsCm, cm.count == 3, cm.allSatisfy({ $0 > 0 && $0.isFinite }) {
+            let scale = SIMD3(Float(cm[0]), Float(cm[1]), Float(cm[2])) / 100 / item.size
+            p.scale = simd_clamp(scale, SIMD3(repeating: 0.05), SIMD3(repeating: 6))   // the Size editor's range
+            p.fitScale = p.scale
+        }
+        return p
     }
 }

@@ -185,6 +185,7 @@ struct DesignerView: View {
         }
         .ignoresSafeArea(edges: style == .card ? [] : .bottom)
         .background { if style == .full { backdrop.ignoresSafeArea() } }
+        .onChange(of: project.placements.map(\.id)) { spawnShoppedProducts() }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
         .overlay {
             TouchSurface(handlers: style == .card ? cardHandlers : touchHandlers, accessibilityValue: selectionDescription(project))
@@ -579,6 +580,20 @@ struct DesignerView: View {
     @ViewBuilder private func rowActions(_ row: ObjectRow, project: Project) -> some View {
         switch row {
         case .placement(let id):
+            if let product = project.placements.first(where: { $0.id == id })?.product {
+                Link(destination: product.productURL) {
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(product.title).font(.forma(12, bold: true)).lineLimit(1)
+                            Text("\(product.price) · \(product.retailer)").font(.forma(11)).foregroundStyle(Theme.ink.opacity(0.6))
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .foregroundStyle(Theme.ink)
+                }
+                .accessibilityLabel("Open product \(product.title)")
+            }
             HStack(spacing: 8) {
                 PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
                 PanelAction("Remove", icon: "trash") { remove(id) }
@@ -737,6 +752,8 @@ struct DesignerView: View {
             print("RoomVibe: placement \(p.id) references missing object \(p.objectID)")
             return
         }
+        // Removed (or undone away) while its model loaded: don't leave a ghost entity behind.
+        guard project?.placements.contains(where: { $0.id == p.id }) == true else { return }
         naturalSize[p.id] = e.visualBounds(relativeTo: e).extents
         placed[p.id]?.removeFromParent()   // never two entities for one placement
         e.name = p.id.uuidString
@@ -775,6 +792,23 @@ struct DesignerView: View {
             }
             .accessibilityLabel(locked ? "Unlock in place" : "Lock in place")
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        }
+    }
+
+    /// Products added from Vibe shopping (VibeView writes them to the store while this view stays open underneath).
+    private func spawnShoppedProducts() {
+        Task {
+            var clamped: [UUID: SIMD3<Float>] = [:]
+            for p in project?.placements ?? [] where p.product != nil && placed[p.id] == nil {
+                await spawn(p)
+                if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); clamped[p.id] = e.position }
+            }
+            // Save just these positions; commit() would also drop a pending Undo.
+            guard !clamped.isEmpty, var project else { return }
+            for i in project.placements.indices {
+                if let pos = clamped[project.placements[i].id] { project.placements[i].position = pos }
+            }
+            store.update(project)
         }
     }
 
@@ -984,6 +1018,12 @@ struct DesignerView: View {
     private func restore(_ snapshot: Project) {
         undo = nil
         store.update(snapshot)
+        let kept = Set(snapshot.placements.map(\.id))
+        for (id, e) in placed where !kept.contains(id) {   // e.g. a product added from Vibe after the snapshot
+            e.removeFromParent()
+            placed[id] = nil
+            if selected == id { selected = nil }
+        }
         let gone = Set((snapshot.hiddenRoomObjects ?? []) + (snapshot.removedRoomObjects ?? []))
         for i in (store.room(for: snapshot)?.objects.indices ?? 0..<0) { roomObjectEntity(i)?.isEnabled = !gone.contains(i) }
         for p in snapshot.placements where placed[p.id] == nil { Task { await spawn(p) } }
