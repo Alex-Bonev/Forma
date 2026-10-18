@@ -76,6 +76,8 @@ struct DesignerView: View {
     /// Capture before presenting: the snapshot and the camera must describe the same frame.
     /// Selection markers are cleared first so the image model doesn't render them as objects.
     private func makeItReal() {
+        guard renderShot == nil else { return }   // a second tap would replace the sheet mid-presentation
+        touched = true   // no thumbnail capture racing this snapshot and the sheet
         if selected != nil || selectedRoomObject != nil {
             selected = nil
             selectedRoomObject = nil
@@ -85,7 +87,7 @@ struct DesignerView: View {
             }
             return
         }
-        guard let image = captureDesignerSnapshot() else { return }
+        guard let image = captureDesignerSnapshot(size: viewSize) else { return }
         let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
                                verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
                                viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
@@ -697,7 +699,7 @@ struct DesignerView: View {
     /// Saves the room's default view as its Home thumbnail, unless the user has already moved the camera.
     /// The snapshot's empty (transparent) background is trimmed and the room is fitted onto a square in the app's ground color.
     private func saveThumbnail() {
-        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false)?.cgImage, let box = Self.contentBounds(shot),
+        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false, size: viewSize, fallbackToWindow: false)?.cgImage, let box = Self.contentBounds(shot),
               let room = shot.cropping(to: box) else { return }
         let side: CGFloat = 360, pad: CGFloat = 18
         let scale = min((side - 2 * pad) / box.width, (side - 2 * pad) / box.height)
@@ -885,7 +887,7 @@ struct DesignerView: View {
         project.placements.append(p)
         store.update(project)
         await spawn(p)
-        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
         objectHint = true
         try? await Task.sleep(for: .seconds(4))
@@ -899,8 +901,19 @@ struct DesignerView: View {
         project.placements.append(p)
         store.update(project)
         await spawn(p)
-        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
+    }
+
+    /// New item falls in from a little above and settles, with a light tap. Purely visual: already committed.
+    private func dropIn(_ e: Entity) {
+        let rest = e.transform
+        var start = rest
+        start.translation.y += 0.35
+        start.scale = rest.scale * 0.9
+        e.transform = start
+        e.move(to: rest, relativeTo: e.parent, duration: 0.45, timingFunction: .easeOut)
+        lifts += 1
     }
 
     /// Remove a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
@@ -1060,7 +1073,12 @@ struct DesignerView: View {
     private func remove(_ id: UUID) {
         guard var project else { return }
         offerUndo("Deleted", project)
-        placed.removeValue(forKey: id)?.removeFromParent()
+        if let e = placed.removeValue(forKey: id) {   // shrink away, then go
+            var gone = e.transform
+            gone.scale *= 0.01
+            e.move(to: gone, relativeTo: e.parent, duration: 0.22, timingFunction: .easeIn)
+            Task { try? await Task.sleep(for: .milliseconds(240)); e.removeFromParent() }
+        }
         project.placements.removeAll { $0.id == id }
         store.update(project)
         selected = nil
@@ -1112,6 +1130,13 @@ struct DesignerView: View {
         // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
         ring.position = [b.center.x, (0.003 - e.position(relativeTo: scene).y) / e.scale.y, b.center.z]
         e.addChild(ring)
+        // Pops in: a touch small and turned, then settles.
+        let rest = ring.transform
+        var start = rest
+        start.scale = [0.8, 1, 0.8]
+        start.rotation = simd_quatf(angle: -0.4, axis: [0, 1, 0])
+        ring.transform = start
+        ring.move(to: rest, relativeTo: e, duration: 0.25, timingFunction: .easeOut)
     }
 
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.
