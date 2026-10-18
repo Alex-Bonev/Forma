@@ -407,49 +407,49 @@ private struct ProductCard: View {
     var onAdd: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             AsyncImage(url: product.imageURL) { phase in
                 switch phase {
                 case .success(let image): image.resizable().scaledToFill()
-                case .failure: Image(systemName: "photo").foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.secondary.opacity(0.15))
-                default: Color.secondary.opacity(0.15)
+                case .failure: Image(systemName: "photo").font(.system(size: 20)).foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.sand)
+                default: Theme.sand
                 }
             }
-            .frame(width: 150, height: 150)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(width: 156, height: 156)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
             .overlay(alignment: .topLeading) {
                 if fitsBudget {
-                    Label("Fits budget", systemImage: "checkmark.seal.fill").font(.caption2.bold())
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(.green, in: Capsule()).foregroundStyle(.white)
-                        .padding(6)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).accessibilityHidden(true)
+                        Text("Fits budget").font(.forma(10, bold: true))
+                    }
+                    .foregroundStyle(Theme.onSage)
+                    .padding(.horizontal, 8).frame(height: 22)
+                    .background(Theme.sage, in: Capsule())
+                    .padding(8)
                 }
             }
-            Text(product.title).font(.subheadline).lineLimit(2, reservesSpace: true)
-            HStack {
-                Text(product.price).font(.subheadline.bold())
-                Spacer()
-                Text(product.retailer).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(product.title).font(.forma(11)).foregroundStyle(Theme.ink).lineLimit(2, reservesSpace: true)
+            HStack(alignment: .firstTextBaseline) {
+                Text(product.price).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                Spacer(minLength: 6)
+                Text(product.retailer).font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1)
             }
             HStack(spacing: 6) {
                 if let onAdd {
-                    Button(action: onAdd) {
-                        Label(added ? "Added" : "Add", systemImage: added ? "checkmark" : "plus").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(added)
-                    .accessibilityLabel(added ? "Added to room" : "Add to room")
+                    Button(action: onAdd) { Text(added ? "Added" : "Add").frame(maxWidth: .infinity) }
+                        .buttonStyle(SmallPillStyle())
+                        .disabled(added)
+                        .accessibilityLabel(added ? "Added to room" : "Add to room")
                 }
-                Link(destination: product.productURL) {
-                    Label("Open", systemImage: "arrow.up.right.square").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
+                Link(destination: product.productURL) { Text("Open").frame(maxWidth: .infinity) }
+                    .buttonStyle(SmallPillStyle(filled: false))
+                    .accessibilityLabel("Open \(product.title)")
             }
-            .labelStyle(.titleOnly)
-            .controlSize(.small)
         }
-        .frame(width: 150)
+        .frame(width: 156)
     }
 }
 

@@ -85,6 +85,7 @@ final class VibeShoppingTests: XCTestCase {
 
         // The demo room persists across launches: remove the shopped sofa again.
         if !app.buttons["Add object"].waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
+        sleep(1)   // the panel slides in: a tap mid-slide can land on the row's eye button instead
         app.staticTexts["Sofa"].firstMatch.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3))
         app.buttons["Remove"].tap()
