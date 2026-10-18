@@ -23,7 +23,6 @@ struct RenderView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.ground.ignoresSafeArea())
                 .safeAreaInset(edge: .bottom) {
-                    // Vibe mode (VibeView) is parked for the MVP demo; it would go next to this picker.
                     ViewPicker(selection: Binding(get: { model.view }, set: { model.view = $0 }))
                         .disabled(model.isLoading)
                         .padding(.horizontal, 24).padding(.bottom, 8)
@@ -38,6 +37,14 @@ struct RenderView: View {
                     }
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") { dismiss() }.font(.forma(13)).foregroundStyle(Theme.ink)
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        NavigationLink {
+                            VibeView(snapshot: model.snapshot, projectID: model.projectID)
+                        } label: {
+                            Label("Shop a vibe", systemImage: "sparkles").font(.forma(13)).foregroundStyle(Theme.ink)
+                        }
+                        .accessibilityIdentifier("openVibe")
                     }
                     if let result = model.result {
                         ToolbarItem(placement: .primaryAction) {

@@ -36,6 +36,8 @@ struct DesignerView: View {
     @State private var scanTarget: ScanTarget?
     @State private var undo: (title: String, snapshot: Project)?   // last Delete / Hide, offered for a few seconds
     @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
+    @State private var making3D: (id: UUID, task: Task<Void, Never>)?   // "Make it 3D" job for a shopped product
+    @State private var failed3D: Set<UUID> = []
 
     /// What a new Object Capture scan should replace.
     enum ScanTarget: Identifiable {
@@ -94,6 +96,7 @@ struct DesignerView: View {
         stack.sheet(item: $renderShot) { shot in
             RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera)
         }
+        .onDisappear { making3D?.task.cancel() }
     }
 
     @ViewBuilder private var stack: some View {
@@ -185,6 +188,7 @@ struct DesignerView: View {
         }
         .ignoresSafeArea(edges: style == .card ? [] : .bottom)
         .background { if style == .full { backdrop.ignoresSafeArea() } }
+        .onChange(of: project.placements.map(\.id)) { spawnShoppedProducts() }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
         .overlay {
             TouchSurface(handlers: style == .card ? cardHandlers : touchHandlers, accessibilityValue: selectionDescription(project))
@@ -579,6 +583,26 @@ struct DesignerView: View {
     @ViewBuilder private func rowActions(_ row: ObjectRow, project: Project) -> some View {
         switch row {
         case .placement(let id):
+            if let product = project.placements.first(where: { $0.id == id })?.product {
+                Link(destination: product.productURL) {
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(product.title).font(.forma(12, bold: true)).lineLimit(1)
+                            Text("\(product.price) · \(product.retailer)").font(.forma(11)).foregroundStyle(Theme.ink.opacity(0.6))
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .foregroundStyle(Theme.ink)
+                }
+                .accessibilityLabel("Open product \(product.title)")
+                if product.imageURL != nil, project.placements.first(where: { $0.id == id })?.catalogItem != nil {
+                    let busy = making3D?.id == id
+                    PanelAction(busy ? "Making 3D…" : failed3D.contains(id) ? "3D failed, try again" : "Make it 3D (beta)",
+                                icon: busy ? "hourglass" : "cube.transparent") { makeIt3D(id) }
+                        .disabled(making3D != nil)
+                }
+            }
             HStack(spacing: 8) {
                 PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
                 PanelAction("Remove", icon: "trash") { remove(id) }
@@ -737,6 +761,8 @@ struct DesignerView: View {
             print("RoomVibe: placement \(p.id) references missing object \(p.objectID)")
             return
         }
+        // Removed (or undone away) while its model loaded: don't leave a ghost entity behind.
+        guard project?.placements.contains(where: { $0.id == p.id }) == true else { return }
         naturalSize[p.id] = e.visualBounds(relativeTo: e).extents
         placed[p.id]?.removeFromParent()   // never two entities for one placement
         e.name = p.id.uuidString
@@ -776,6 +802,74 @@ struct DesignerView: View {
             .accessibilityLabel(locked ? "Unlock in place" : "Lock in place")
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }
+    }
+
+    /// Products added from Vibe shopping (VibeView writes them to the store while this view stays open underneath).
+    private func spawnShoppedProducts() {
+        Task {
+            var clamped: [UUID: SIMD3<Float>] = [:]
+            for p in project?.placements ?? [] where p.product != nil && placed[p.id] == nil {
+                await spawn(p)
+                if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); clamped[p.id] = e.position }
+            }
+            // Save just these positions; commit() would also drop a pending Undo.
+            guard !clamped.isEmpty, var project else { return }
+            for i in project.placements.indices {
+                if let pos = clamped[project.placements[i].id] { project.placements[i].position = pos }
+            }
+            store.update(project)
+        }
+    }
+
+    /// SAM 3D (/vibe/model3d) turns the product photo into a model that replaces its catalog stand-in, fitted to the
+    /// stand-in's current size (SAM 3D output has no real-world scale).
+    private func makeIt3D(_ id: UUID) {
+        guard making3D == nil, let p = project?.placements.first(where: { $0.id == id }), let product = p.product,
+              let image = product.imageURL else { return }
+        failed3D.remove(id)
+        let task = Task {
+            do {
+                let job = try await APIClient.shared.startModel3D(imageURL: image, category: product.category ?? p.catalogItem ?? "")
+                let deadline = ContinuousClock.now + .seconds(240)
+                while true {
+                    try Task.checkCancellation()
+                    let status = try await APIClient.shared.pollModel3D(job)
+                    if status.status == .done, let usdz = status.usdz { try await install3D(usdz, for: id, name: product.title); break }
+                    if status.status == .failed || ContinuousClock.now > deadline { throw APIError.badResponse }
+                    try await Task.sleep(for: .seconds(3))
+                }
+            } catch is CancellationError {
+            } catch {
+                print("RoomVibe: Make it 3D failed: \(error)")
+                failed3D.insert(id)
+            }
+            making3D = nil
+        }
+        making3D = (id, task)
+    }
+
+    private func install3D(_ usdz: Data, for id: UUID, name: String) async throws {
+        guard let stand = placed[id], let p = project?.placements.first(where: { $0.id == id }) else { return }
+        let target = (naturalSize[id] ?? stand.visualBounds(relativeTo: stand).extents) * (p.scale ?? .one)
+        try Task.checkCancellation()
+        let object = try await store.saveModel(usdz: usdz, name: name)
+        // Not in the library yet: drop the files if the job was cancelled or the box removed meanwhile.
+        guard !Task.isCancelled, project?.placements.contains(where: { $0.id == id }) == true else {
+            store.discardModel(object)
+            try Task.checkCancellation()
+            return
+        }
+        do { try store.addObject(object) } catch { store.delete(object); throw error }
+        let wasSelected = selected
+        await applyScan(object, to: .placement(id))
+        selected = wasSelected   // applyScan selects the swapped item; keep the user's current selection instead
+        // Fit it to the box it replaces (SAM 3D output has no real-world scale); Reset Size returns here.
+        guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        let fit = target / object.boundingBox
+        project.placements[k].scale = fit
+        project.placements[k].fitScale = fit
+        store.update(project)
+        placed[id]?.scale = fit
     }
 
     private func baseScale(_ id: UUID) -> SIMD3<Float> {
@@ -984,6 +1078,12 @@ struct DesignerView: View {
     private func restore(_ snapshot: Project) {
         undo = nil
         store.update(snapshot)
+        let kept = Set(snapshot.placements.map(\.id))
+        for (id, e) in placed where !kept.contains(id) {   // e.g. a product added from Vibe after the snapshot
+            e.removeFromParent()
+            placed[id] = nil
+            if selected == id { selected = nil }
+        }
         let gone = Set((snapshot.hiddenRoomObjects ?? []) + (snapshot.removedRoomObjects ?? []))
         for i in (store.room(for: snapshot)?.objects.indices ?? 0..<0) { roomObjectEntity(i)?.isEnabled = !gone.contains(i) }
         for p in snapshot.placements where placed[p.id] == nil { Task { await spawn(p) } }

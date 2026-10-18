@@ -1,0 +1,210 @@
+{
+ "prompt": "Cozy japandi reading nook under $800",
+ "style": {
+  "style_name": "Warm Japandi",
+  "palette": [
+   "#E8E1D5",
+   "#B59F84",
+   "#5B5348",
+   "#2F2C28"
+  ],
+  "materials": [
+   "light oak",
+   "linen",
+   "rattan"
+  ],
+  "furniture_types": [
+   "low sofa",
+   "round coffee table",
+   "lounge chair"
+  ],
+  "decor_items": [
+   "paper floor lamp",
+   "ceramic vase",
+   "jute rug"
+  ],
+  "search_queries": [
+   "linen low sofa",
+   "oak round coffee table",
+   "rattan lounge chair",
+   "paper floor lamp"
+  ],
+  "room_type": "living room",
+  "budget_usd": 800.0,
+  "shopping_list": [
+   {
+    "category": "sofa",
+    "query": "linen low sofa",
+    "max_price_usd": 200.0
+   },
+   {
+    "category": "round_table",
+    "query": "oak round coffee table",
+    "max_price_usd": 200.0
+   },
+   {
+    "category": "armchair",
+    "query": "rattan lounge chair",
+    "max_price_usd": 200.0
+   },
+   {
+    "category": "floor_lamp",
+    "query": "paper floor lamp",
+    "max_price_usd": 200.0
+   }
+  ]
+ },
+ "status": {
+  "done": true,
+  "budget_usd": 800.0,
+  "items": [
+   {
+    "category": "sofa",
+    "query": "linen low sofa",
+    "status": "done",
+    "products": [
+     {
+      "title": "Linen Low Sofa 1",
+      "price": "$180.00",
+      "image_url": "bundle:vibe_demo_0.jpg",
+      "product_url": "https://example.com/0-0",
+      "retailer": "Example",
+      "price_usd": 180.0,
+      "category": "sofa",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     },
+     {
+      "title": "Linen Low Sofa 2",
+      "price": "$120.00",
+      "image_url": "bundle:vibe_demo_1.jpg",
+      "product_url": "https://example.com/0-1",
+      "retailer": "Example",
+      "price_usd": 120.0,
+      "category": "sofa",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     }
+    ]
+   },
+   {
+    "category": "round_table",
+    "query": "oak round coffee table",
+    "status": "done",
+    "products": [
+     {
+      "title": "Oak Round Coffee Table 1",
+      "price": "$180.00",
+      "image_url": "bundle:vibe_demo_2.jpg",
+      "product_url": "https://example.com/1-0",
+      "retailer": "Example",
+      "price_usd": 180.0,
+      "category": "round_table",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     },
+     {
+      "title": "Oak Round Coffee Table 2",
+      "price": "$120.00",
+      "image_url": "bundle:vibe_demo_3.jpg",
+      "product_url": "https://example.com/1-1",
+      "retailer": "Example",
+      "price_usd": 120.0,
+      "category": "round_table",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     }
+    ]
+   },
+   {
+    "category": "armchair",
+    "query": "rattan lounge chair",
+    "status": "done",
+    "products": [
+     {
+      "title": "Rattan Lounge Chair 1",
+      "price": "$180.00",
+      "image_url": "bundle:vibe_demo_4.jpg",
+      "product_url": "https://example.com/2-0",
+      "retailer": "Example",
+      "price_usd": 180.0,
+      "category": "armchair",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     },
+     {
+      "title": "Rattan Lounge Chair 2",
+      "price": "$120.00",
+      "image_url": "bundle:vibe_demo_5.jpg",
+      "product_url": "https://example.com/2-1",
+      "retailer": "Example",
+      "price_usd": 120.0,
+      "category": "armchair",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     }
+    ]
+   },
+   {
+    "category": "floor_lamp",
+    "query": "paper floor lamp",
+    "status": "done",
+    "products": [
+     {
+      "title": "Paper Floor Lamp 1",
+      "price": "$180.00",
+      "image_url": "bundle:vibe_demo_6.jpg",
+      "product_url": "https://example.com/3-0",
+      "retailer": "Example",
+      "price_usd": 180.0,
+      "category": "floor_lamp",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     },
+     {
+      "title": "Paper Floor Lamp 2",
+      "price": "$120.00",
+      "image_url": "bundle:vibe_demo_7.jpg",
+      "product_url": "https://example.com/3-1",
+      "retailer": "Example",
+      "price_usd": 120.0,
+      "category": "floor_lamp",
+      "dimensions_cm": [
+       80.0,
+       75.0,
+       80.0
+      ]
+     }
+    ]
+   }
+  ],
+  "chosen": [
+   "https://example.com/0-0",
+   "https://example.com/1-0",
+   "https://example.com/2-0",
+   "https://example.com/3-0"
+  ],
+  "total_usd": 720.0
+ }
+}

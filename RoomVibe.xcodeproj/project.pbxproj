@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A47EBFA8A7B1A35C4890420D /* DesignerGestureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */; };
+		5C1D2E3F4A5B6C7D8E9F0A1B /* VibeShoppingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2E3F4A5B6C7D8E9F0A1B2C /* VibeShoppingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -22,6 +23,7 @@
 
 /* Begin PBXFileReference section */
 		1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignerGestureTests.swift; sourceTree = "<group>"; };
+		6D2E3F4A5B6C7D8E9F0A1B2C /* VibeShoppingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VibeShoppingTests.swift; sourceTree = "<group>"; };
 		8B48A8288098F4BFBCFF9E53 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		944CEFEF2389ED2B0780AD34 /* RoomVibe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RoomVibe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AAFE176ACCDF943F97D493CF /* RoomVibeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RoomVibeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -48,6 +50,7 @@
 			isa = PBXGroup;
 			children = (
 				1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */,
+				6D2E3F4A5B6C7D8E9F0A1B2C /* VibeShoppingTests.swift */,
 			);
 			path = RoomVibeUITests;
 			sourceTree = "<group>";
@@ -175,6 +178,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A47EBFA8A7B1A35C4890420D /* DesignerGestureTests.swift in Sources */,
+				5C1D2E3F4A5B6C7D8E9F0A1B /* VibeShoppingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,8 +219,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/RoomVibe-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = RoomVibe;
 				INFOPLIST_KEY_NSCameraUsageDescription = "RoomVibe uses the camera and LiDAR to scan rooms and objects.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "RoomVibe talks to the demo server on your Mac.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "RoomVibe saves renders of your room to Photos.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -241,8 +247,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/RoomVibe-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = RoomVibe;
 				INFOPLIST_KEY_NSCameraUsageDescription = "RoomVibe uses the camera and LiDAR to scan rooms and objects.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "RoomVibe talks to the demo server on your Mac.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "RoomVibe saves renders of your room to Photos.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

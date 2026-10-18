@@ -36,6 +36,8 @@ struct Placement: Codable, Identifiable, Hashable {
     var fitScale: SIMD3<Float>? = nil
     /// "Lock in place" from the quick menu: no drag or twist while true. nil = unlocked.
     var locked: Bool? = nil
+    /// The real product this stands in for, when added from Vibe shopping.
+    var product: ShopProduct? = nil
 
     static let catalogObjectID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }
