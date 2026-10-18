@@ -2,6 +2,18 @@ import XCTest
 
 /// Drives real touches in the Designer (Simulator). Run: xcodebuild test -scheme RoomVibe -destination '<simulator>'
 /// The canvas's accessibility value is the selected object's saved position, so moves are checked end to end.
+extension XCUIApplication {
+    /// Home keeps objects on their own tab; the first tap can land while Home is still popping in, so retry.
+    func openObjectsTab() {
+        let tab = buttons["tabObjects"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !tab.isSelected {
+            tab.tap()
+            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: tab)], timeout: 2)
+        }
+    }
+}
+
 final class DesignerGestureTests: XCTestCase {
     func testPlaceDragOrbitZoom() {
         let app = XCUIApplication()
@@ -249,6 +261,7 @@ final class DesignerGestureTests: XCTestCase {
         app.launchArguments = ["-demo"]
         app.launch()
         app.buttons["Close fullscreen"].tap()   // -demo opens the Designer straight from Home
+        app.openObjectsTab()
         // Library tiles are navigation links whose label starts with the object's name.
         func tile(_ name: String) -> XCUIElement {
             app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch

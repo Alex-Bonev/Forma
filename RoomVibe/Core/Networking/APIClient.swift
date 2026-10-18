@@ -216,6 +216,13 @@ final class APIClient {
         return try await send(form.request(request("vibe/analyze")), as: VibeStyle.self)
     }
 
+    /// All inspiration images (JPEG data, already resized by the caller) in one request. Nothing is saved here.
+    func extractVibe(_ images: [Data]) async throws -> VibeProfile {
+        var form = Multipart()
+        for data in images { form.addJPEG("images", data) }
+        return try await send(form.request(request("vibe/profile")), as: VibeProfile.self)
+    }
+
     func products(for style: VibeStyle) async throws -> [ShopProduct] {
         struct Products: Decodable { var products: [Lossy<ShopProduct>] }
         var req = request("vibe/products")
@@ -311,7 +318,12 @@ private struct Multipart {
 
     mutating func addImage(_ name: String, _ image: UIImage, png: Bool = false) throws {
         guard let data = png ? image.pngData() : image.uploadJPEG() else { throw APIError.badResponse }
-        let (ext, type) = png ? ("png", "image/png") : ("jpg", "image/jpeg")
+        addFile(name, data, ext: png ? "png" : "jpg", type: png ? "image/png" : "image/jpeg")
+    }
+
+    mutating func addJPEG(_ name: String, _ data: Data) { addFile(name, data, ext: "jpg", type: "image/jpeg") }
+
+    private mutating func addFile(_ name: String, _ data: Data, ext: String, type: String) {
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(name).\(ext)\"\r\n"
                     + "Content-Type: \(type)\r\n\r\n")
         body.append(data)

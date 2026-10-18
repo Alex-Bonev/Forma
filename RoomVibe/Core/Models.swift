@@ -15,6 +15,9 @@ struct Project: Codable, Identifiable, Hashable {
     var floorFinish: String? = nil
     /// Last local change, for cloud sync (last writer wins). nil = saved before sync existed.
     var updatedAt: Date? = nil
+    /// Applied SavedVibe (Apply vibe in the room). A link only: independent of the render restyle. Dangles to nil
+    /// lookups if that vibe is deleted.
+    var vibeID: UUID? = nil
 }
 
 struct ScannedObject: Codable, Identifiable, Hashable {
