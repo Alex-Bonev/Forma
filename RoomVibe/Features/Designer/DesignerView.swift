@@ -810,7 +810,10 @@ struct DesignerView: View {
             var clamped: [UUID: SIMD3<Float>] = [:]
             for p in project?.placements ?? [] where p.product != nil && placed[p.id] == nil {
                 await spawn(p)
-                if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); clamped[p.id] = e.position }
+                guard let e = placed[p.id] else { continue }
+                if p.position == .zero { e.position = freeSpot(for: e) }   // fresh from Vibe: don't stack on the center
+                e.position = clamp(e.position, keeping: e)
+                clamped[p.id] = e.position
             }
             // Save just these positions; commit() would also drop a pending Undo.
             guard !clamped.isEmpty, var project else { return }
@@ -819,6 +822,29 @@ struct DesignerView: View {
             }
             store.update(project)
         }
+    }
+
+    /// The free floor spot nearest the room's center for `entity`, clear of other placements and of the visible scanned
+    /// furniture. Flat items (rugs) don't count as taken: furniture can stand on them.
+    private func freeSpot(for entity: Entity) -> SIMD3<Float> {
+        guard let model = entity.children.first else { return entity.position }
+        let size = model.visualBounds(relativeTo: scene).extents
+        var taken: [(lo: SIMD2<Float>, hi: SIMD2<Float>)] = []
+        func take(_ e: Entity) {
+            let b = e.visualBounds(relativeTo: scene)
+            if b.extents.y > 0.05 { taken.append((SIMD2(b.min.x, b.min.z), SIMD2(b.max.x, b.max.z))) }
+        }
+        for (_, other) in placed where other !== entity { if let m = other.children.first { take(m) } }   // not the selection disc
+        func furniture(in e: Entity) {
+            for c in e.children {
+                if c.name.hasPrefix(RoomBuilder.furniturePrefix) { if c.isEnabled { take(c) } } else { furniture(in: c) }
+            }
+        }
+        if let roomEntity { furniture(in: roomEntity) }
+        let poly = outline.flatMap { o in roomEntity?.children.first.map { r in o.map { SIMD2($0.x + r.position.x, $0.z + r.position.z) } } }
+        let xz = FloorClamp.freeSpot(near: .zero, half: SIMD2(size.x, size.z) / 2, taken: taken,
+                                     bounds: roomSize / 2 - RoomBuilder.wallThickness / 2, outline: poly)
+        return [xz.x, entity.position.y, xz.y]
     }
 
     /// SAM 3D (/vibe/model3d) turns the product photo into a model that replaces its catalog stand-in, fitted to the
