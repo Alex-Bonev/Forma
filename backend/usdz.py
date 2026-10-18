@@ -1,15 +1,16 @@
-"""GLB (SAM 3D Objects output) -> USDZ that RealityKit loads, without usd-core (201 MB unzipped, too big for Vercel).
+"""GLB (SAM 3D Objects output) -> USDZ that RealityKit loads, without usd-core (skipped: 201 MB unzipped install).
 
 trimesh reads the GLB; we write the USDA layer as text and pack it with its textures into a USDZ, which is an
 uncompressed zip whose files start on 64-byte boundaries, layer first. Checked with `usdchecker --arkit` and by
 loading into RealityKit. trimesh already flips glTF's top-left UV origin to bottom-left, which is what USD's st uses.
 
-Output is bounded so it fits Vercel's response cap as base64: meshes are decimated (keeping UVs) and textures
-downscaled, halving the face budget until the package fits.
+Output is bounded so it stays quick to send to the phone as base64 and light to render: meshes are decimated
+(keeping UVs) and textures downscaled, halving the face budget until the package fits USDZ_MAX_MB.
 """
 import base64
 import io
 import json
+import os
 import struct
 import zipfile
 
@@ -19,16 +20,17 @@ import trimesh
 from PIL import Image
 
 MAX_INPUT_FACES = 1_000_000  # refuse anything bigger outright: decimating it would take too long
-START_FACES = 40_000
+START_FACES = int(os.getenv("USDZ_MAX_FACES", "80000"))  # starting decimation budget, halved until the size fits
 MIN_FACES = 2_500
 MAX_TEXTURE = 1024
 MAX_TEXTURE_PIXELS = 4096 * 4096  # per image, checked from the image header, before trimesh decodes it
 MAX_TOTAL_TEXTURE_PIXELS = 2 * 4096 * 4096  # all images together
 UNSUPPORTED_EXTENSIONS = {"KHR_draco_mesh_compression", "EXT_meshopt_compression"}  # trimesh can't decode these
-MAX_USDZ = 3_200_000  # base64 of this is ~4.3 MB, under Vercel's 4.5 MB response cap
+MAX_USDZ = int(float(os.getenv("USDZ_MAX_MB", "8")) * 1024 * 1024)  # package size; base64 adds a third on the wire
 
 
-def glb_to_usdz(glb: bytes, max_bytes: int = MAX_USDZ) -> bytes:
+def glb_to_usdz(glb: bytes, max_bytes: int | None = None) -> bytes:
+    max_bytes = MAX_USDZ if max_bytes is None else max_bytes
     _check_glb(glb)
     meshes = _load(glb)
     faces = sum(len(m.faces) for m in meshes)

@@ -33,7 +33,7 @@ def test_flow():
     assert r.json()["image_base64"] == "aW1n"
     style = c.post("/vibe/analyze", headers=H, files={"image": ("a.jpg", b"img")}).json()
     assert len(c.post("/vibe/products", headers=H, json=style).json()["products"]) == 4
-    big = c.post("/render", headers=H, files={"image": ("a.jpg", b"x" * (4 * 1024 * 1024 + 1))}, data={"prompt": "p"})
+    big = c.post("/render", headers=H, files={"image": ("a.jpg", b"x" * (main.MAX_UPLOAD + 1))}, data={"prompt": "p"})
     assert big.status_code == 413
 
 
@@ -84,7 +84,7 @@ def test_render_image_numbering():
 
 
 def test_render_combined_upload_cap():
-    half = b"x" * (2 * 1024 * 1024 + 1)
+    half = b"x" * (main.MAX_UPLOAD // 2 + 1)
     r = c.post("/render", headers=H, files={"image": ("a.jpg", half), "structure": ("s.png", half)})
     assert r.status_code == 413  # enforced in mock mode too
 

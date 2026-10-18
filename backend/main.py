@@ -1,5 +1,7 @@
 """RoomVibe backend: thin, stateless proxy for AI calls. Keeps API keys out of the app.
 
+Runs as a local server for the demo (the phone or Simulator talks to it over the LAN). Settings come from the
+environment, with backend/.env filling in anything not already set (see .env.example).
 MOCK=1 (default) returns canned responses so the app works offline / without keys.
 Providers (checked against docs 2026-10-17):
   /render          Gemini image editing via the Interactions API (IMAGE_API_KEY, IMAGE_MODEL)
@@ -23,6 +25,7 @@ import secrets
 import socket
 import time
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -32,8 +35,13 @@ from google import genai
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from PIL import Image
 from pydantic import BaseModel, ValidationError
+from dotenv import load_dotenv
 
 from budget import pick_within_budget
+
+# backend/.env fills in settings not already in the environment (real env vars win). DOTENV=0 skips it (tests).
+if os.getenv("DOTENV", "1") != "0":
+    load_dotenv(Path(__file__).with_name(".env"), override=False)
 
 MOCK = os.getenv("MOCK", "1") == "1"
 APP_SHARED_SECRET = os.getenv("APP_SHARED_SECRET", "")
@@ -54,9 +62,10 @@ FAL_MODEL = "fal-ai/sam-3/3d-objects"
 FAL_API_HOSTS = ("fal.run", "fal.ai")  # status/result URLs from the submit response must be on these (or subdomains)
 FAL_CDN_HOSTS = ("fal.media", "fal.run", "fal.ai")  # where model files are downloaded from (no API key sent)
 MAX_GLB = 40 * 1024 * 1024
-MAX_UPLOAD = 4 * 1024 * 1024  # Vercel caps bodies at 4.5 MB
+# Size caps: they bound server memory and what the phone downloads over Wi-Fi. Tunable for a bigger or smaller box.
+MAX_UPLOAD = int(float(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024)  # each upload, and all of one request's
 TIMEOUT = 90
-MAX_RESPONSE_B64 = 4_400_000  # base64 render must fit Vercel's 4.5 MB response cap
+MAX_RESPONSE_B64 = int(float(os.getenv("MAX_RESPONSE_MB", "20")) * 1024 * 1024)  # base64 render sent to the app
 
 logging.getLogger("httpx").setLevel(logging.WARNING)  # INFO logs full URLs, incl. SerpAPI's api_key param
 
