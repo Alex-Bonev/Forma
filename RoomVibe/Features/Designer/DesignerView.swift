@@ -153,8 +153,9 @@ struct DesignerView: View {
 
     private var nameBinding: Binding<String> {
         Binding(get: { project?.name ?? "" }, set: { name in
-            let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard var p = project, !name.isEmpty else { return }
+            // Don't trim while typing: the field re-reads the name, so a trimmed trailing space would vanish.
+            guard var p = project, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            undo = nil
             p.name = name
             store.update(p)
         })
@@ -165,6 +166,7 @@ struct DesignerView: View {
             get: { project?[keyPath: key] ?? d },
             set: { id in
                 guard var p = project, let room = roomEntity else { return }
+                undo = nil   // undo restores a whole snapshot; any other edit ends its window
                 p[keyPath: key] = id
                 store.update(p)
                 let wall = Finish.wall(p.wallFinish), floor = Finish.floor(p.floorFinish)
@@ -630,6 +632,7 @@ struct DesignerView: View {
         guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
         let s = change(project.placements[k].scale ?? .one)
         guard s != (project.placements[k].scale ?? .one) else { return }
+        undo = nil
         project.placements[k].scale = s == .one ? nil : s
         store.update(project)
         placed[id]?.scale = s
@@ -658,7 +661,14 @@ struct DesignerView: View {
 
     private func restoreHidden() {
         guard var project else { return }
-        for i in project.hiddenRoomObjects ?? [] { roomObjectEntity(i)?.isEnabled = true }
+        // Saves from before removedRoomObjects put replaced furniture here too. A placement standing on the
+        // object's spot means it was replaced: keep it gone instead of showing a duplicate.
+        let replaced = (project.hiddenRoomObjects ?? []).filter { i in
+            guard let c = roomObjectEntity(i)?.position(relativeTo: scene) else { return false }
+            return project.placements.contains { simd_distance(SIMD2($0.position.x, $0.position.z), SIMD2(c.x, c.z)) < 0.15 }
+        }
+        for i in project.hiddenRoomObjects ?? [] where !replaced.contains(i) { roomObjectEntity(i)?.isEnabled = true }
+        if !replaced.isEmpty { project.removedRoomObjects = Array(Set((project.removedRoomObjects ?? []) + replaced)).sorted() }
         project.hiddenRoomObjects = nil
         store.update(project)
     }
@@ -731,6 +741,7 @@ struct DesignerView: View {
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.
     private func commit(rotation: (Entity, simd_quatf)? = nil) {
         guard var project else { return }
+        undo = nil
         for i in project.placements.indices {
             guard let e = placed[project.placements[i].id] else { continue }
             let q = rotation?.0 === e ? rotation!.1 : e.orientation
@@ -753,7 +764,7 @@ struct DesignerView: View {
         var xz = SIMD2(min(max(p.x, -h.x), h.x), min(max(p.z, -h.y), h.y))
         if let outline, let offset = roomEntity?.children.first?.position {
             let poly = outline.map { SIMD2($0.x + offset.x, $0.z + offset.z) }
-            xz = FloorClamp.clamp(xz, to: poly, inset: max(half.x, half.y) + RoomBuilder.wallThickness / 2)
+            xz = FloorClamp.clamp(footprint: xz, half: half, to: poly, wall: RoomBuilder.wallThickness / 2)
         }
         return [xz.x, max(p.y, 0), xz.y]   // y = mounting height
     }
