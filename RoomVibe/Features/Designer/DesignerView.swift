@@ -57,6 +57,11 @@ struct DesignerView: View {
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
 
+    /// Light walls get a dark palette backdrop and vice versa.
+    private var lightBackdrop: Bool { backdrop == Theme.ground }
+    private var chrome: (fill: Color, ink: Color) { Tone.chrome(on: backdrop) }
+    private var backdrop: Color { Tone.backdrop(subjectLuminance: Finish.wall(project?.wallFinish).luminance) }
+
     /// Designer snapshot handed to the photoreal render sheet.
     private struct RenderShot: Identifiable {
         let id = UUID()
@@ -133,7 +138,9 @@ struct DesignerView: View {
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
                 .overlay(alignment: .topLeading) {
                     // Under the back button (Paper E); icon-only while the Objects panel is open (E2/E3).
-                    MakeItRealButton(compact: showObjects, action: makeItReal)
+                    MakeItRealButton(compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                     ink: lightBackdrop ? Theme.ground : Theme.ink,
+                                     sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
                         .padding(.leading, 16).padding(.top, 8 + 44 + 12)
                 }
                 .overlay(alignment: .trailing) {
@@ -177,6 +184,7 @@ struct DesignerView: View {
             Task { for p in project.placements { await spawn(p) } }
         }
         .ignoresSafeArea(edges: style == .card ? [] : .bottom)
+        .background { if style == .full { backdrop.ignoresSafeArea() } }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
         .overlay {
             TouchSurface(handlers: style == .card ? cardHandlers : touchHandlers, accessibilityValue: selectionDescription(project))
@@ -204,8 +212,8 @@ struct DesignerView: View {
             controlButton(lowWalls ? "square.split.bottomrightquarter.fill" : "square.split.bottomrightquarter",
                           label: lowWalls ? "Full walls" : "Cutaway walls") { lowWalls.toggle() }
         }
-        .foregroundStyle(Theme.ink)
-        .background(Theme.ground.opacity(0.9), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(chrome.ink)
+        .background(chrome.fill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     /// Wall and floor finish presets, saved per room.
@@ -409,12 +417,12 @@ struct DesignerView: View {
         HStack(spacing: 8) {
             Button { dismiss() } label: {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
-                    .frame(width: 44, height: 44).background(Theme.ground.opacity(0.9), in: Circle())
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(chrome.ink)
+                    .frame(width: 44, height: 44).background(chrome.fill, in: Circle())
             }
             .accessibilityLabel("Close fullscreen")
-            Text(project.name).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
-                .padding(.horizontal, 14).frame(height: 32).background(Theme.ground.opacity(0.9), in: Capsule())
+            Text(project.name).font(.forma(12, bold: true)).foregroundStyle(chrome.ink).lineLimit(1)
+                .padding(.horizontal, 14).frame(height: 32).background(chrome.fill, in: Capsule())
             Spacer(minLength: 0)
             Button { showObjects.toggle() } label: {
                 HStack(spacing: 8) {
@@ -423,8 +431,8 @@ struct DesignerView: View {
                     Text("\(objectRows(project).count)").font(.forma(11, bold: true)).foregroundStyle(Theme.onSage)
                         .frame(minWidth: 22, minHeight: 22).background(Theme.sage, in: Circle())
                 }
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, 14).frame(height: 44).background(Theme.ground.opacity(0.9), in: Capsule())
+                .foregroundStyle(chrome.ink)
+                .padding(.horizontal, 14).frame(height: 44).background(chrome.fill, in: Capsule())
             }
             .accessibilityLabel("Objects")
         }
@@ -563,8 +571,8 @@ struct DesignerView: View {
 
     @ViewBuilder private var hint: some View {
         if showObjects { EmptyView() }   // the panel covers the hint's spot
-        else if objectHint { HintPill("Drag to move · Twist to rotate") }
-        else if showHint { HintPill("Drag to orbit · Pinch to zoom") }
+        else if objectHint { HintPill("Drag to move · Twist to rotate", fill: chrome.fill, ink: chrome.ink) }
+        else if showHint { HintPill("Drag to orbit · Pinch to zoom", fill: chrome.fill, ink: chrome.ink) }
     }
 
     /// Actions for the selected row in the Objects panel. Move = drag, rotate = twist or the Rotate button.
@@ -1088,11 +1096,15 @@ final class WallCutaway {
 /// Small capsule hint over the 3D view ("Drag to orbit · Pinch to zoom").
 struct HintPill: View {
     let text: String
-    init(_ text: String) { self.text = text }
+    var fill = Theme.ground.opacity(0.85)
+    var ink = Theme.ink
+    init(_ text: String, fill: Color = Theme.ground.opacity(0.85), ink: Color = Theme.ink) {
+        self.text = text; self.fill = fill; self.ink = ink
+    }
     var body: some View {
-        Text(text).font(.forma(11)).foregroundStyle(Theme.ink)
+        Text(text).font(.forma(11)).foregroundStyle(ink)
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(Theme.ground.opacity(0.85), in: Capsule())
+            .background(fill, in: Capsule())
     }
 }
 
