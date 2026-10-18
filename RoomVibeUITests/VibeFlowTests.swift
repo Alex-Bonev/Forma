@@ -51,6 +51,12 @@ final class VibeFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["vibeOption"].firstMatch.waitForExistence(timeout: 5))
         saveShot("vibe-dropdown")
         XCTAssertFalse(app.buttons["Remove"].exists, "nothing to remove yet")
+        // A tap anywhere else closes the dropdown and does nothing else.
+        app.otherElements["designer-canvas"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        XCTAssertFalse(app.buttons["vibeOption"].firstMatch.waitForExistence(timeout: 1), "tap outside closes the menu")
+        XCTAssertFalse(app.buttons["Lock"].exists, "and doesn't select anything")
+        app.buttons["roomVibe"].tap()
+        XCTAssertTrue(app.buttons["vibeOption"].firstMatch.waitForExistence(timeout: 3))
         app.buttons["vibeOption"].firstMatch.tap()
         XCTAssertTrue(app.buttons["roomVibe"].label.hasPrefix("Vibe: "), "pill shows the applied vibe")
     }

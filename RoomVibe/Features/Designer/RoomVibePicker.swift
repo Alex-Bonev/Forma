@@ -14,8 +14,9 @@ struct RoomVibeControl<Leading: View>: View {
     var opensUp = false
     /// The pill stretches to the width it is offered (half of a two-button row).
     var fillsWidth = false
+    /// Owned by the screen, so a tap anywhere else on it can close the dropdown.
+    @Binding var showMenu: Bool
     @ViewBuilder var leading: Leading
-    @State private var showMenu = false
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
     private var applied: SavedVibe? { project?.vibeID.flatMap(library.vibe) }

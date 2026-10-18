@@ -84,6 +84,7 @@ struct DesignerView: View {
         let camera: RenderCamera
     }
     @State private var renderShot: RenderShot?
+    @State private var vibeMenuOpen = false   // the vibe pill's dropdown; any tap elsewhere closes it
     @State private var confirmRemove: UUID?   // placement awaiting "Remove from room"
     @State private var panelHeight: CGFloat = 0   // measured Objects panel / selection card height; the room recenters above it
 
@@ -174,6 +175,14 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .animation(.easeOut(duration: 0.25), value: inHarmony)
                 .animation(.spring(duration: 0.3, bounce: 0), value: showsReturn)
+                .overlay {
+                    // Open vibe dropdown: a tap anywhere else (room, top bar, view controls) just closes it.
+                    if vibeMenuOpen {
+                        Color.clear.contentShape(Rectangle()).ignoresSafeArea()
+                            .onTapGesture { vibeMenuOpen = false }
+                            .accessibilityHidden(true)
+                    }
+                }
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) {
                         // With the Objects panel open, Undo lives in the panel instead of under it.
@@ -192,7 +201,8 @@ struct DesignerView: View {
                             // Two equal halves, so the gap sits on the center line.
                             HStack(alignment: .bottom, spacing: 10) {
                                 RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                                ink: lightBackdrop ? Theme.ground : Theme.ink, opensUp: true, fillsWidth: true) { EmptyView() }
+                                                ink: lightBackdrop ? Theme.ground : Theme.ink, opensUp: true, fillsWidth: true,
+                                                showMenu: $vibeMenuOpen) { EmptyView() }
                                     .frame(maxWidth: .infinity)
                                 if balancing != nil || canFengShui {
                                     fengShuiButton.frame(maxWidth: .infinity).transition(.opacity)
