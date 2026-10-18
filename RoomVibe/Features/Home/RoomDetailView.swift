@@ -6,6 +6,7 @@ struct RoomDetailView: View {
     var added: UUID? = nil
     @Environment(ProjectStore.self) private var store
     @Environment(Router.self) private var router
+    @Environment(VibeLibrary.self) private var library
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var confirmRescan = false
@@ -40,6 +41,7 @@ struct RoomDetailView: View {
                     .overlay(alignment: .topLeading) {
                         if toastVisible, let n = addedName(project) { Toast(text: "\(n) added").padding(12).transition(.opacity.combined(with: .move(edge: .top))) }
                     }
+                    vibeRow(project)
                     contents(project, room: room)
                 }
                 .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 32)
@@ -66,6 +68,43 @@ struct RoomDetailView: View {
         } else {
             ContentUnavailableView("Room not found", systemImage: "cube.transparent")
         }
+    }
+
+    /// Paper "D · Room detail": the room's vibe. Change offers the same choices as the fullscreen dropdown.
+    private func vibeRow(_ project: Project) -> some View {
+        let applied = project.vibeID.flatMap(library.vibe)
+        return Menu {
+            ForEach(library.vibes) { vibe in
+                Button { setVibe(vibe.id) } label: {
+                    if vibe.id == applied?.id { Label(vibe.name, systemImage: "checkmark") } else { Text(vibe.name) }
+                }
+            }
+            Divider()
+            Button { router.path.append(.newVibe(applyTo: projectID)) } label: { Label("New vibe from photos", systemImage: "plus") }
+            if applied != nil { Button { setVibe(nil) } label: { Label("Remove vibe from room", systemImage: "xmark") } }
+        } label: {
+            HStack(spacing: 12) {
+                if let applied { VibeTile(vibe: applied, corner: 10).frame(width: 36, height: 36) }
+                else { Image(systemName: "swatchpalette").font(.system(size: 17)).foregroundStyle(Theme.sageDeep).frame(width: 36, height: 36) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Vibe").font(.forma(11)).foregroundStyle(Theme.muted)
+                    Text(applied?.name ?? "Add a vibe").font(.system(size: 17, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
+                }
+                Spacer(minLength: 0)
+                Text(applied == nil ? "Add" : "Change").font(.forma(12)).foregroundStyle(Theme.wood)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .accessibilityLabel(applied.map { "Vibe: \($0.name). Change" } ?? "Add a vibe")
+        .accessibilityIdentifier("roomVibeRow")
+    }
+
+    private func setVibe(_ id: UUID?) {
+        guard var p = project else { return }
+        p.vibeID = id
+        store.update(p)
     }
 
     private func contents(_ project: Project, room: RoomModel) -> some View {

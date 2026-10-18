@@ -18,6 +18,8 @@ struct DesignerView: View {
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var showObjects = false
+    @State private var objectsDetent = ObjectsDetent.medium   // bottom sheet height: peek / medium / large (Paper E2a, E2, E2b)
+    @GestureState private var objectsDrag: CGFloat = 0
     @State private var hiddenPlacements: Set<UUID> = []   // eye toggle in the Objects panel; not persisted
     @State private var scene = Entity()
     @State private var camera = OrbitCamera()
@@ -123,7 +125,7 @@ struct DesignerView: View {
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
         } else if let project, let room = store.room(for: project) {
             realityView(project: project, room: room)
-                .padding(.trailing, showObjects ? 268 : 0)   // room slides left of the Objects panel (Paper E2/E3)
+                .padding(.bottom, showObjects ? min(objectsHeight(), ObjectsDetent.medium.height(in: viewSize.height)) : 0)   // room recenters above the Objects sheet (Paper E2/E3)
                 .toolbar(.hidden, for: .navigationBar)
                 .onAppear {
                     if opensCatalog { showCatalog = true }
@@ -150,14 +152,15 @@ struct DesignerView: View {
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
                 .overlay(alignment: .topLeading) {
                     // Under the back button (Paper E): the room's vibe. Make it real is the wide bar at the bottom.
-                    RoomVibeControl(projectID: projectID, compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                    RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
                                     ink: lightBackdrop ? Theme.ground : Theme.ink) { EmptyView() }
                     .padding(.leading, 16).padding(.top, 8 + 44 + 12)
                 }
-                .overlay(alignment: .trailing) {
-                    if showObjects { objectsPanel(project).transition(.move(edge: .trailing).combined(with: .opacity)) }
+                .overlay(alignment: .bottom) {
+                    if showObjects { objectsPanel(project).transition(.move(edge: .bottom).combined(with: .opacity)) }
                 }
                 .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
+                .animation(.spring(duration: 0.3, bounce: 0), value: objectsDetent)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) {
@@ -176,7 +179,7 @@ struct DesignerView: View {
                     .padding(.bottom, 24)
                 }
                 .overlay(alignment: .bottomLeading) {
-                    lockMenu().padding(.leading, 16).padding(.bottom, 36)
+                    lockMenu().padding(.leading, 16).padding(.bottom, showObjects ? objectsHeight(drag: objectsDrag) + 12 : 36)   // rides the Objects sheet's top edge
                         .animation(.spring(duration: 0.25, bounce: 0), value: lockMenuFor)   // scoped: on the whole view it froze the Designer
                 }
                 .sensoryFeedback(.selection, trigger: selected)
@@ -501,6 +504,12 @@ struct DesignerView: View {
     private func objectsPanel(_ project: Project) -> some View {
         let rows = objectRows(project)
         return VStack(alignment: .leading, spacing: 12) {
+            // Drag the grabber to resize: it snaps to the nearest of peek, medium and large.
+            Capsule().fill(Theme.hairline).frame(width: 36, height: 5)
+                .frame(maxWidth: .infinity).padding(.top, 10).padding(.bottom, 4)
+                .contentShape(Rectangle())
+                .gesture(resizeGesture)
+                .accessibilityLabel("Resize objects")
             HStack {
                 Text("Objects").font(.forma(18, bold: true))
                 Text("\(rows.count)").font(.forma(13)).foregroundStyle(Theme.muted)
@@ -551,12 +560,41 @@ struct DesignerView: View {
             Button { showCatalog = true } label: { Label("Add object", systemImage: "plus") }
                 .buttonStyle(PillButtonStyle())
         }
-        .padding(16)
-        .frame(width: 256)
-        .frame(maxHeight: .infinity)
-        .background(Theme.ground, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .padding(.trailing, 12).padding(.top, 64).padding(.bottom, 12)
+        .padding(.horizontal, 16).padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
+        .frame(height: objectsHeight(drag: objectsDrag), alignment: .top)
+        .background {
+            UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
+                .fill(Theme.ground).ignoresSafeArea(edges: .bottom)
+        }
         .shadow(color: .black.opacity(0.08), radius: 20)
+    }
+
+    private enum ObjectsDetent: CaseIterable {
+        case peek, medium, large
+        func height(in total: CGFloat) -> CGFloat {
+            switch self {
+            case .peek: 180
+            case .medium: 440
+            case .large: max(440, total - 120)
+            }
+        }
+    }
+
+    private func objectsHeight(drag: CGFloat = 0) -> CGFloat {
+        let large = ObjectsDetent.large.height(in: viewSize.height)
+        return min(max(objectsDetent.height(in: viewSize.height) - drag, ObjectsDetent.peek.height(in: viewSize.height) - 60), large)
+    }
+
+    private var resizeGesture: some Gesture {
+        DragGesture()
+            .updating($objectsDrag) { v, state, _ in state = v.translation.height }
+            .onEnded { v in
+                let end = objectsHeight(drag: v.predictedEndTranslation.height)
+                objectsDetent = ObjectsDetent.allCases.min {
+                    abs($0.height(in: viewSize.height) - end) < abs($1.height(in: viewSize.height) - end)
+                } ?? .medium
+            }
     }
 
     private var selectedRow: ObjectRow? { selected.map { .placement($0) } ?? selectedRoomObject.map { .room($0) } }
@@ -819,7 +857,7 @@ struct DesignerView: View {
     }
 
     /// Tiny quick menu, shown only after a tap on a placed object and hidden by any other touch. Bottom-left keeps
-    /// it clear of the room and of the Objects panel, which opens on the right whenever something is selected.
+    /// it clear of the room and of the Objects panel, which opens at the bottom whenever something is selected.
     @ViewBuilder private func lockMenu() -> some View {
         if let id = lockMenuFor, id == selected, project?.placements.contains(where: { $0.id == id }) == true {
             let locked = isLocked(id)
