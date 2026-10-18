@@ -15,7 +15,7 @@ Renders were more elaborate than the real room. Causes:
 
 ## Behavior
 
-- **App** (`Features/Render/RenderInputs.swift`):
+- **App** (`Features/Render/RenderInputs.swift`; photos were removed in round 2, see below):
   - `scene(project:room:objects:)` builds the input for `LayoutDescription` and `StructureMap`:
     - Drops `hiddenRoomObjects` and `removedRoomObjects`.
     - Adds every placement as a sized object, with `Placement.scale` baked in.
@@ -38,22 +38,18 @@ Renders were more elaborate than the real room. Causes:
   Faithful rules apply only to a plain Make it real.
 - Shopped products (`Placement.product`, from Vibe) are named by their listing title in the layout.
 
-## Angle and accuracy (round 2)
+## Round 2: accuracy, and the angle is the view
 
-- **Angle first.** Make it real opens an angle bar on the fullscreen Designer:
-  - Overview / Top / Eye level, a quarter-turn button, free orbit; then Generate, or open the Last render.
-  - The Room-detail card's Make it real pushes the fullscreen Designer straight into this bar.
-- **Eye level** (`OrbitCamera.show(.eye, side:floor:clear:)`):
-  - Samples the real floor outline on a 25 cm grid and aims at its middle.
-  - Stands as far toward the requested corner as a spot allows: on the floor, 40 cm off walls, 30 cm clear of furniture, line of sight on the floor, and nothing within 1.2 m in front.
-  - 1.5 m high, 80° vertical lens.
-- **Scan photos are opt-in** ("Real-photo look", off by default). With photos, a real dorm render copied a second loft bed and shelving that the 3D model doesn't have. Without them, the furniture, L-shape and size were exact.
+- **The angle is whatever the fullscreen Designer shows.** A wide Make it real bar spans its bottom (hidden while the Objects panel is open) and renders that exact view. The Room-detail card has no Make it real.
+  - An angle-preset bar was tried and dropped at Alex's request: frame it by dragging, then tap.
+- **Scan photos are no longer sent.** With them, a real dorm render copied a second loft bed and shelving that the 3D model doesn't have. Without them, the furniture, L-shape and size were exact. `/render` still accepts `photos`.
 - **Layout text:**
   - "Room exactly W x D m … keep this size and these proportions".
   - A note when the floor isn't a rectangle.
   - "Furniture, exactly N pieces and nothing else".
-- **Prompt:** keep image 1's framing, size and proportions; photos only for looks, never objects.
-- **Snapshot:** picks the Metal view closest to the Designer's measured size (on a tie, the innermost). Before this, fullscreen fell back to the window and sent the app's buttons to the model.
+- **Prompt:** keep image 1's framing, size and proportions.
+- **Snapshot:** picks the Metal view closest to the Designer's measured size (on a tie, the innermost). Before, fullscreen fell back to the window and sent the app's buttons to the model.
+- **Latest render:** one per room (`render-latest.jpg`), kept as the offline fallback only.
 
 ## Checks
 

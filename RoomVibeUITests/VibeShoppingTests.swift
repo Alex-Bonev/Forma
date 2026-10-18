@@ -85,8 +85,8 @@ final class VibeShoppingTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
-    /// Make it real keeps the room's latest render: reopening shows it at once. Two tabs: Compare and Image.
-    func testMakeItRealKeepsLatestRender() {
+    /// Make it real result has two tabs: Compare (slider) and Image (the render alone).
+    func testMakeItRealTabs() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
         app.launch()
@@ -101,25 +101,16 @@ final class VibeShoppingTests: XCTestCase {
         XCTAssertTrue(app.images["Render"].waitForExistence(timeout: 2))
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("image"))
         XCTAssertFalse(app.staticTexts["Drag the divider to compare"].exists, "Image tab is the render alone")
-        app.buttons["Close"].firstMatch.tap()
-        let lastButton = app.buttons["Last render"]   // the angle bar stays up after closing
-        XCTAssertTrue(lastButton.waitForExistence(timeout: 5))
-        sleep(1)
-        lastButton.tap()
-        let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
-        XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
-        add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("reopened"))
     }
 }
 
-/// Make it real → angle bar → Generate. A tap during launch can be swallowed, so retry until the bar shows.
+/// Make it real (wide bottom bar) opens the render sheet. A tap during launch can be swallowed, so retry.
 func generate(_ app: XCUIApplication) {
-    let makeItReal = app.buttons["Make it real"].firstMatch, go = app.buttons["Generate"]
-    for _ in 0..<3 where !go.exists {
+    let makeItReal = app.buttons["Make it real"].firstMatch, sheet = app.navigationBars["Make it real"]
+    for _ in 0..<3 where !sheet.exists {
         if makeItReal.waitForExistence(timeout: 10) { makeItReal.tap() }
-        _ = go.waitForExistence(timeout: 4)
+        _ = sheet.waitForExistence(timeout: 4)
     }
-    go.tap()
 }
 
 private extension XCTAttachment {
