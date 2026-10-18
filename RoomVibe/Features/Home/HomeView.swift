@@ -2,7 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(ProjectStore.self) private var store
-    @State private var path: [UUID] = []
+    @State private var router = Router()
     @State private var scanningRoom = false
     @State private var scanningObject = false
     @State private var error: String?
@@ -14,7 +14,7 @@ struct HomeView: View {
     private enum Rename { case room(Project), object(ScannedObject) }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $router.path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header
@@ -32,7 +32,14 @@ struct HomeView: View {
             .scrollIndicators(.hidden)
             .background(Theme.ground.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: UUID.self) { DesignerView(projectID: $0) }
+            .navigationDestination(for: Route.self) { route in
+                Group { switch route {
+                case .room(let id, let added): RoomDetailView(projectID: id, added: added)
+                case .object(let id): ObjectDetailView(objectID: id)
+                case .designer(let id, let opensCatalog): DesignerView(projectID: id, opensCatalog: opensCatalog)
+                } }
+                .environment(router)
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack(spacing: 12) {
                     Button { scanningRoom = true } label: {
@@ -50,7 +57,7 @@ struct HomeView: View {
                 .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
             }
             .fullScreenCover(isPresented: $scanningRoom) {
-                RoomScanView { project in path.append(project.id) }
+                RoomScanView { project in router.path.append(.room(project.id)) }
             }
             .fullScreenCover(isPresented: $scanningObject) {
                 ObjectScanView()
@@ -59,7 +66,7 @@ struct HomeView: View {
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
                 guard ProcessInfo.processInfo.arguments.contains("-demo") else { return }
                 if store.projects.isEmpty { try? store.loadDemoData() }
-                if let first = store.projects.first { path = [first.id] }
+                if let first = store.projects.first { router.path = [.designer(first.id)] }
             }
             .alert("Rename", isPresented: .constant(renaming != nil)) {
                 TextField("Name", text: $newName)
@@ -92,13 +99,13 @@ struct HomeView: View {
         let rooms = store.projects.filter { matches($0.name, roomQuery) }
         return VStack(alignment: .leading, spacing: 4) {
             SectionHeader(title: "Rooms", count: store.projects.count).padding(.bottom, 4)
-            if store.projects.count > 5 { SearchField(text: $roomQuery, prompt: "Search \(store.projects.count) rooms") }
+            if store.projects.count > 5 { SearchField(text: $roomQuery, prompt: "Search \(store.projects.count) rooms").padding(.bottom, 8) }
             if store.projects.isEmpty {
                 Text("No rooms yet. Scan one, or load the demo room.")
                     .font(.forma(12)).foregroundStyle(Theme.muted).padding(.vertical, 12)
             }
             ForEach(rooms) { project in
-                NavigationLink(value: project.id) { RoomRow(project: project) }
+                NavigationLink(value: Route.room(project.id)) { RoomRow(project: project) }
                     .buttonStyle(.plain)
                     .contextMenu {
                         Button("Rename", systemImage: "pencil") { startRename(.room(project), project.name) }
@@ -119,8 +126,11 @@ struct HomeView: View {
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: 3), spacing: 16) {
                 ForEach(Array(objects.enumerated()), id: \.element.id) { i, object in
-                    ObjectTile(object: object, tint: Theme.tiles[i % Theme.tiles.count])
-                        .contentShape(Rectangle())
+                    NavigationLink(value: Route.object(object.id)) {
+                        ObjectTile(object: object, tint: Theme.tiles[i % Theme.tiles.count])
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                         .contextMenu {
                             Button("Rename", systemImage: "pencil") { startRename(.object(object), object.name) }
                             Button("Delete", systemImage: "trash", role: .destructive) { store.delete(object) }
@@ -170,26 +180,8 @@ private struct RoomRow: View {
         .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
         .contentShape(Rectangle())
         .task(id: project) {
-            guard let room = store.room(for: project) else { return }
-            let (lo, hi) = RoomBuilder.bounds(room)
-            let n = project.placements.count + room.objects.count - (project.hiddenRoomObjects?.count ?? 0)
-            summary = String(format: "%.1f × %.1f m · %d item%@", hi.x - lo.x, hi.z - lo.z, n, n == 1 ? "" : "s")
+            summary = roomSummary(project, store: store) ?? ""
         }
-    }
-}
-
-/// Stylised room thumbnail from the design: back wall, floor, one piece of furniture.
-private struct RoomGlyph: View {
-    var body: some View {
-        Canvas { ctx, size in
-            let u = size.width / 64
-            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.hairline))
-            ctx.fill(Path(CGRect(x: 14 * u, y: 14 * u, width: 36 * u, height: 28 * u)), with: .color(Color(hex: 0xBDB1A1)))
-            ctx.fill(Path(CGRect(x: 0, y: 42 * u, width: size.width, height: 22 * u)), with: .color(Color(hex: 0xD8CCBB)))
-            ctx.fill(Path(roundedRect: CGRect(x: 18 * u, y: 34 * u, width: 28 * u, height: 12 * u), cornerRadius: 2 * u),
-                     with: .color(Theme.wood))
-        }
-        .accessibilityHidden(true)
     }
 }
 
@@ -211,24 +203,5 @@ private struct ObjectTile: View {
     private var dims: String {
         let b = object.boundingBox * 100
         return String(format: "%.0f × %.0f × %.0f cm", b.x, b.z, b.y)
-    }
-}
-
-private struct SearchField: View {
-    @Binding var text: String
-    let prompt: String
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.muted)
-            TextField("", text: $text, prompt: Text(prompt).foregroundStyle(Theme.muted))
-                .font(.forma(14)).foregroundStyle(Theme.ink).autocorrectionDisabled()
-            if !text.isEmpty {
-                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.ink) }
-                    .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 16).frame(height: 44)
-        .background(Theme.hairline, in: Capsule())
-        .padding(.bottom, 8)
     }
 }

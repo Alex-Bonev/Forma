@@ -7,8 +7,18 @@ import RealityKit
 /// - two fingers: pan · pinch: zoom · twist: rotate the selected object (or the view if none)
 /// - tap: select / deselect
 struct DesignerView: View {
+    /// `.card` is the small orbit-and-zoom preview on Room detail (no editing); `.full` is the editor.
+    enum Style { case full, card }
     let projectID: UUID
+    var style: Style = .full
+    /// Card only: the expand button.
+    var onExpand: (() -> Void)? = nil
+    /// Full only: open the Add Item catalog as soon as the editor appears (Room detail's "+ Add object").
+    var opensCatalog = false
     @Environment(ProjectStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var showObjects = false
+    @State private var hiddenPlacements: Set<UUID> = []   // eye toggle in the Objects panel; not persisted
     @State private var scene = Entity()
     @State private var camera = OrbitCamera()
     @State private var walls = WallCutaway()
@@ -45,10 +55,24 @@ struct DesignerView: View {
     private var project: Project? { store.projects.first { $0.id == projectID } }
 
     var body: some View {
-        if let project, let room = store.room(for: project) {
+        if let project, let room = store.room(for: project), style == .card {
             realityView(project: project, room: room)
-                .navigationTitle(project.name)
-                .navigationBarTitleDisplayMode(.inline)
+                .overlay(alignment: .topTrailing) {
+                    Button { onExpand?() } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+                            .frame(width: 44, height: 44)
+                            .background(Theme.ground.opacity(0.85), in: Circle())
+                    }
+                    .accessibilityLabel("Fullscreen")
+                    .padding(12)
+                }
+                .overlay(alignment: .bottom) { HintPill("Drag to orbit · Pinch to zoom").padding(.bottom, 12) }
+                .onChange(of: realisticFurniture) { rebuildRoom(room) }
+        } else if let project, let room = store.room(for: project) {
+            realityView(project: project, room: room)
+                .toolbar(.hidden, for: .navigationBar)
+                .onAppear { if opensCatalog { showCatalog = true } }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
@@ -65,6 +89,11 @@ struct DesignerView: View {
                 .fullScreenCover(item: $scanTarget) { target in
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
                 }
+                .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
+                .overlay(alignment: .trailing) {
+                    if showObjects { objectsPanel(project).transition(.move(edge: .trailing).combined(with: .opacity)) }
+                }
+                .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
                 .safeAreaInset(edge: .bottom) { bottomPanel(project) }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
@@ -94,20 +123,15 @@ struct DesignerView: View {
             // Show the room right away; large scans stream in after.
             Task { for p in project.placements { await spawn(p) } }
         }
-        .ignoresSafeArea(edges: .bottom)
+        .ignoresSafeArea(edges: style == .card ? [] : .bottom)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { viewSize = $0 }
         .overlay {
-            TouchSurface(handlers: touchHandlers, accessibilityValue: selectionDescription(project))
-                .ignoresSafeArea(edges: .bottom)
+            TouchSurface(handlers: style == .card ? cardHandlers : touchHandlers, accessibilityValue: selectionDescription(project))
+                .ignoresSafeArea(edges: style == .card ? [] : .bottom)
         }
-        .overlay(alignment: .topLeading) {
-            Text(String(format: "%.1f × %.1f m", roomSize.x, roomSize.y))
-                .font(.footnote.weight(.semibold)).monospacedDigit()
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(.regularMaterial, in: Capsule())
-                .padding()
+        .overlay(alignment: .topTrailing) {
+            if style == .full { viewControls.padding(.horizontal, 16).padding(.top, 64) }
         }
-        .overlay(alignment: .topTrailing) { viewControls.padding() }
         .animation(.easeOut(duration: 0.3), value: showHint)
         .animation(.easeOut(duration: 0.3), value: objectHint)
         .sensoryFeedback(.impact(weight: .light), trigger: lifts)
@@ -127,7 +151,8 @@ struct DesignerView: View {
             controlButton(lowWalls ? "square.split.bottomrightquarter.fill" : "square.split.bottomrightquarter",
                           label: lowWalls ? "Full walls" : "Cutaway walls") { lowWalls.toggle() }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .foregroundStyle(Theme.ink)
+        .background(Theme.ground.opacity(0.9), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     /// Wall and floor finish presets, saved per room.
@@ -289,6 +314,173 @@ struct DesignerView: View {
         return best?.i
     }
 
+    // MARK: Fullscreen chrome (Paper E / E2 / E3)
+
+    /// Orbit, pan and zoom only: the card previews the room, it doesn't edit it.
+    private var cardHandlers: TouchSurface.Handlers {
+        var h = TouchSurface.Handlers()
+        h.touchDown = { camera.grab() }
+        h.touchUp = { camera.release() }
+        h.oneFinger = { phase, _, delta, velocity in
+            switch phase {
+            case .began: break
+            case .changed: camera.orbit(by: delta)
+            case .ended: camera.endOrbit(velocity: velocity)
+            }
+        }
+        h.twoFingerPan = { delta in camera.pan(by: delta, viewHeight: viewSize.height) }
+        h.pinch = { phase, scale in
+            switch phase {
+            case .began: camera.beginZoom()
+            case .changed: camera.zoom(scale: scale)
+            case .ended: break
+            }
+        }
+        return h
+    }
+
+    private func topChrome(_ project: Project) -> some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .frame(width: 44, height: 44).background(Theme.ground.opacity(0.9), in: Circle())
+            }
+            .accessibilityLabel("Close fullscreen")
+            Text(project.name).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                .padding(.horizontal, 14).frame(height: 32).background(Theme.ground.opacity(0.9), in: Capsule())
+            Spacer(minLength: 0)
+            Button { showObjects.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "list.bullet")
+                    Text("Objects").font(.forma(13, bold: true))
+                    Text("\(objectRows(project).count)").font(.forma(11, bold: true)).foregroundStyle(Theme.onSage)
+                        .frame(minWidth: 22, minHeight: 22).background(Theme.sage, in: Circle())
+                }
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 14).frame(height: 44).background(Theme.ground.opacity(0.9), in: Capsule())
+            }
+            .accessibilityLabel("Objects")
+        }
+    }
+
+    private enum ObjectRow: Identifiable, Hashable {
+        case placement(UUID), room(Int)
+        var id: String { switch self { case .placement(let u): u.uuidString; case .room(let i): "room-\(i)" } }
+    }
+
+    private func objectRows(_ project: Project) -> [ObjectRow] {
+        let room = store.room(for: project)
+        let scanned = (room?.objects.indices).map { Array($0) } ?? []
+        return project.placements.map { .placement($0.id) } + scanned.map { .room($0) }
+    }
+
+    private func rowInfo(_ row: ObjectRow, project: Project) -> (name: String, dims: String, symbol: String, hidden: Bool, selected: Bool) {
+        func cm(_ v: SIMD3<Float>) -> String { String(format: "%.0f × %.0f × %.0f cm", v.x * 100, v.z * 100, v.y * 100) }
+        switch row {
+        case .placement(let id):
+            guard let p = project.placements.first(where: { $0.id == id }) else { return ("Item", "", "cube", false, false) }
+            let item = CatalogItem.item(p.catalogItem)
+            let object = store.objects.first { $0.id == p.objectID }
+            let base = item?.size ?? object?.boundingBox ?? .zero
+            return (item?.name ?? object?.name ?? "Item", cm(base * (p.scale ?? .one)), item?.symbol ?? "chair.lounge",
+                    hiddenPlacements.contains(id), selected == id)
+        case .room(let i):
+            let box = store.room(for: project)?.objects[i]
+            let label = box?.label == RoomModel.markedLabel ? "Marked item" : (box?.label.capitalized ?? "Item")
+            return (label, box.map { cm($0.dimensions) } ?? "", "cube.transparent",
+                    project.hiddenRoomObjects?.contains(i) ?? false, selectedRoomObject == i)
+        }
+    }
+
+    private func objectsPanel(_ project: Project) -> some View {
+        let rows = objectRows(project)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Objects").font(.forma(18, bold: true))
+                Text("\(rows.count)").font(.forma(13)).foregroundStyle(Theme.muted)
+                Spacer()
+                Button { showObjects = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 14, weight: .semibold))
+                        .frame(width: 40, height: 40).background(Theme.hairline, in: Circle())
+                }
+                .accessibilityLabel("Close objects")
+            }
+            .foregroundStyle(Theme.ink)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        let info = rowInfo(row, project: project)
+                        VStack(spacing: 8) {
+                            HStack(spacing: 12) {
+                                Image(systemName: info.symbol).font(.system(size: 16)).foregroundStyle(Theme.wood)
+                                    .frame(width: 36, height: 36).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 10))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                                    Text(info.dims).font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.7)
+                                }
+                                Spacer(minLength: 4)
+                                Button { toggleVisibility(row) } label: {
+                                    Image(systemName: info.hidden ? "eye.slash" : "eye").foregroundStyle(Theme.ink)
+                                        .frame(width: 36, height: 36)
+                                }
+                                .accessibilityLabel(info.hidden ? "Show \(info.name)" : "Hide \(info.name)")
+                            }
+                            if info.selected, case .placement(let id) = row {
+                                HStack(spacing: 8) {
+                                    PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
+                                    PanelAction("Remove", icon: "trash") { remove(id) }
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .background(info.selected ? Theme.tiles[0] : .clear, in: RoundedRectangle(cornerRadius: 18))
+                        .contentShape(Rectangle())
+                        .onTapGesture { select(row) }
+                        .overlay(alignment: .top) { if !info.selected { Theme.hairline.frame(height: 1) } }
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            Button { showCatalog = true } label: { Label("Add object", systemImage: "plus") }
+                .buttonStyle(PillButtonStyle())
+        }
+        .padding(16)
+        .frame(width: 256)
+        .frame(maxHeight: .infinity)
+        .background(Theme.ground, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .padding(.trailing, 12).padding(.top, 64).padding(.bottom, 12)
+        .shadow(color: .black.opacity(0.08), radius: 20)
+    }
+
+    private func select(_ row: ObjectRow) {
+        switch row {
+        case .placement(let id): selected = id
+        case .room(let i): selectedRoomObject = i
+        }
+    }
+
+    private func toggleVisibility(_ row: ObjectRow) {
+        switch row {
+        case .placement(let id):
+            if hiddenPlacements.remove(id) == nil { hiddenPlacements.insert(id) }
+            placed[id]?.isEnabled = !hiddenPlacements.contains(id)
+        case .room(let i):
+            guard var project else { return }
+            var hidden = Set(project.hiddenRoomObjects ?? [])
+            if hidden.remove(i) == nil { hidden.insert(i) }
+            project.hiddenRoomObjects = hidden.isEmpty ? nil : hidden.sorted()
+            store.update(project)
+            roomObjectEntity(i)?.isEnabled = !hidden.contains(i)
+        }
+    }
+
+    private func rotate(_ id: UUID) {
+        guard let e = placed[id] else { return }
+        e.orientation = simd_quatf(angle: .pi / 8, axis: [0, 1, 0]) * e.orientation
+        commit()
+    }
+
     // MARK: Panel
 
     @ViewBuilder private func bottomPanel(_ project: Project) -> some View {
@@ -296,8 +488,8 @@ struct DesignerView: View {
             if showHint || objectHint {
                 Text(objectHint ? "Drag to move · Twist with two fingers to rotate"
                                 : "Drag to look around · Two fingers to pan · Pinch to zoom")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.forma(11))
+                    .foregroundStyle(Theme.muted)
                     .transition(.opacity)
             }
             if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
@@ -310,8 +502,9 @@ struct DesignerView: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    Button { showCatalog = true } label: { Label("Add Item", systemImage: "plus.square.on.square") }
-                        .buttonStyle(.borderedProminent)
+                    Button { showCatalog = true } label: { Label("Add Item", systemImage: "plus") }
+                        .font(.forma(13)).foregroundStyle(Theme.onSage)
+                        .padding(.horizontal, 16).frame(height: 40).background(Theme.sage, in: Capsule())
                     ForEach(store.objects) { object in
                         Button { Task { await add(object) } } label: {
                             if adding == object.name {
@@ -320,7 +513,9 @@ struct DesignerView: View {
                                 Label(object.name, systemImage: "plus.circle.fill")
                             }
                         }
-                        .buttonStyle(.bordered)
+                        .font(.forma(13)).foregroundStyle(Theme.ink)
+                        .padding(.horizontal, 14).frame(height: 40)
+                        .overlay(Capsule().strokeBorder(Theme.ink.opacity(0.8), lineWidth: 1))
                         .disabled(adding != nil)
                     }
                 }
@@ -329,7 +524,8 @@ struct DesignerView: View {
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
-        .background(.regularMaterial)
+        .background(Theme.ground.opacity(0.85)).background(.ultraThinMaterial)
+        .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
         .animation(.spring(duration: 0.3, bounce: 0), value: selected)
         .animation(.spring(duration: 0.3, bounce: 0), value: selectedRoomObject)
     }
@@ -387,8 +583,8 @@ struct DesignerView: View {
                                               @ViewBuilder actions: () -> Actions) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Text(title).font(.forma(15, bold: true)).foregroundStyle(Theme.ink)
+                Text(subtitle).font(.forma(11)).foregroundStyle(Theme.muted)
             }
             .lineLimit(1)
             HStack(spacing: 8) { actions() }
@@ -408,19 +604,20 @@ struct DesignerView: View {
                             Task { await add(catalog: item) }
                         } label: {
                             VStack(spacing: 8) {
-                                Image(systemName: item.symbol).font(.title2).frame(height: 30)
-                                Text(item.name).font(.footnote.weight(.medium)).lineLimit(1)
+                                Image(systemName: item.symbol).font(.title2).frame(height: 30).foregroundStyle(Theme.wood)
+                                Text(item.name).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
                                 Text(String(format: "%.1f × %.1f m", item.size.x, item.size.z))
-                                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                                    .font(.forma(10)).foregroundStyle(Theme.muted)
                             }
                             .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(Theme.hairline, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding()
             }
+            .background(Theme.ground)
             .navigationTitle("Add Item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showCatalog = false } } }
@@ -650,7 +847,7 @@ struct DesignerView: View {
         guard let e else { return }
         let b = e.visualBounds(relativeTo: e)
         let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
-        var m = UnlitMaterial(color: .systemBlue)
+        var m = UnlitMaterial(color: UIColor(Theme.sage))
         m.blending = .transparent(opacity: 0.4)
         let disc = ModelEntity(mesh: .generateCylinder(height: 0.004, radius: radius), materials: [m])
         disc.name = "selection"
@@ -736,13 +933,12 @@ struct ActionLabel: View {
     var body: some View {
         VStack(spacing: 4) {
             Image(systemName: icon).font(.system(size: 18, weight: .medium))
-            Text(title).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+            Text(title).font(.forma(11)).lineLimit(1).minimumScaleFactor(0.8)
         }
-        .foregroundStyle(prominent ? AnyShapeStyle(.white) : role == .destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
+        .foregroundStyle(prominent ? Theme.onSage : role == .destructive ? Color(hex: 0x9A4B3C) : Theme.ink)
         .frame(maxWidth: .infinity, minHeight: 54)
-        .background(prominent ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .background(prominent ? Theme.sage : Theme.hairline, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -761,5 +957,30 @@ struct ActionButton: View {
         Button(role: role, action: action) { ActionLabel(title: title, icon: icon, prominent: prominent, role: role) }
             .buttonStyle(.plain)
             .accessibilityLabel(title)
+    }
+}
+
+/// Small capsule hint over the 3D view ("Drag to orbit · Pinch to zoom").
+struct HintPill: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.forma(11)).foregroundStyle(Theme.ink)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(Theme.ground.opacity(0.85), in: Capsule())
+    }
+}
+
+/// Outlined pill used inside the Objects panel's selected row.
+private struct PanelAction: View {
+    let title: String, icon: String, action: () -> Void
+    init(_ title: String, icon: String, action: @escaping () -> Void) { self.title = title; self.icon = icon; self.action = action }
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon).font(.forma(12)).foregroundStyle(Theme.ink)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1))
+        }
+        .accessibilityLabel(title)
     }
 }
