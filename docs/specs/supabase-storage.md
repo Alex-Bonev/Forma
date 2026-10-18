@@ -1,6 +1,6 @@
 # Spec: Supabase as the app's data storage
 
-Status: **in progress**. Owner: C (David). Branch `c/supabase`, off `main` at PR #21, then `main` at PR #23 (My Vibes) merged in.
+Status: **built; end-to-end check pending** (needs manual step 2). Owner: C (David). Branch `c/supabase`, off `main` at PR #21, then `main` at PR #23 (My Vibes) merged in.
 
 ## Goal
 
@@ -27,9 +27,10 @@ AI job state (providers hold it; the backend stays stateless).
 | Vibe inspiration photos (1–15) | `VibeLibrary.add` | `Vibes/<id>/<n>.jpg` | bucket, `<user>/vibes/<id>/` (task 6) |
 | Room's applied vibe `Project.vibeID` | `RoomVibePicker`, `CreateVibeView`, `VibeDetailView` (via `store.update`) | `library.json` | inside `projects.doc` |
 | Object Capture inputs | `ObjectScanView` | `Images/`, `Checkpoint/` (deleted after build) | not synced |
-| Per-device settings: intro seen, dorm seeded, realistic furniture, use photos in renders | `@AppStorage` | UserDefaults | not synced |
+| Per-device settings: intro seen, realistic furniture, use photos in renders | `@AppStorage` | UserDefaults | not synced |
+| Dorm seeded flag | `HomeView` | UserDefaults key `seededUCLADorm` | not synced |
 | Auth session (refresh token) | `CloudClient` | Keychain | Supabase Auth |
-| Backend | — | stateless | verifies the Supabase user (task 5) |
+| Backend | — | stateless | verifies the Supabase user (task 4) |
 
 ## Already built (ported from `c/supabase-storage`)
 
@@ -55,7 +56,7 @@ AI job state (providers hold it; the backend stays stateless).
 
 Each task: an agent implements it, a second agent reviews the diff, findings are fixed, then one commit on `c/supabase`.
 
-1. **Three-way file merge.** Keep the last synced manifest per item (`Application Support/sync-state.json`, written
+1. **Three-way file merge.** *Done.* Keep the last synced manifest per item (`Application Support/sync-state.json`, written
    only by CloudSync). Per file, with base B, local L and remote R:
    - L and R agree: nothing.
    - In B, missing in L, R unchanged from B: deleted here, so remove it from storage.
@@ -63,34 +64,41 @@ Each task: an agent implements it, a second agent reviews the diff, findings are
    - Otherwise: the newer copy wins, as today.
    No base (first sync of an item, or an old install) keeps today's behaviour. The base updates after each successful
    item sync and is dropped when the item is deleted.
-2. **Notify sync of every out-of-store file write.** `RenderView` calls `store.filesChanged()` after writing or
+2. **Notify sync of every out-of-store file write.** *Done.* `RenderView` calls `store.filesChanged()` after writing or
    pruning the cache. Audit every other writer in the inventory above; writers inside `addRoom`/`addObject` need nothing.
-3. **Safe launch order.**
+3. **Safe launch order.** *Done.*
    - No CloudSync, and no pending deletes, when the app runs with `-demo` or `-fresh` (UI tests).
    - The first-launch dorm seeding in `HomeView` waits for the first sync pass, then seeds only if no room with that
      name exists (from the cloud or local).
-4. **Backend accepts the Supabase user.** With `SUPABASE_URL` set on the backend, a request passes with
+4. **Backend accepts the Supabase user.** *Done.* With `SUPABASE_URL` set on the backend, a request passes with
    `Authorization: Bearer <access token>` verified against the project's JWKS
    (`/auth/v1/.well-known/jwks.json`, cached) or with the existing `X-App-Secret`. The app sends its access token
    when it has a cloud session. MOCK=1 stays open, as today. Tests cover valid, expired, wrong-audience and
    wrong-issuer tokens.
-6. **Sync saved vibes.** Migration `saved_vibes` (same shape, RLS, tombstones and trigger as `scanned_objects`);
+6. **Sync saved vibes.** *Done.* Migration `saved_vibes` (same shape, RLS, tombstones and trigger as `scanned_objects`);
    `VibeLibrary` gets ms-rounded stamps, pending deletes, `applyRemote` / `removeRemote` and `onChange`, like
    `ProjectStore`; CloudSync syncs vibes before rooms (a pulled room's `vibeID` then resolves). `-seedVibe` joins the
    task 3 guard. A vibe deleted elsewhere leaves `vibeID` on rooms here; lookups already treat it as no vibe.
-5. **Docs and end-to-end check.** README storage map (this inventory), STATUS entry, and a Simulator run against the
-   real project: a room and an object reach the tables and the bucket, an edit and a delete round-trip.
+5. **Docs and end-to-end check.** *Docs done; end-to-end check pending manual step 2.* README storage map (this
+   inventory), STATUS entry, and a Simulator run against the real project: a room and an object reach the tables and
+   the bucket, an edit and a delete round-trip.
 
 ## Manual steps (not doable by an agent)
 
-1. Supabase dashboard > Authentication > Sign In / Providers: turn on **Allow anonymous sign-ins**. Until then
+Same list, same numbers, in README "Cloud library" and `docs/STATUS.md`.
+
+1. Migrations: both already applied to project `hoihybbcwljxkambccqd` (`20261018062400_library`,
+   `20261018080825_saved_vibes`). Only a new project needs them (`supabase db push` or the SQL editor).
+2. Supabase dashboard > Authentication > Sign In / Providers: turn on **Allow anonymous sign-ins**. Until then
    nothing can sign in and task 5's end-to-end check is blocked.
-2. Recommended with anonymous sign-ins on: Authentication > Attack Protection, turn on CAPTCHA or keep the
+3. Recommended with anonymous sign-ins on: Authentication > Attack Protection, turn on CAPTCHA or keep the
    sign-up rate limit low, since anyone with the app can create users.
-3. `backend/.env`: `SUPABASE_URL=https://hoihybbcwljxkambccqd.supabase.co` and `SUPABASE_PUBLISHABLE_KEY`
-   (Project Settings > API Keys, the `sb_publishable_` one). Then `scripts/run_local.sh` and rebuild the app.
-4. On the demo phone: scan a room and an object, then reinstall the app and check the library comes back.
-5. Review and merge the PR for `c/supabase`. `c/shopped-render` is still unmerged and touches `ProjectStore.swift`
+4. `backend/.env` (on a fresh clone, create it and `backend/.venv` first, see README "Backend"): set both
+   `SUPABASE_URL=https://hoihybbcwljxkambccqd.supabase.co` and `SUPABASE_PUBLISHABLE_KEY` (Project Settings > API Keys,
+   the `sb_publishable_` one); with either missing the script prints "Cloud library: off". Then
+   `scripts/run_local.sh` and rebuild the app.
+5. On the demo phone: scan a room and an object, then reinstall the app and check the library comes back.
+6. Review and merge the PR for `c/supabase`. `c/shopped-render` is still unmerged and touches `ProjectStore.swift`
    and `DesignerView.swift`: merge it first, or expect conflicts.
 
 ## Known limits (accepted)

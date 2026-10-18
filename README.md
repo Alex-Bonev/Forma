@@ -67,42 +67,74 @@ The Xcode project uses folder-synced groups: drop a new `.swift` file anywhere u
 up with no `.pbxproj` change. Only regenerate with `xcodegen generate` if you change `project.yml`.
 
 Storage: `Application Support/library.json` is the index; room and object files live in
-`Application Support/Projects/<id>/` and `Application Support/Objects/<id>/`. With a cloud config the library is
-also mirrored to Supabase (see "Cloud library" below); the local copy stays the working copy.
+`Application Support/Projects/<id>/` and `Application Support/Objects/<id>/`; My Vibes in
+`Application Support/Vibes/`. With a cloud config all of it is also mirrored to Supabase (see "Cloud library" below); the local copy stays the working copy.
 
 ## Cloud library (Supabase)
 
-`Core/Cloud/CloudSync.swift` mirrors the library to a Supabase project; `Core/Cloud/CloudClient.swift` is a thin
-REST client for Auth, PostgREST and Storage (no SDK dependency). Without a cloud config the app works as before,
-on this device only.
+`Core/Cloud/CloudSync.swift` mirrors the library and My Vibes to a Supabase project; `Core/Cloud/CloudClient.swift`
+is a thin REST client for Auth, PostgREST and Storage (no SDK dependency). Without a cloud config the app works as
+before, on this device only.
 
 What goes where:
 
 | Local | Supabase |
 | --- | --- |
-| `library.json` entry for a room (`Project`: name, placements, finishes, hidden objects) | `projects.doc` (jsonb) |
+| `library.json` entry for a room (`Project`: name, placements incl. shopped products, finishes, hidden/removed items, applied vibe) | `projects.doc` (jsonb) |
 | `Projects/<id>/room.json` (`RoomModel`) | `projects.room` (jsonb) |
+| other files in `Projects/<id>/` (`preview.jpg`, `captured.json`, `room.usdz`, `render-latest.jpg`, `render-latest.before.jpg`, `photos/`) | bucket `library`: `<user>/projects/<id>/...` |
 | `library.json` entry for an object (`ScannedObject`) | `scanned_objects.doc` (jsonb) |
-| other files in `Projects/<id>/` (`thumb.jpg`, `captured.json`, `room.usdz`, `photos/`) | bucket `library`: `<user>/projects/<id>/...` |
 | files in `Objects/<id>/` (`model.usdz`, `thumb.jpg`; not the scan's `Images/`, `Checkpoint/`) | bucket `library`: `<user>/objects/<id>/...` |
-| `@AppStorage` flags (intro seen, demo seeded, realistic furniture) | not synced: per-device settings |
+| `Vibes/vibes.json` entry for a saved vibe (name, styles, mood, colors, materials, description, instructions) | `saved_vibes.doc` (jsonb) |
+| `Vibes/<id>/<n>.jpg` (inspiration photos) | bucket `library`: `<user>/vibes/<id>/...` |
+| `@AppStorage` flags (intro seen, realistic furniture, use photos in renders) and the UserDefaults key `seededUCLADorm` (dorm seeded) | not synced: per-device settings |
 
-Each row also holds a `files` manifest (size and modification time per file). A sync pass runs on launch, on return
-to the foreground and 2 s after a change. Rooms and objects are last-writer-wins on `updatedAt` (a database trigger
-rejects stale writes), files per file by modification time. Deletes are tombstones (`deleted_at`), sent once online.
+How it syncs:
+
+- A pass runs on launch, on return to the foreground and 2 s after a change. Render cache writes and prunes
+  trigger one too. Vibes sync before rooms, so a pulled room's vibe resolves.
+- Rooms, objects and vibes are last-writer-wins on `updatedAt`. A database trigger silently drops a stale update (no
+  error); the next pass pulls the newer row and merges it.
+- Deletes are tombstones (`deleted_at`), sent once online. Nothing is ever hard-deleted from the tables.
+- Files use a three-way merge. Each row holds a `files` manifest (size and modification time per file), and
+  `Application Support/sync-state.json` keeps the manifest from the item's last sync. A file missing on one side is a
+  delete when the other side still has the last-synced copy, so deletes sync both ways. Otherwise the newer copy wins.
+- UI-test runs (`-demo`, `-fresh`, `-seedVibe`) never sync and record no deletes, so a test cannot wipe the cloud.
+- First-launch dorm seeding waits for the first completed pass (up to 8 s), then seeds only if no room has that name.
+
 The backend stores nothing.
 
-Setup, once per Supabase project:
+Setup (manual steps; the same list is in `docs/STATUS.md` and `docs/specs/supabase-storage.md`):
 
-1. Apply `supabase/migrations/` (tables, row-level security, the private `library` bucket and its policies), with the
-   Supabase CLI (`supabase db push`) or the SQL editor.
-2. Dashboard > Authentication > Sign In / Providers: turn on **Allow anonymous sign-ins**. Each install signs in as
-   its own anonymous user; row-level security keeps every user to their own rows and files.
-3. In `backend/.env` set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (Project Settings > API Keys), then run
-   `scripts/run_local.sh` and rebuild: the script adds them to `APIConfig.json`. It refuses secret / service_role keys.
+1. Migrations. Both are already applied to project `hoihybbcwljxkambccqd` (`20261018062400_library`: tables, row-level
+   security, the trigger, the private `library` bucket and its policies; `20261018080825_saved_vibes`: the vibes
+   table). Only a new project needs them: apply `supabase/migrations/` with `supabase db push` or the SQL editor.
+2. Dashboard > Authentication > Sign In / Providers: turn on **Allow anonymous sign-ins**. Until then nothing can
+   sign in. Each install signs in as its own anonymous user; row-level security keeps every user to their own rows
+   and files.
+3. Recommended: Authentication > Attack Protection, turn on CAPTCHA or keep the sign-up rate limit low. Anyone with
+   the app can create users.
+4. Backend config. On a fresh clone, first create `backend/.venv` and `backend/.env` as in "Backend (run locally)"
+   below. Then set both `SUPABASE_URL` (`https://hoihybbcwljxkambccqd.supabase.co`) and `SUPABASE_PUBLISHABLE_KEY`
+   (Project Settings > API Keys, the `sb_publishable_` one) in `backend/.env`. With either missing, the script prints
+   "Cloud library: off". Run `scripts/run_local.sh` and rebuild: the script adds them to `APIConfig.json`. It refuses
+   secret / service_role keys.
+5. On the demo phone: scan a room and an object, reinstall the app, and check the library comes back.
+6. Merge `c/shopped-render` before the `c/supabase` PR. It touches `ProjectStore.swift` and `DesignerView.swift`, so
+   merging it later means conflicts.
 
-Limits: the anonymous session lives in the Keychain, so it survives a reinstall, but a second device is a different
-user (no shared library) until accounts get a real sign-in. Files are capped at 50 MB each.
+Limits:
+
+- One anonymous user per install. The session lives in the Keychain, so it survives a reinstall, but a second device
+  is a separate library until accounts get a real sign-in.
+- Files are capped at 50 MB each.
+- A device clock more than 5 minutes fast keeps re-sending its items.
+- A file whose upload landed but whose row write failed stays in storage after a delete.
+- Each pass reads every row: fine for a demo-sized library.
+- On a network slower than the 8 s seeding wait, a reinstall can seed the dorm and then pull the cloud's copy: two
+  dorms, one to delete.
+- A delete on another install wins over file-only changes here (a newer thumbnail or render): file writes do not
+  stamp the item, so they never beat real edits elsewhere.
 
 ## Backend (run locally)
 
@@ -118,7 +150,14 @@ openssl rand -hex 32                         # paste as APP_SHARED_SECRET in bac
 Config lives in `backend/.env`. It is parsed with python-dotenv (quotes and inline comments handled, no interpolation), never executed, and only known keys are read:
 - `MOCK` (default `1`): canned responses, no keys needed. Set `MOCK=0` for real providers.
 - `APP_SHARED_SECRET`: generate with `openssl rand -hex 32`. Set a fixed one: without it, each LAN run makes a new
-  session secret, and you must rebuild the app after every run. With `MOCK=0` the backend refuses every request without a secret.
+  session secret, and you must rebuild the app after every run. With `MOCK=0` the backend itself needs the secret or
+  `SUPABASE_URL` (with neither it refuses every request). `scripts/run_local.sh` still requires the secret with
+  `MOCK=0`, on purpose: over the LAN demo (plain http) the app sends only `X-App-Secret`, never its token.
+- `SUPABASE_URL`: with it set, the backend also accepts an app user's Supabase access token
+  (`Authorization: Bearer`), verified against the project's JWKS. It must be https (http only for localhost).
+  The app sends its token only over https or to loopback, so the LAN demo (plain http) still uses the shared secret.
+- `RATE_LIMIT_PER_MIN` (default `30`): calls per app user per minute with `MOCK=0`. Bearer requests only; the shared
+  secret is not limited. `0`: no cap.
 - Provider keys: `LLM_API_KEY` (+ `LLM_MODEL`), `IMAGE_API_KEY` (+ `IMAGE_MODEL`, `IMAGE_SIZE`), `SHOPPING_API_KEY`,
   `BROWSER_USE_API_KEY` (+ `BROWSER_USE_MODEL`, `BROWSER_USE_MAX_COST`), `FAL_KEY`.
 - Limits: `MAX_UPLOAD_MB=10`, `MAX_RESPONSE_MB=20`, `USDZ_MAX_MB=8`, `USDZ_MAX_FACES=80000`.
@@ -174,5 +213,5 @@ C = backend/AI/render/vibe (`handoff-C-backend-ai.md`).
   network comes back (not yet tested).
 - Vibe mode (`Features/Vibe/`) is built and was tested in the Simulator against `MOCK=1`, but nothing opens it.
 - Not built yet: AR view, generic furniture USDZ swap.
-- Cloud library: built and compiled, not yet tested end to end against the Supabase project (anonymous sign-ins
-  must be on first).
+- Cloud library: built and reviewed (rooms, objects, My Vibes, file deletes, backend token auth). Not yet tested end
+  to end against the real Supabase project: blocked until anonymous sign-ins are on (see "Cloud library" above).
