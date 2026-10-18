@@ -5,9 +5,10 @@ import simd
 /// The image model sees blocks; this tells it "blue block = sofa, 2.1 m wide, against a wall".
 enum LayoutDescription {
     /// `finishes`: wall/floor sentence (RenderInputs.finishes). `standIns`: placements that are generic catalog
-    /// stand-ins, not scans of a real product.
+    /// stand-ins, not scans of a real product. `products`: shopped placements sent with a product photo, in
+    /// product order (product 1 first), numbered like the photos and the structure map colors.
     static func text(room: RoomModel, placements: [Placement], objects: [ScannedObject],
-                     finishes: String = "White walls.", standIns: Set<UUID> = []) -> String {
+                     finishes: String = "White walls.", standIns: Set<UUID> = [], products: [UUID] = []) -> String {
         let walls = room.walls.map(Segment.init)
         let outline = walls.isEmpty ? room.objects.map(Segment.init) : walls
         let lo = outline.flatMap { [$0.a, $0.b] }.reduce(SIMD2<Float>(repeating: .greatestFiniteMagnitude)) { simd_min($0, $1) }
@@ -45,7 +46,9 @@ enum LayoutDescription {
         for pl in placements {
             guard let o = objects.first(where: { $0.id == pl.objectID }) else { continue }
             let p = SIMD2(pl.position.x, pl.position.z) + center
-            let kind = standIns.contains(pl.id) ? "added by the user" : "a 3D scan of a real product; keep its exact shape and colors"
+            let kind = if let n = products.firstIndex(of: pl.id) {
+                "product \(n + 1): a new piece the user is buying; make it look exactly like its product photo"
+            } else if standIns.contains(pl.id) { "added by the user" } else { "a 3D scan of a real product; keep its exact shape and colors" }
             items.append(String(format: "%@ (%@, %.1f m wide, %.1f m deep, %.1f m tall, %@)", o.name, kind,
                                 o.boundingBox.x, o.boundingBox.z, o.boundingBox.y, spot(p, depth: min(o.boundingBox.x, o.boundingBox.z))))
         }
