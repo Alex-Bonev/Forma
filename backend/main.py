@@ -87,7 +87,8 @@ RENDER_VIEWS = {
 RENDER_RULES = (
     "Be faithful, not creative: this is a check of how a real room looks, not a redesign. Keep the room shape "
     "and every wall, window and door exactly where it is. Furniture in image 1 is a simplified stand-in: keep "
-    "each piece's type, footprint, height, position and facing, and make it look like a real piece of that type. "
+    "each piece's type, footprint, height, position and facing, and make it look like a real piece of that type "
+    "(a numbered product looks like its product photo instead). "
     "Add nothing that is not in image 1: no extra furniture, plants, rugs, art, lamps, curtains or decor, and "
     "keep empty floor and bare walls empty. Everything outside the walls, including any notch or corner cut out "
     "of the floor, stays plain background: never extend the room or add rooms, halls or doors there. Keep the wall and floor finishes described below. Remove all text "
@@ -97,14 +98,18 @@ RENDER_RULES = (
 RESTYLE_RULES = (
     "Keep the room shape and every wall, window and door exactly where it is. Furniture in image 1 is a "
     "simplified stand-in: keep each piece's type, footprint, height, position and facing, restyled to the style "
-    "below. Keep empty floor mostly empty; small decor that fits the style is fine. Remove all text labels. "
+    "below (a numbered product keeps the look of its product photo). Keep empty floor mostly empty; small decor that fits the style is fine. Remove all text labels. "
     "No people, no text, no watermark."
 )
 MAX_PHOTOS = 3
+MAX_PRODUCTS = 3  # shopped products sent with their photo; the rest stay named stand-ins
 MAX_LAYOUT = 2000
+MAX_PRODUCT_NAME = 120
 
 
-def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_style_ref: bool, photos: int = 0) -> str:
+def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_style_ref: bool, photos: int = 0,
+                  products: list[str] = ()) -> str:
+    """`products`: one name per product photo, in order (product 1 first)."""
     restyle = bool(style) or has_style_ref
     parts = [RENDER_VIEWS[view], RESTYLE_RULES if restyle else RENDER_RULES]
     if layout:
@@ -122,10 +127,21 @@ def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_s
         which = f"Image {n} is a real photo" if photos == 1 else f"Images {n} to {n + photos - 1} are real photos"
         parts.append(f"{which} of this same room, taken during the scan from other angles. They are the ground "
                      "truth for how the room looks: wall color and texture, flooring, the real furniture's materials "
-                     "and colors, and the light. Give each stand-in the look of the matching real piece in the photos. Image 1 is the ground truth for the camera, the layout and where each "
+                     "and colors, and the light. Give each stand-in the look of the matching real piece in the photos"
+                     + (", except the numbered products" if products else "") + ". Image 1 is the ground truth for the camera, the layout and where each "
                      "piece stands. Where they disagree on looks, follow the photos; on positions, follow image 1. "
                      "Ignore clutter, people and anything moved since in the photos, and never add a photo's objects "
                      "that image 1 does not show.")
+        n += photos
+    if products:
+        k = len(products)
+        which = f"Image {n} is a product photo" if k == 1 else f"Images {n} to {n + k - 1} are product photos"
+        each = " ".join(f"Image {n + i} is product {i + 1} ({name})." for i, name in enumerate(products))
+        parts.append(f"{which} of new pieces the user is adding to this room; they are not in any scan photo. {each} "
+                     "Render each numbered product exactly like its photo (shape, color, material and details), at "
+                     "the size, position and facing of its stand-in in image 1"
+                     + (" (its color in the structure map)" if has_structure else "")
+                     + ". Use only the product itself: ignore the photo's background, props and other items.")
     if style:
         parts.append(f"Style: {style}")
     return " ".join(parts)
@@ -229,14 +245,20 @@ async def render(
     structure: UploadFile | None = File(None),
     style_ref: UploadFile | None = File(None),
     photos: list[UploadFile] | None = File(None),
+    products: list[UploadFile] | None = File(None),
+    product_names: list[str] | None = Form(None),
 ):
     """image: Designer snapshot. layout: text description of the room. structure: optional color-coded map of
     the same view. prompt: optional style words. style_ref: optional inspiration photo. photos: up to 3 real
-    photos of the room from the scan, sent as ground truth for its look."""
+    photos of the room from the scan, sent as ground truth for its look. products: up to 3 photos of shopped
+    products placed in the room, with product_names in the same order (product 1 first)."""
     data = await read_image(image)
     photos = (photos or [])[:MAX_PHOTOS]
+    products = (products or [])[:MAX_PRODUCTS]
+    names = [" ".join(name.split())[:MAX_PRODUCT_NAME] for name in (product_names or [])[:len(products)]]
+    names = [(names[i] if i < len(names) else "") or "a shopped product" for i in range(len(products))]
     images, total = [], 0
-    for f in (image, structure, style_ref, *photos):
+    for f in (image, structure, style_ref, *photos, *products):
         if f is None:
             continue
         raw = data if f is image else await read_image(f)
@@ -248,7 +270,7 @@ async def render(
     if MOCK:
         return {"image_base64": base64.b64encode(data).decode()}  # echo input as the "render"
     require(IMAGE_API_KEY, "IMAGE_API_KEY")
-    full_prompt = render_prompt(view, layout, prompt, structure is not None, style_ref is not None, len(photos))
+    full_prompt = render_prompt(view, layout, prompt, structure is not None, style_ref is not None, len(photos), names)
     client = gemini()  # keep a reference: a Client that gets garbage-collected mid-request closes its HTTP pool
     try:
         interaction = await client.aio.interactions.create(
