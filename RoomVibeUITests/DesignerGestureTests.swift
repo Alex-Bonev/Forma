@@ -60,8 +60,9 @@ final class DesignerGestureTests: XCTestCase {
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
         XCTAssertTrue(app.buttons["Replace"].waitForExistence(timeout: 3), "tapping scanned furniture should select it")
         app.buttons["Hide"].tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2), "hide offers undo first")
         let restore = app.buttons["Show 1 hidden scanned item"]
-        XCTAssertTrue(restore.waitForExistence(timeout: 3))
+        XCTAssertTrue(restore.waitForExistence(timeout: 8), "then the restore button")
         restore.tap()
         XCTAssertFalse(restore.waitForExistence(timeout: 1))
 
@@ -114,6 +115,21 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show'")).firstMatch.waitForExistence(timeout: 2),
                        "a replaced scanned object is removed, not hidden")
         XCUIScreen.main.screenshot().attach(named: "after-reset", to: self)
+    }
+
+    func testDeleteUndo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        app.buttons["Demo Chair"].tap()
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
+        app.buttons["Delete"].tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2))
+        app.buttons["Undo"].tap()
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)).tap()   // the chair dropped at the view center
+        XCTAssertTrue((canvas.value as? String)?.hasPrefix("Demo Chair at") == true, "undo brings the chair back")
     }
 
     func testRenameRoom() {

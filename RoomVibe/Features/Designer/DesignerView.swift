@@ -14,6 +14,7 @@ struct DesignerView: View {
     @State private var walls = WallCutaway()
     @State private var roomEntity: Entity?
     @State private var roomSize: SIMD2<Float> = .zero
+    @State private var outline: [SIMD3<Float>]?   // scanned floor polygon, room coordinates (cached: room(for:) reads disk)
     @State private var placed: [UUID: Entity] = [:]   // placement id -> entity
     @State private var selected: UUID?
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
@@ -22,6 +23,7 @@ struct DesignerView: View {
     @State private var editing = false
     @State private var showPhotos = false
     @State private var scanTarget: ScanTarget?
+    @State private var undo: (title: String, snapshot: Project)?   // last Delete / Hide, offered for a few seconds
     @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
 
     /// What a new Object Capture scan should replace.
@@ -53,11 +55,11 @@ struct DesignerView: View {
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
-                    if new != nil { selectedRoomObject = nil }
+                    if new != nil { undo = nil; selectedRoomObject = nil }
                     highlight(new.flatMap { placed[$0] })
                 }
                 .onChange(of: selectedRoomObject) { _, new in
-                    if new != nil { selected = nil }
+                    if new != nil { undo = nil; selected = nil }
                     highlight(new.flatMap(roomObjectEntity))
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
@@ -310,7 +312,16 @@ struct DesignerView: View {
                     .foregroundStyle(.secondary)
                     .transition(.opacity)
             }
-            if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
+            if let undo {
+                HStack {
+                    Text(undo.title).font(.subheadline.weight(.medium))
+                    Spacer()
+                    Button("Undo", systemImage: "arrow.uturn.backward") { restore(undo.snapshot) }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.horizontal)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let i = selectedRoomObject, let room = store.room(for: project), room.objects.indices.contains(i) {
                 roomObjectCard(i, room: room)
             } else if let selected, placed[selected] != nil {
                 placementCard(selected, project: project)
@@ -342,6 +353,7 @@ struct DesignerView: View {
         .background(.regularMaterial)
         .animation(.spring(duration: 0.3, bounce: 0), value: selected)
         .animation(.spring(duration: 0.3, bounce: 0), value: selectedRoomObject)
+        .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
     }
 
     // MARK: Selection cards
@@ -446,6 +458,7 @@ struct DesignerView: View {
         scene.addChild(built.entity)
         roomEntity = built.entity
         roomSize = built.size
+        outline = room.floorOutline
         walls.collect(from: built.entity)
         for i in (project?.hiddenRoomObjects ?? []) + (project?.removedRoomObjects ?? []) { roomObjectEntity(i)?.isEnabled = false }
         let wall = Finish.wall(project?.wallFinish), floor = Finish.floor(project?.floorFinish)
@@ -636,6 +649,7 @@ struct DesignerView: View {
 
     private func hideRoomObject(_ i: Int) {
         guard var project else { return }
+        offerUndo("Hidden", project)
         project.hiddenRoomObjects = Array(Set((project.hiddenRoomObjects ?? []) + [i])).sorted()
         store.update(project)
         roomObjectEntity(i)?.isEnabled = false
@@ -652,10 +666,28 @@ struct DesignerView: View {
 
     private func remove(_ id: UUID) {
         guard var project else { return }
+        offerUndo("Deleted", project)
         placed.removeValue(forKey: id)?.removeFromParent()
         project.placements.removeAll { $0.id == id }
         store.update(project)
         selected = nil
+    }
+
+    private func offerUndo(_ title: String, _ snapshot: Project) {
+        undo = (title, snapshot)
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            if undo?.snapshot == snapshot { undo = nil }
+        }
+    }
+
+    /// Put the project back as it was before the last Delete / Hide: placements respawn, room objects re-show.
+    private func restore(_ snapshot: Project) {
+        undo = nil
+        store.update(snapshot)
+        let gone = Set((snapshot.hiddenRoomObjects ?? []) + (snapshot.removedRoomObjects ?? []))
+        for i in (store.room(for: snapshot)?.objects.indices ?? 0..<0) { roomObjectEntity(i)?.isEnabled = !gone.contains(i) }
+        for p in snapshot.placements where placed[p.id] == nil { Task { await spawn(p) } }
     }
 
     /// Selection marker: blue corner brackets around the object's bounds plus a soft disc on the floor.
@@ -708,8 +740,8 @@ struct DesignerView: View {
         store.update(project)
     }
 
-    // ponytail: clamps to the room's bounding rectangle, not the actual wall polygon (L-shaped rooms leak).
-    /// Keeps `entity`'s footprint (not just its center) inside the walls, per axis.
+    /// Keeps `entity`'s footprint (not just its center) inside the walls: the bounding rectangle per axis,
+    /// then the scanned floor outline (L-shaped rooms).
     private func clamp(_ p: SIMD3<Float>, keeping entity: Entity? = nil) -> SIMD3<Float> {
         var half = SIMD2<Float>.zero
         // The model is the first child (the selection disc would inflate the bounds).
@@ -718,7 +750,12 @@ struct DesignerView: View {
             half = SIMD2(b.extents.x, b.extents.z) / 2
         }
         let h = simd_max(roomSize / 2 - half - RoomBuilder.wallThickness / 2, .zero)
-        return [min(max(p.x, -h.x), h.x), max(p.y, 0), min(max(p.z, -h.y), h.y)]   // y = mounting height
+        var xz = SIMD2(min(max(p.x, -h.x), h.x), min(max(p.z, -h.y), h.y))
+        if let outline, let offset = roomEntity?.children.first?.position {
+            let poly = outline.map { SIMD2($0.x + offset.x, $0.z + offset.z) }
+            xz = FloorClamp.clamp(xz, to: poly, inset: max(half.x, half.y) + RoomBuilder.wallThickness / 2)
+        }
+        return [xz.x, max(p.y, 0), xz.y]   // y = mounting height
     }
 }
 
