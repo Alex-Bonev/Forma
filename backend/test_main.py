@@ -30,7 +30,7 @@ def test_flow():
     r = c.post("/render", headers=H, files={"image": ("a.jpg", b"img")}, data={"prompt": "p"})
     assert r.json()["image_base64"] == "aW1n"
     style = c.post("/vibe/analyze", headers=H, files={"image": ("a.jpg", b"img")}).json()
-    assert len(c.post("/vibe/products", headers=H, json=style).json()["products"]) == 3
+    assert len(c.post("/vibe/products", headers=H, json=style).json()["products"]) == 4
     big = c.post("/render", headers=H, files={"image": ("a.jpg", b"x" * (4 * 1024 * 1024 + 1))}, data={"prompt": "p"})
     assert big.status_code == 413
 
@@ -116,3 +116,68 @@ def test_mock_products_have_unique_urls():
 def test_products_provider_down(monkeypatch):
     fake_provider(monkeypatch, lambda req: httpx.Response(401, json={"error": "bad key"}))
     assert c.post("/vibe/products", headers=H, json=main.MOCK_STYLE.model_dump()).status_code == 502
+
+
+def test_analyze_inputs():
+    assert c.post("/vibe/analyze", headers=H).status_code == 400
+    assert c.post("/vibe/analyze", headers=H, data={"prompt": "  "}).status_code == 400
+    assert c.post("/vibe/analyze", headers=H, data={"prompt": "x" * 1001}).status_code == 400
+    text = c.post("/vibe/analyze", headers=H, data={"prompt": "cozy nook under $800"}).json()
+    assert text["budget_usd"] == 800
+    assert sum(it["max_price_usd"] for it in text["shopping_list"]) <= 800
+    both = c.post("/vibe/analyze", headers=H, files={"image": ("a.jpg", jpeg())}, data={"prompt": "japandi"}).json()
+    assert both["budget_usd"] is None and all(it["max_price_usd"] is None for it in both["shopping_list"])
+    old = {k: v for k, v in main.MOCK_STYLE.model_dump().items() if k not in ("room_type", "budget_usd", "shopping_list")}
+    assert c.post("/vibe/products", headers=H, json=old).status_code == 200  # old app's Style still accepted
+
+
+def test_analyze_provider(monkeypatch):
+    sent = {}
+
+    async def parse(**kw):
+        sent.update(kw)
+        style = main.MOCK_STYLE.model_copy(deep=True, update={"budget_usd": 1000})
+        style.shopping_list[0].category = "spaceship"
+        style.shopping_list[0].max_price_usd = 900
+        style.shopping_list[1].max_price_usd = 900
+        return type("M", (), {"stop_reason": "end_turn", "parsed_output": style})()
+
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(main, "MOCK", False)
+    monkeypatch.setattr(main, "LLM_API_KEY", "k")
+    monkeypatch.setattr(main.anthropic, "AsyncAnthropic", lambda **kw: NS(beta=NS(messages=NS(parse=parse))))
+    img = c.post("/vibe/analyze", headers=H, files={"image": ("a.png", jpeg(), "image/png")}, data={"prompt": "boho"})
+    assert img.status_code == 200
+    content = sent["messages"][0]["content"]
+    assert [p["type"] for p in content] == ["image", "text", "text", "text"]
+    assert content[0]["source"]["media_type"] == "image/png" and content[0]["source"]["data"]
+    assert c.post("/vibe/analyze", headers=H, files={"image": ("", b"")}).status_code == 400  # empty part
+    r = c.post("/vibe/analyze", headers=H, data={"prompt": "boho, $1k"}).json()
+    content = sent["messages"][0]["content"]
+    assert [p["type"] for p in content] == ["text", "text"]  # no image block for a text-only request
+    assert "boho, $1k" in content[0]["text"] and "floor_lamp" in content[1]["text"]
+    assert r["shopping_list"][0]["category"] == "decor"
+    assert sum(it["max_price_usd"] for it in r["shopping_list"]) <= 1000
+
+
+def test_parse_budget():
+    assert main.parse_budget("under $1,200 please") == 1200
+    assert main.parse_budget("about $1.5k total") == 1500
+    assert main.parse_budget("$2k") == 2000
+    assert main.parse_budget("a cozy 2 bedroom") is None
+    assert main.parse_budget("3k sq ft loft") is None  # no $, not a budget
+
+
+def test_clean_style_budget_shares():
+    def style(budget, shares):
+        items = [main.ShoppingItem(category="chair", query=f"q{i}", max_price_usd=s) for i, s in enumerate(shares)]
+        return main.clean_style(main.MOCK_STYLE.model_copy(update={"budget_usd": budget, "shopping_list": items}))
+
+    assert [it.max_price_usd for it in style(1000, [300, None, None]).shopping_list] == [300, 350, 350]
+    assert [it.max_price_usd for it in style(600, [500, 500, None]).shopping_list] == [200, 200, 200]
+    assert [it.max_price_usd for it in style(None, [500, 500]).shopping_list] == [None, None]
+    assert len(style(None, [1] * 9).shopping_list) == 6
+    assert sum(it.max_price_usd for it in style(0.75, [None, None]).shopping_list) <= 0.75  # floors cents
+    fallback = main.clean_style(main.MOCK_STYLE.model_copy(update={"shopping_list": []}))
+    assert [it.query for it in fallback.shopping_list] == main.MOCK_STYLE.search_queries
+    assert main.MOCK_STYLE.shopping_list[0].category == "sofa"  # input not mutated
