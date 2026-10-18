@@ -2,8 +2,7 @@ import CryptoKit
 import SwiftUI
 
 /// "Make it real": sends a Designer snapshot to /render and shows a before/after slider.
-/// B presents this from the Designer: on tap, `guard let snap = captureDesignerSnapshot()`, then a sheet with
-/// `RenderView(snapshot: snap, projectID:)`.
+/// Presented as a sheet by `DesignerView.makeItReal()`, which captures the snapshot and camera before presenting.
 /// Vibe mode reuses its BeforeAfterSlider and calls APIClient.render directly.
 struct RenderView: View {
     @State private var model: RenderModel
