@@ -13,6 +13,8 @@ struct Project: Codable, Identifiable, Hashable {
     /// Finish.id for walls / floor (nil = default white / light).
     var wallFinish: String? = nil
     var floorFinish: String? = nil
+    /// Last local change, for cloud sync (last writer wins). nil = saved before sync existed.
+    var updatedAt: Date? = nil
     /// Applied SavedVibe (Apply vibe in the room). A link only: independent of the render restyle. Dangles to nil
     /// lookups if that vibe is deleted.
     var vibeID: UUID? = nil
@@ -24,6 +26,8 @@ struct ScannedObject: Codable, Identifiable, Hashable {
     /// File name inside Objects/<id>/. nil = built-in procedural demo chair.
     var modelFile: String?
     var boundingBox: SIMD3<Float>
+    /// Last local change, for cloud sync (last writer wins). nil = saved before sync existed.
+    var updatedAt: Date? = nil
 }
 
 struct Placement: Codable, Identifiable, Hashable {

@@ -27,6 +27,12 @@ Last updated: 2026-10-17, branch `a/grounded-render`. `main` has PRs #1–#16 me
 - The UCLA dorm (room, 40 photos, thumbnail) is bundled and seeded once on every install. Demo Living Room and Demo Chair come from Load Demo Data.
 - New Paper "forma" UI (B).
 
+**Cloud library (C, branch `c/supabase`)**
+- Rooms, objects and My Vibes mirror to Supabase (tables + private `library` bucket). See README "Cloud library" and `docs/specs/supabase-storage.md`.
+- Three-way file merge: file deletes sync both ways. Render cache writes trigger a pass.
+- UI-test runs (`-demo`, `-fresh`, `-seedVibe`) never sync. Dorm seeding waits for the first pass.
+- Backend accepts the app user's Supabase token (JWKS) as well as `X-App-Secret`.
+
 **Tests**
 - 11+ UI tests (`RoomVibeUITests`).
 - `backend/test_main.py`.
@@ -43,6 +49,15 @@ Last updated: 2026-10-17, branch `a/grounded-render`. `main` has PRs #1–#16 me
 5. **AR view** (stretch #3): not started.
 6. **Restyle:** the scan screens (RoomScan, ObjectScan, RoomPhotos) still use system styling, not forma.
 7. **Rescan room:** creates a new project and drops hidden/removed items. Rescanning in place would need `ProjectStore` support.
+8. **Cloud library** (owner: C): built and reviewed, not yet run end to end against the real project (blocked on step 2). Manual steps, same list as README "Cloud library":
+   1. Migrations: both already applied to `hoihybbcwljxkambccqd` (`20261018062400_library`, `20261018080825_saved_vibes`). Only a new project needs them.
+   2. Dashboard > Authentication > Sign In / Providers: turn on **Allow anonymous sign-ins**. Until then nothing can sign in.
+   3. Recommended: Authentication > Attack Protection, turn on CAPTCHA or keep the sign-up rate limit low.
+   4. `backend/.env` (create it first, see README "Backend"): set both `SUPABASE_URL=https://hoihybbcwljxkambccqd.supabase.co` and `SUPABASE_PUBLISHABLE_KEY`, else the script prints "Cloud library: off". Then `scripts/run_local.sh` and rebuild.
+   5. Demo phone: scan a room and an object, reinstall, check the library comes back.
+   6. Merge `c/shopped-render` before the `c/supabase` PR, or expect conflicts in `ProjectStore.swift` and `DesignerView.swift`.
+
+   Done: the Simulator end-to-end check (rooms, an object and a vibe reached the tables and the bucket; a local rename, a cloud rename, a local delete, a cloud tombstone and a single-file delete all round-tripped).
 
 ## Unverified on device
 

@@ -8,3 +8,4 @@ numpy==2.5.4
 trimesh==5.1.1
 fast_simplification==0.2.0
 python-dotenv==1.2.4
+PyJWT[crypto]==2.15.1

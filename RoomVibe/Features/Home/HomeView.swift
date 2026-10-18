@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(ProjectStore.self) private var store
     @Environment(VibeLibrary.self) private var library
+    @Environment(\.cloudSync) private var sync
     @State private var router = Router()
     @State private var tab = HomeTab.rooms
     @State private var openedDemo = false
@@ -88,8 +89,13 @@ struct HomeView: View {
             .task {
                 // Shared team data: everyone gets the bundled UCLA dorm once (deleting it keeps it gone).
                 if !UserDefaults.standard.bool(forKey: "seededUCLADorm"), !ProcessInfo.processInfo.arguments.contains("-demo") {
-                    UserDefaults.standard.set(true, forKey: "seededUCLADorm")
-                    if store.projects.isEmpty { try? store.loadDemoData() } else { try? store.addBundledDorm() }
+                    // A reinstall keeps the cloud user: pull its dorm first, or seeding adds a second one.
+                    // Both paths below add the dorm only when no room has its name.
+                    if let sync { await sync.waitForFirstPass(timeout: .seconds(8)) }
+                    if !Task.isCancelled {   // Home went away mid-wait: decide on its next appearance
+                        UserDefaults.standard.set(true, forKey: "seededUCLADorm")
+                        if store.projects.isEmpty { try? store.loadDemoData() } else { try? store.addBundledDorm() }
+                    }
                 }
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
                 guard ProcessInfo.processInfo.arguments.contains("-demo"), !openedDemo else { return }

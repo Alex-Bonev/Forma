@@ -782,6 +782,7 @@ struct DesignerView: View {
             UIImage(cgImage: room).draw(in: CGRect(origin: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), size: size))
         }
         try? out.write(to: RoomThumb.url(projectID), options: .atomic)
+        store.filesChanged()
     }
 
     /// Bounding box of visible pixels (the rendered room), found on a 128-px-wide copy. nil if empty.
