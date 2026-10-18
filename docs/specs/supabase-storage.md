@@ -1,6 +1,6 @@
 # Spec: Supabase as the app's data storage
 
-Status: **in progress**. Owner: C (David). Branch `c/supabase`, off `main` at PR #21.
+Status: **in progress**. Owner: C (David). Branch `c/supabase`, off `main` at PR #21, then `main` at PR #23 (My Vibes) merged in.
 
 ## Goal
 
@@ -11,7 +11,7 @@ copy that RealityKit loads from, and the app keeps working offline and without a
 Out of scope: sharing a library between two devices or people (needs real accounts), realtime updates, server-side
 AI job state (providers hold it; the backend stays stateless).
 
-## Data inventory (main @ PR #21)
+## Data inventory (main @ PR #23)
 
 | Data | Written by | Local | Supabase |
 | --- | --- | --- | --- |
@@ -23,6 +23,9 @@ AI job state (providers hold it; the backend stays stateless).
 | Latest render + its "before" | `RenderView` (one per room, older `render-*` deleted) | `render-latest.jpg`, `render-latest.before.jpg` | bucket |
 | Object entry: name, model file, bounding box | `ProjectStore` | `library.json` | `scanned_objects.doc` jsonb |
 | Object model + thumbnail (Object Capture, or SAM 3D) | `ObjectScanView`, `saveModel` | `Objects/<id>/model.usdz`, `thumb.jpg` | bucket |
+| Saved vibe: name, styles, mood, colors, materials, description, custom instructions | `VibeLibrary` | `Vibes/vibes.json` | `saved_vibes.doc` jsonb (task 6) |
+| Vibe inspiration photos (1–15) | `VibeLibrary.add` | `Vibes/<id>/<n>.jpg` | bucket, `<user>/vibes/<id>/` (task 6) |
+| Room's applied vibe `Project.vibeID` | `RoomVibePicker`, `CreateVibeView`, `VibeDetailView` (via `store.update`) | `library.json` | inside `projects.doc` |
 | Object Capture inputs | `ObjectScanView` | `Images/`, `Checkpoint/` (deleted after build) | not synced |
 | Per-device settings: intro seen, dorm seeded, realistic furniture, use photos in renders | `@AppStorage` | UserDefaults | not synced |
 | Auth session (refresh token) | `CloudClient` | Keychain | Supabase Auth |
@@ -45,6 +48,8 @@ AI job state (providers hold it; the backend stays stateless).
 4. **Duplicate demo rooms.** A reinstall keeps the cloud user (Keychain), seeds the UCLA dorm, then pulls the
    cloud's copy of it: two dorms.
 5. **The backend trusts a shared secret bundled in the app.** It should accept the Supabase user's token.
+6. **Saved vibes (PR #23) are device-only.** `VibeLibrary` has no sync hooks, and `-seedVibe` (UI tests) deletes
+   every vibe.
 
 ## Tasks
 
@@ -69,6 +74,10 @@ Each task: an agent implements it, a second agent reviews the diff, findings are
    (`/auth/v1/.well-known/jwks.json`, cached) or with the existing `X-App-Secret`. The app sends its access token
    when it has a cloud session. MOCK=1 stays open, as today. Tests cover valid, expired, wrong-audience and
    wrong-issuer tokens.
+6. **Sync saved vibes.** Migration `saved_vibes` (same shape, RLS, tombstones and trigger as `scanned_objects`);
+   `VibeLibrary` gets ms-rounded stamps, pending deletes, `applyRemote` / `removeRemote` and `onChange`, like
+   `ProjectStore`; CloudSync syncs vibes before rooms (a pulled room's `vibeID` then resolves). `-seedVibe` joins the
+   task 3 guard. A vibe deleted elsewhere leaves `vibeID` on rooms here; lookups already treat it as no vibe.
 5. **Docs and end-to-end check.** README storage map (this inventory), STATUS entry, and a Simulator run against the
    real project: a room and an object reach the tables and the bucket, an edit and a delete round-trip.
 
@@ -90,3 +99,5 @@ Each task: an agent implements it, a second agent reviews the diff, findings are
 - A device clock more than 5 minutes fast keeps re-sending its items.
 - A file whose upload landed but whose row write failed stays in storage after a delete.
 - Each pass reads every row; fine for a demo-sized library.
+- A delete on another install wins over file-only changes here (a newer thumbnail or render): file writes do not
+  stamp the item, so they never beat real edits elsewhere.
