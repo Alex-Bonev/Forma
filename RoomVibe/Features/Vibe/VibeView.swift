@@ -182,12 +182,38 @@ struct VibeView: View {
             }
             .font(.footnote).foregroundStyle(.secondary)
             .padding(.horizontal)
+            addAllButton
             if let error = model.shopError {
                 errorCard(error.localizedDescription) { model.retryProducts() }
             }
             ForEach(model.shopRows ?? []) { row in
                 shopRow(row)
             }
+        }
+    }
+
+    /// The picks (`chosen`, set once every agent is done) with their row's category, in shopping-list order.
+    private var picks: [(product: ShopProduct, category: String)] {
+        (model.shopRows ?? []).flatMap { row in
+            row.products.filter { model.chosen.contains($0.productURL) }.map { ($0, row.category) }
+        }
+    }
+
+    /// One tap puts the whole set that fits the budget (or each item's top pick, without one) into the room.
+    @ViewBuilder private var addAllButton: some View {
+        let all = picks
+        if model.projectID != nil, !all.isEmpty {
+            let missing = all.filter { !isInRoom($0.product) }
+            Button { addToRoom(missing) } label: {
+                Label(missing.isEmpty ? "All picks are in your room"
+                      : missing.count == all.count ? "Add all \(all.count) picks to room" : "Add the other \(missing.count) picks",
+                      systemImage: missing.isEmpty ? "checkmark" : "plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(missing.isEmpty)
+            .accessibilityIdentifier("addAllPicks")
+            .padding(.horizontal)
         }
     }
 
@@ -235,9 +261,15 @@ struct VibeView: View {
 
     /// Drops the product into the room as its closest catalog item, sized to the listing when it gives dimensions.
     private func addToRoom(_ product: ShopProduct, row: VibeModel.ShopRow) {
-        guard let id = model.projectID, var project = store.projects.first(where: { $0.id == id }),
-              !isInRoom(product) else { return }
-        project.placements.append(Placement.forProduct(product, category: product.category ?? row.category))
+        addToRoom([(product, row.category)])
+    }
+
+    /// In one store update, so the Designer underneath spawns them together and spreads them over free floor.
+    private func addToRoom(_ picks: [(product: ShopProduct, category: String)]) {
+        guard let id = model.projectID, var project = store.projects.first(where: { $0.id == id }) else { return }
+        for pick in picks where !project.placements.contains(where: { $0.product?.productURL == pick.product.productURL }) {
+            project.placements.append(Placement.forProduct(pick.product, category: pick.product.category ?? pick.category))
+        }
         store.update(project)
     }
 
