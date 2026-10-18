@@ -35,6 +35,32 @@ enum FloorClamp {
         return c
     }
 
+    /// The spot nearest `start` (0.1 m grid) where a footprint (± `half`, x/z) keeps `gap` from every `taken`
+    /// rectangle and stays within ± `bounds` and inside `outline` (when it has 3+ points). `start` if nowhere fits.
+    static func freeSpot(near start: SIMD2<Float>, half: SIMD2<Float>, taken: [(lo: SIMD2<Float>, hi: SIMD2<Float>)],
+                         bounds: SIMD2<Float>, outline: [SIMD2<Float>]?, gap: Float = 0.1) -> SIMD2<Float> {
+        let step: Float = 0.1
+        let poly = (outline?.count ?? 0) >= 3 ? outline : nil
+        func fits(_ c: SIMD2<Float>) -> Bool {
+            guard abs(c.x) <= bounds.x - half.x, abs(c.y) <= bounds.y - half.y else { return false }
+            if let poly {
+                for d in [SIMD2(-half.x, -half.y), SIMD2(half.x, -half.y), SIMD2(half.x, half.y), SIMD2(-half.x, half.y)]
+                where !contains(c + d, poly) { return false }
+            }
+            return !taken.contains { c.x - half.x < $0.hi.x + gap && c.x + half.x > $0.lo.x - gap &&
+                                     c.y - half.y < $0.hi.y + gap && c.y + half.y > $0.lo.y - gap }
+        }
+        let rings = Int((max(bounds.x, bounds.y) * 2 / step).rounded(.up))
+        for k in 0...max(rings, 0) {   // square rings around start, nearest point of each ring first
+            var ring: [SIMD2<Float>] = []
+            for i in -k...k { for j in -k...k where max(abs(i), abs(j)) == k { ring.append(start + SIMD2(Float(i), Float(j)) * step) } }
+            if let c = ring.sorted(by: { simd_distance_squared($0, start) < simd_distance_squared($1, start) }).first(where: fits) {
+                return c
+            }
+        }
+        return start
+    }
+
     static func contains(_ p: SIMD2<Float>, _ poly: [SIMD2<Float>]) -> Bool {
         var inside = false
         var j = poly.count - 1
