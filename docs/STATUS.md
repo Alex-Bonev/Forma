@@ -1,6 +1,6 @@
 # RoomVibe — Status, open work, and handoff (Alex's track)
 
-Last updated: 2026-10-17, branch `a/polish` (off `main`; PRs #1–#3 merged).
+Last updated: 2026-10-17, branch `a/make-it-real` (PR #6). `main` has PRs #1–#5 (incl. David's backend #4).
 
 ## Done (on `a/realism` unless noted)
 
@@ -67,8 +67,7 @@ Also added: undo for Delete / Hide (5 s bar), drags clamped to the scanned floor
 ## Future work (A)
 
 - Bundle the final demo room and chair (`scripts/pull_demo_assets.py`), then rehearse with `docs/DEMO.md`.
-- **Demo gap:** "Make it real" button is built on `a/make-it-real` (draft PR #6, stacked on #4 + #5). Merge #4 and #5 first.
-  It works against the mock backend in the Simulator. On device it needs David's Vercel deploy + `APIConfig.json`.
+- **Make it real:** the button is on `a/make-it-real` (PR #6). It works against the mock backend in the Simulator. On device it needs David's Vercel deploy + `APIConfig.json`.
   Michelle has no branch pushed yet.
 - Render the floor from `floorOutline` instead of the walls' bounding box (B's room visuals).
 - Coordinate with Michelle (her room visuals) and David (`c/backend-ai`; review comment posted on commit 6082487).
