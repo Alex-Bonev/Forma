@@ -46,6 +46,7 @@ struct DesignerView: View {
     @State private var balancing: Task<Void, Never>?   // Feng-shui-ify solver run
     @State private var inHarmony = false   // "Already in harmony" pill: the solver found nothing better
     @State private var balanced = 0   // haptic trigger
+    @State private var preFengShui: Project?   // the room before this visit's first Feng-shui-ify, for Return to original
 
     /// What a new Object Capture scan should replace.
     enum ScanTarget: Identifiable {
@@ -165,12 +166,6 @@ struct DesignerView: View {
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
                 }
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
-                .overlay(alignment: .topLeading) {
-                    // Under the back button (Paper E): the room's vibe. Make it real is the wide bar at the bottom.
-                    RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                    ink: lightBackdrop ? Theme.ground : Theme.ink) { EmptyView() }
-                    .padding(.leading, 16).padding(.top, 8 + 44 + 12)
-                }
                 .overlay(alignment: .bottom) {
                     if showObjects { objectsPanel(project).transition(.move(edge: .bottom).combined(with: .opacity)) }
                 }
@@ -178,14 +173,36 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.3, bounce: 0), value: objectsDetent)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .animation(.easeOut(duration: 0.25), value: inHarmony)
+                .animation(.spring(duration: 0.3, bounce: 0), value: showsReturn)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) {
                         // With the Objects panel open, Undo lives in the panel instead of under it.
                         if !showObjects { undoBar }
                         if inHarmony && !showObjects {
-                            HintPill("Already in harmony ✨", fill: chrome.fill, ink: chrome.ink).transition(.opacity)
+                            HintPill("Already in harmony", fill: chrome.fill, ink: chrome.ink).transition(.opacity)
                         }
                         hint.allowsHitTesting(false)
+                        if showsReturn {
+                            HStack { Spacer(); returnButton }   // over the Feng-shui-ify half
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        if !showObjects {
+                            // One row for the room's look: its vibe on the left, Feng-shui-ify on the right.
+                            // Two equal halves, so the gap sits on the center line.
+                            HStack(alignment: .bottom, spacing: 10) {
+                                RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                                ink: lightBackdrop ? Theme.ground : Theme.ink, opensUp: true, fillsWidth: true) { EmptyView() }
+                                    .frame(maxWidth: .infinity)
+                                if balancing != nil || canFengShui {
+                                    fengShuiButton.frame(maxWidth: .infinity).transition(.opacity)
+                                } else {
+                                    Color.clear.frame(maxWidth: .infinity, maxHeight: 44)   // keeps the vibe pill at half width
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                         // Renders exactly what's on screen: frame it by dragging, then tap.
                         if !showObjects {
                             HStack(spacing: 10) {
@@ -247,11 +264,7 @@ struct DesignerView: View {
         }
         .overlay(alignment: .topTrailing) {
             if style == .full {
-                VStack(alignment: .trailing, spacing: 12) {
-                    viewControls
-                    if !showObjects && (balancing != nil || canFengShui) { fengShuiButton.transition(.opacity) }
-                }
-                .padding(.horizontal, 16).padding(.top, 64)
+                viewControls.padding(.horizontal, 16).padding(.top, 64)
             }
         }
         .animation(.easeOut(duration: 0.3), value: showHint)
@@ -1380,6 +1393,7 @@ struct DesignerView: View {
     /// room objects re-show.
     private func restore(_ snapshot: Project) {
         undo = nil
+        if snapshot == preFengShui { preFengShui = nil }   // undid the first Feng-shui-ify: already original
         store.update(snapshot)
         let kept = Set(snapshot.placements.map(\.id))
         for (id, e) in placed where !kept.contains(id) {   // e.g. a product added from Vibe after the snapshot
@@ -1409,19 +1423,41 @@ struct DesignerView: View {
 
     private var canFengShui: Bool { fengShuiItems().items.contains(where: \.movable) }
 
-    /// Capsule under the view controls; a spinner while the solver agents think.
+    /// Capsule on the bottom row, across from the vibe pill; a spinner while the solver agents think.
     private var fengShuiButton: some View {
         Button(action: fengShuiify) {
             HStack(spacing: 8) {
                 if balancing != nil { ProgressView().controlSize(.small).tint(chrome.ink) }
                 else { Image(systemName: "circle.lefthalf.filled") }
-                Text(balancing != nil ? "Balancing chi…" : "Feng-shui-ify").font(.forma(13, bold: true))
+                Text(balancing != nil ? "Balancing chi…" : "Feng-shui-ify").font(.forma(13, bold: true)).lineLimit(1).fixedSize()
             }
-            .foregroundStyle(chrome.ink)
-            .padding(.horizontal, 14).frame(height: 44).background(chrome.fill, in: Capsule())
+            .foregroundStyle(lightBackdrop ? Theme.ground : Theme.ink)
+            .padding(.horizontal, 16).frame(maxWidth: .infinity).frame(height: 44)
+            .background(lightBackdrop ? Theme.wood : Theme.sand, in: Capsule())
         }
         .disabled(balancing != nil)
         .accessibilityLabel("Feng-shui-ify")
+    }
+
+    private var showsReturn: Bool { preFengShui != nil && !showObjects && balancing == nil }
+
+    /// Compact pill over Feng-shui-ify: back to the room as it was before the first press, however many since.
+    private var returnButton: some View {
+        Button(action: returnToOriginal) {
+            Label("Return to original", systemImage: "arrow.counterclockwise")
+                .font(.forma(13, bold: true)).lineLimit(1).fixedSize()
+                .foregroundStyle(chrome.ink)
+                .padding(.horizontal, 14).frame(height: 36)
+                .background(chrome.fill, in: Capsule())
+        }
+        .accessibilityLabel("Return to original")
+    }
+
+    private func returnToOriginal() {
+        guard let original = preFengShui else { return }
+        restore(original)   // also drops any pending feng shui Undo
+        preFengShui = nil
+        lifts += 1
     }
 
     /// Every visible placement and scanned piece in scene x/z. `scanned` maps solver ids back to room object indices.
@@ -1487,7 +1523,7 @@ struct DesignerView: View {
         selected = nil; selectedRoomObject = nil
         let (items, scanned) = fengShuiItems()
         balancing = Task {
-            async let solved = FengShui.arrange(items, in: room)
+            async let solved = FengShui.arrange(items, in: room, seed: UInt64.random(in: .min ... .max))   // fresh seed: each press can differ
             try? await Task.sleep(for: .milliseconds(600))
             let result = await solved
             if !Task.isCancelled {
@@ -1523,6 +1559,7 @@ struct DesignerView: View {
         }
         guard !moves.isEmpty else { return false }
         store.update(project)
+        if preFengShui == nil { preFengShui = before }   // first applied press this visit; later presses keep it
         // After the save: nothing below touches `selected` or calls commit(), either of which would drop the Undo.
         offerUndo("Feng shui'd · \(result.note)", before, for: .seconds(8))
         balanced += 1
