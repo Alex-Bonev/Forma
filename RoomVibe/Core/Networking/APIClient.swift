@@ -4,9 +4,10 @@ import UIKit
 /// Talks to our FastAPI backend (backend/main.py). The backend holds every provider key;
 /// the app only knows the base URL and a shared secret.
 ///
-/// Config: optional `APIConfig.json` next to this file (gitignored, bundled automatically by the synced folder):
-///   {"baseURL": "https://<project>.vercel.app", "secret": "<APP_SHARED_SECRET>"}
-/// Without it the app talks to a local `MOCK=1 fastapi dev main.py` (works from the Simulator).
+/// Config: optional `APIConfig.json` next to this file (gitignored, bundled automatically by the synced folder),
+/// written by `scripts/run_local.sh` for the demo server on the Mac:
+///   {"baseURL": "http://<mac-lan-ip>:8000", "secret": "<APP_SHARED_SECRET>"}
+/// Without it the app talks to `http://127.0.0.1:8000`, which only works from the Simulator.
 struct APIConfig: Codable {
     var baseURL: URL
     var secret: String
@@ -175,7 +176,7 @@ final class APIClient {
         let e = JSONEncoder(); e.keyEncodingStrategy = .convertToSnakeCase; return e
     }()
 
-    /// Wakes a cold Vercel function before the demo. Returns whether the backend runs in mock mode.
+    /// Checks the demo server is reachable before going on stage. Returns whether it runs in mock mode.
     func health() async throws -> Bool {
         struct Health: Decodable { var ok: Bool; var mock: Bool }
         return try await send(request("health"), as: Health.self).mock
@@ -269,7 +270,7 @@ final class APIClient {
             }
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
-        if http.statusCode == 504 { throw APIError.timeout }   // provider or Vercel function timed out
+        if http.statusCode == 504 { throw APIError.timeout }   // provider timed out (or a proxy in front of the server)
         guard http.statusCode == 200 else {
             let detail = (try? JSONDecoder().decode(ErrorDetail.self, from: data))?.detail ?? "no details"
             throw APIError.server(http.statusCode, detail)
@@ -312,7 +313,7 @@ private extension Data {
 }
 
 extension UIImage {
-    /// Long edge <= 1536 px, JPEG 0.8: keeps uploads far below Vercel's 4.5 MB cap.
+    /// Long edge <= 1536 px, JPEG 0.8: keeps uploads well under the backend's upload cap and quick over Wi-Fi.
     func uploadJPEG(maxEdge: CGFloat = 1536, quality: CGFloat = 0.8) -> Data? {
         let px = CGSize(width: size.width * scale, height: size.height * scale)
         let factor = min(1, maxEdge / max(px.width, px.height, 1))

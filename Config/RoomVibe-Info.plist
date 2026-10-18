@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Only keys that INFOPLIST_KEY_ build settings can't express. Xcode merges the generated keys
+  (GENERATE_INFOPLIST_FILE = YES) into this file. It lives in Config/, outside the synced RoomVibe
+  folder, so it is not also copied into the app as a resource.
+
+  NSAllowsLocalNetworking: the demo backend runs on the Mac over plain http (scripts/run_local.sh).
+  Apple's docs: since iOS 17, ATS blocks raw IP addresses by default, and this key re-enables
+  unqualified domains, .local domains and IPv4/IPv6 addresses. It is narrower than
+  NSAllowsArbitraryLoads: public internet hosts still need https.
+-->
+<dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
