@@ -33,15 +33,35 @@ No auth or cloud storage exists, so vibes belong to the app install.
 
 ## UI
 
-- Home: sticky Rooms / Objects / Vibes tabs. The Vibes tab shows a dashed "+ Vibe" card, then cards with a 2×2 photo tile, name, styles, color dots and the rooms using it ("Not in a room yet" otherwise).
-- Create: pick photos (remove with x, dashed Add tile, "n / 15") → "Find My Vibe" → one call with Cancel → review (editable name with "suggested by AI", colors, tag groups, description, custom instructions) → "Save Vibe". Inline notices: skipped files, request failed (Retry, Back to photos), empty name, save failed.
-- Details: editable name, "Used in …", collage, colors, tag groups, description, custom instructions, dates, "Save Changes" (disabled until edited), "Delete" with the confirm card ("Delete this vibe?").
-- Room fullscreen: a Vibe pill next to "Make it real". No vibe opens the "Add a vibe" sheet; with a vibe the pill opens a dropdown (switch, "New vibe from photos", "Remove vibe from room"). Apply and Remove only write `Project.vibeID`; the Make it real render is not changed.
-- Green buttons and fills use `#FBF8F3` for text and icons.
+All vibe screens use the app's Space Mono type (no system serif). Keep labels single: a title never repeats in a caption or button.
+
+- **Home > Vibes:**
+  - A dashed "New vibe" card comes first.
+  - Then one card per vibe: a 2×2 photo tile, name, styles and color dots.
+  - Room chips show only when the vibe is used in a room.
+- **Create:**
+  - "Photos you love" (n of 15, remove with x, dashed + tile), then "Find my vibe".
+  - One call, with Cancel.
+  - Review in `VibeFields`, then "Save vibe".
+  - Notices (skipped files, failed with Retry, save failed) are one-line cards with a dismiss x.
+- **`VibeFields`** (shared by review and details):
+  - Shown first: name (`NameField`), colors, Styles, Mood, Materials, Avoid and Instructions.
+  - "More details" reveals Textures, Motifs, Lighting, Furniture and Description.
+- **Details:**
+  - The same `DetailBar` as rooms ("‹ Vibes", Delete), then the collage and `VibeFields`.
+  - Edits autosave after 0.6 s and on leaving. There is no Save button.
+  - Delete asks once ("Delete this vibe?").
+- **Room detail row and Designer pill:**
+  - With no saved vibes, they open New vibe directly.
+  - Otherwise a list of vibes, "New vibe", and "Remove" (only when one is applied).
+  - The Paper E4 sheet was removed.
+- **Shop a vibe:**
+  - When the room has a vibe, that vibe is the input: its first photo is the style reference, and `getRoomVibeBrief` is the prompt. What the user types goes first so a budget survives the 1000-character cap.
+  - The x sets the vibe aside to use a one-off photo or words instead.
+  - Make it real stays faithful and ignores the vibe.
 
 ## Known gaps
 
-- Fraunces is not bundled; serif headings use the system serif.
 - The skipped-files notice gives a count, not file names.
 - The offline pill is not built on these screens.
 - No Swift unit-test target exists; backend tests cover the profile endpoint.
