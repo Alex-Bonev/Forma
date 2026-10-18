@@ -46,6 +46,7 @@ struct DesignerView: View {
     @State private var balancing: Task<Void, Never>?   // Feng-shui-ify solver run
     @State private var inHarmony = false   // "Already in harmony" pill: the solver found nothing better
     @State private var balanced = 0   // haptic trigger
+    @State private var preFengShui: Project?   // the room before this visit's first Feng-shui-ify, for Return to original
 
     /// What a new Object Capture scan should replace.
     enum ScanTarget: Identifiable {
@@ -172,14 +173,20 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.3, bounce: 0), value: objectsDetent)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .animation(.easeOut(duration: 0.25), value: inHarmony)
+                .animation(.spring(duration: 0.3, bounce: 0), value: showsReturn)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) {
                         // With the Objects panel open, Undo lives in the panel instead of under it.
                         if !showObjects { undoBar }
                         if inHarmony && !showObjects {
-                            HintPill("Already in harmony ✨", fill: chrome.fill, ink: chrome.ink).transition(.opacity)
+                            HintPill("Already in harmony", fill: chrome.fill, ink: chrome.ink).transition(.opacity)
                         }
                         hint.allowsHitTesting(false)
+                        if showsReturn {
+                            HStack { Spacer(); returnButton }   // over the Feng-shui-ify half
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                         if !showObjects {
                             // One row for the room's look: its vibe on the left, Feng-shui-ify on the right.
                             // Two equal halves, so the gap sits on the center line.
@@ -1386,6 +1393,7 @@ struct DesignerView: View {
     /// room objects re-show.
     private func restore(_ snapshot: Project) {
         undo = nil
+        if snapshot == preFengShui { preFengShui = nil }   // undid the first Feng-shui-ify: already original
         store.update(snapshot)
         let kept = Set(snapshot.placements.map(\.id))
         for (id, e) in placed where !kept.contains(id) {   // e.g. a product added from Vibe after the snapshot
@@ -1429,6 +1437,27 @@ struct DesignerView: View {
         }
         .disabled(balancing != nil)
         .accessibilityLabel("Feng-shui-ify")
+    }
+
+    private var showsReturn: Bool { preFengShui != nil && !showObjects && balancing == nil }
+
+    /// Compact pill over Feng-shui-ify: back to the room as it was before the first press, however many since.
+    private var returnButton: some View {
+        Button(action: returnToOriginal) {
+            Label("Return to original", systemImage: "arrow.counterclockwise")
+                .font(.forma(13, bold: true)).lineLimit(1).fixedSize()
+                .foregroundStyle(chrome.ink)
+                .padding(.horizontal, 14).frame(height: 36)
+                .background(chrome.fill, in: Capsule())
+        }
+        .accessibilityLabel("Return to original")
+    }
+
+    private func returnToOriginal() {
+        guard let original = preFengShui else { return }
+        restore(original)   // also drops any pending feng shui Undo
+        preFengShui = nil
+        lifts += 1
     }
 
     /// Every visible placement and scanned piece in scene x/z. `scanned` maps solver ids back to room object indices.
@@ -1494,7 +1523,7 @@ struct DesignerView: View {
         selected = nil; selectedRoomObject = nil
         let (items, scanned) = fengShuiItems()
         balancing = Task {
-            async let solved = FengShui.arrange(items, in: room)
+            async let solved = FengShui.arrange(items, in: room, seed: UInt64.random(in: .min ... .max))   // fresh seed: each press can differ
             try? await Task.sleep(for: .milliseconds(600))
             let result = await solved
             if !Task.isCancelled {
@@ -1530,6 +1559,7 @@ struct DesignerView: View {
         }
         guard !moves.isEmpty else { return false }
         store.update(project)
+        if preFengShui == nil { preFengShui = before }   // first applied press this visit; later presses keep it
         // After the save: nothing below touches `selected` or calls commit(), either of which would drop the Undo.
         offerUndo("Feng shui'd · \(result.note)", before, for: .seconds(8))
         balanced += 1
