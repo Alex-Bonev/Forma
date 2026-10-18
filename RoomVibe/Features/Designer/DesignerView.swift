@@ -18,6 +18,7 @@ struct DesignerView: View {
     var opensCatalog = false
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showObjects = false
     @State private var objectsDetent = ObjectsDetent.medium   // bottom sheet height: peek / medium / large (Paper E2a, E2, E2b)
     @GestureState private var objectsDrag: CGFloat = 0
@@ -71,6 +72,9 @@ struct DesignerView: View {
     @State private var content: RealityViewCameraContent?
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
+
+    /// Sheet, card and chrome motion; reduce motion swaps the spring for a short fade.
+    private var panelSpring: Animation { reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.35, bounce: 0) }
 
     /// Light walls get a dark palette backdrop and vice versa.
     private var lightBackdrop: Bool { backdrop == Theme.ground }
@@ -170,8 +174,9 @@ struct DesignerView: View {
                 .overlay(alignment: .bottom) {
                     if showObjects { objectsPanel(project).transition(.move(edge: .bottom).combined(with: .opacity)) }
                 }
-                .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
-                .animation(.spring(duration: 0.3, bounce: 0), value: objectsDetent)
+                .animation(panelSpring, value: showObjects)
+                .animation(panelSpring, value: selectedRow?.id)
+                .animation(panelSpring, value: objectsDetent)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .animation(.easeOut(duration: 0.25), value: inHarmony)
                 .animation(.spring(duration: 0.3, bounce: 0), value: showsReturn)
@@ -275,6 +280,11 @@ struct DesignerView: View {
         .overlay(alignment: .topTrailing) {
             if style == .full {
                 viewControls.padding(.horizontal, 16).padding(.top, 64)
+                    .opacity(showObjects ? 0 : 1)
+                    .offset(x: showObjects && !reduceMotion ? 24 : 0)
+                    .allowsHitTesting(!showObjects)
+                    .accessibilityHidden(showObjects)
+                    .animation(panelSpring, value: showObjects)
             }
         }
         .animation(.easeOut(duration: 0.3), value: showHint)
@@ -614,7 +624,8 @@ struct DesignerView: View {
         Group {
             if let row = selectedRow { selectionCard(row, project: project) } else { objectsList(project) }
         }
-        .padding(.horizontal, 16).padding(.bottom, 16)
+        .transition(.opacity)
+        .padding(.horizontal, 16).padding(.bottom, 20)   // on top of the overlay's safe-area inset, so clear of the home indicator and corners
         .frame(maxWidth: .infinity)
         .background {
             UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
@@ -628,8 +639,8 @@ struct DesignerView: View {
     private func selectionCard(_ row: ObjectRow, project: Project) -> some View {
         let info = rowInfo(row, project: project)
         let placement: UUID? = if case .placement(let id) = row { id } else { nil }
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
+        let content = VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
                 Image(systemName: info.symbol).font(.system(size: 16)).foregroundStyle(Theme.wood)
                     .frame(width: 40, height: 40).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
@@ -637,27 +648,38 @@ struct DesignerView: View {
                     Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.9)
                 }
                 Spacer(minLength: 4)
-                if let placement {
-                    let locked = isLocked(placement)
-                    headerIcon(locked ? "lock.fill" : "lock.open", on: locked, label: locked ? "Unlock" : "Lock") { toggleLock(placement) }
+                HStack(spacing: 6) {
+                    if let placement {
+                        let locked = isLocked(placement)
+                        headerIcon(locked ? "lock.fill" : "lock.open", on: locked, label: locked ? "Unlock" : "Lock") { toggleLock(placement) }
+                    }
+                    headerIcon(info.hidden ? "eye.slash" : "eye", on: info.hidden,
+                               label: info.hidden ? "Show \(info.name)" : "Hide \(info.name)") { toggleVisibility(row) }
+                    headerIcon("xmark", on: false, label: "Deselect") { selected = nil; selectedRoomObject = nil; showObjects = false }
                 }
-                headerIcon(info.hidden ? "eye.slash" : "eye", on: info.hidden,
-                           label: info.hidden ? "Show \(info.name)" : "Hide \(info.name)") { toggleVisibility(row) }
-                headerIcon("xmark", on: false, label: "Deselect") { selected = nil; selectedRoomObject = nil; showObjects = false }
             }
             .padding(.top, 18)
             if let placement, editing == placement { sizeEditor(placement) } else { rowActions(row, project: project) }
             undoBar.frame(maxWidth: .infinity)
         }
-        .animation(.spring(duration: 0.3, bounce: 0), value: editing)
+        // Short screens or large text: scroll instead of clipping the actions.
+        let maxHeight = max(220, viewSize.height * 0.6)
+        return ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }.scrollIndicators(.hidden)
+        }
+        .frame(maxHeight: maxHeight)
+        .animation(panelSpring, value: editing)
     }
 
     private func headerIcon(_ icon: String, on: Bool, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(on ? Theme.onSage : Theme.ink)
-                .frame(width: 40, height: 40)
+                .frame(width: 44, height: 44)
                 .background(on ? Theme.sage : Theme.hairline, in: Circle())
+                .animation(panelSpring, value: icon)
         }
         .accessibilityLabel(label)
     }
@@ -686,25 +708,25 @@ struct DesignerView: View {
                 VStack(spacing: 0) {
                     ForEach(rows) { row in
                         let info = rowInfo(row, project: project)
-                        HStack(spacing: 12) {
-                            Image(systemName: info.symbol).font(.system(size: 16)).foregroundStyle(Theme.wood)
-                                .frame(width: 36, height: 36).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 10))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
-                                Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.9)
-                            }
+                        HStack(spacing: 10) {
+                            Image(systemName: info.symbol).font(.system(size: 13)).foregroundStyle(Theme.wood)
+                                .frame(width: 28, height: 28).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 8))
+                            (Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                                + Text("  \(info.dims)").font(.forma(11)).foregroundStyle(Theme.muted))
+                                .lineLimit(1).minimumScaleFactor(0.75)
                             Spacer(minLength: 4)
                             if case .placement(let id) = row, isLocked(id) {
                                 Image(systemName: "lock.fill").font(.system(size: 12)).foregroundStyle(Theme.muted)
                                     .accessibilityLabel("Locked")
                             }
-                            Button { toggleVisibility(row) } label: {
+                            Button { withAnimation(panelSpring) { toggleVisibility(row) } } label: {
                                 Image(systemName: info.hidden ? "eye.slash" : "eye").foregroundStyle(Theme.ink)
-                                    .frame(width: 36, height: 36)
+                                    .contentTransition(.symbolEffect(.replace))
+                                    .frame(width: 44, height: 44).contentShape(Rectangle())
                             }
                             .accessibilityLabel(info.hidden ? "Show \(info.name)" : "Hide \(info.name)")
                         }
-                        .padding(10)
+                        .padding(.horizontal, 10)
                         .contentShape(Rectangle())
                         .onTapGesture { select(row) }
                         .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
@@ -830,6 +852,8 @@ struct DesignerView: View {
                 ActionTile("Size", icon: "ruler") { editing = id }
                 if Capabilities.canScanObject { ActionTile("Scan real", icon: "camera.viewfinder") { scanTarget = .placement(id) } }
                 ActionTile("Remove", icon: "trash", tint: Theme.terracotta) { confirmRemove = id }
+                    .scaleEffect(confirmRemove == id ? 0.94 : 1)   // brief press-in while the confirm dialog is up
+                    .animation(panelSpring, value: confirmRemove)
             }
         case .room(let i):
             if let room = store.room(for: project), room.objects.indices.contains(i) {
@@ -861,6 +885,8 @@ struct DesignerView: View {
                         ActionTile("Size", icon: "ruler") { Task { await editRoomObject(i, room: room) } }
                     }
                     if Capabilities.canScanObject { ActionTile("Scan real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) } }
+                    // Scanned furniture is hidden, not deleted; Undo brings it back.
+                    ActionTile("Remove", icon: "trash", tint: Theme.terracotta) { hideRoomObject(i) }
                 }
             }
         }
@@ -1780,11 +1806,14 @@ private struct ActionTileLabel: View {
     @Environment(\.isEnabled) private var enabled
     var body: some View {
         VStack(spacing: 6) {
+            // Fixed icon box: glyphs differ in height, so labels would otherwise sit on different baselines.
             Image(systemName: icon).font(.system(size: 17, weight: .medium))
-            Text(title).font(.forma(10)).lineLimit(1).minimumScaleFactor(0.8)
+                .frame(width: 28, height: 24)
+            Text(title).font(.forma(10)).lineLimit(1).minimumScaleFactor(0.7)
         }
         .foregroundStyle(tint)
-        .frame(maxWidth: .infinity, minHeight: 60)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 64)
         .background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .opacity(enabled ? 1 : 0.4)

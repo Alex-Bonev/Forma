@@ -13,6 +13,7 @@ struct ProductDetailView: View {
 
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var projectID: UUID? {
         switch mode {
@@ -34,23 +35,27 @@ struct ProductDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    backButton
-                    hero.padding(.top, 16)
-                    header.padding(.top, 20)
-                    details.padding(.top, 22)
-                    // Richer scraped details (description, material, color, stock, returns) go here once the backend sends them.
-                    Text("Details come from the store's listing. Check the original listing before you buy.")
-                        .font(.forma(10)).foregroundStyle(Theme.muted)
-                        .padding(.top, 16)
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                hero.padding(.top, 4)
+                header.padding(.top, 20)
+                details.padding(.top, 22)
+                // Richer scraped details (description, material, color, stock, returns) go here once the backend sends them.
+                Text("Details come from the store's listing. Check the original listing before you buy.")
+                    .font(.forma(10)).foregroundStyle(Theme.muted)
+                    .padding(.top, 16)
             }
-            actions
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
         }
+        // Back stays pinned so it is reachable at any scroll position.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            backButton
+                .padding(.horizontal, 24).padding(.bottom, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.ground)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { actions }
         .background(Theme.ground)
         .foregroundStyle(Theme.ink)
         .navigationBarBackButtonHidden()
@@ -67,12 +72,17 @@ struct ProductDetailView: View {
     }
 
     private var hero: some View {
-        RoundedRectangle(cornerRadius: 24).fill(Theme.tiles[0])
-            .frame(height: 300)
+        Theme.tiles[0]
+            .aspectRatio(1.15, contentMode: .fit)
+            .frame(maxHeight: 340)
             .overlay {
-                AsyncImage(url: product.imageURL) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: { Color.clear }
+                AsyncImage(url: product.imageURL, transaction: Transaction(animation: reduceMotion ? nil : .easeOut(duration: 0.3))) { phase in
+                    if let image = phase.image {
+                        image.resizable().aspectRatio(contentMode: .fill).transition(.opacity)
+                    } else {
+                        Color.clear
+                    }
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 24))
             .accessibilityHidden(true)
@@ -121,7 +131,14 @@ struct ProductDetailView: View {
                     Button {
                         RoomCart.add([(product, category)], to: projectID, store: store)
                     } label: {
-                        Label(added ? "Added to room" : "Add to room", systemImage: added ? "checkmark" : "plus")
+                        Label {
+                            Text(added ? "Added to room" : "Add to room").id(added)
+                        } icon: {
+                            Image(systemName: added ? "checkmark" : "plus").id(added)
+                                .transition(.scale(scale: 0.4).combined(with: .opacity))
+                        }
+                        .transition(.opacity)
+                        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.3), value: added)
                     }
                     .buttonStyle(PillButtonStyle())
                     .disabled(added)
@@ -143,7 +160,7 @@ struct ProductDetailView: View {
             }
         }
         .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 12)
-        .background(Theme.ground)
+        .background(Theme.ground, ignoresSafeAreaEdges: .bottom)
         .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
     }
 

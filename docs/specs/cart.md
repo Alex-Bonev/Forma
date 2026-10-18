@@ -10,10 +10,11 @@ Status: **UI built; checkout not built**. Owner: Michelle (B) for the UI, David 
 
 ## Screens
 
-- **Cart (L, L2)** is a sheet. Title "Cart", item count, close button. One room: subtitle "Added to <room>". All rooms: one section per room with "N items · $total". All-rooms subtitle: "Everything added to your rooms". Rows: thumbnail, title, store, price, chevron to the product detail. Footer: subtotal, "N without a listed price" when some listings have no USD price, and "Prices exclude shipping and tax." Empty state: "Nothing in your cart yet." and "Add products from Shop a vibe."
+- **Cart (L, L2)** is a sheet. Title "Cart", item count, close button. One room: subtitle "Added to <room>". All rooms: one section per room with "N items · $total". All-rooms subtitle: "Everything added to your rooms". Rows: thumbnail, title, store, price, chevron to the product detail. The header, budget card, rows and totals (subtotal, "N without a listed price" when some listings have no USD price, and "Prices exclude shipping and tax.") scroll together as one page; only Check out is pinned at the bottom. Empty state: "Nothing in your cart yet." and "Add products from Shop a vibe."
 - **Check out** is shown but **disabled**, with "Checkout isn't available yet. Open each item's original listing to buy." Agent checkout is not built (see `docs/handoff-cart-checkout.md`, issue #34).
 - **Product detail, while shopping (PD1)**: image, store and host, title, price, details the app has (size, category, store, listing host), "Add to room" (becomes "Added to room"; hidden when no room is known), "Go to original listing". Reached from "Open" on a product card: Open opens this page, not the retailer. Footnote: "Details come from the store's listing. Check the original listing before you buy."
 - **Product detail, in your room (PD2)**: the same page, an "In <room>" chip, "Go to original listing", "Remove from room". Reached from a cart row.
+- On the product page the back button is pinned at the top and the action bar at the bottom; the details scroll between them.
 - The page shows only fields the backend sends. Richer scraped details (description, material, color, stock, returns) need backend fields.
 
 ## Budget
@@ -29,11 +30,12 @@ Status: **UI built; checkout not built**. Owner: Michelle (B) for the UI, David 
 
 - Fullscreen room: a cart icon to the right of "Add object" once the room has at least one product. It opens that room's cart. Hidden while the Objects sheet is open. With the cart icon showing, "Make it real" and "Add object" may shrink their text (down to 70%) to fit.
 - Home: a cart icon to the right of "Scan Object" once any room has a product. It opens the all-rooms cart.
-- Shop a vibe: a cart icon in the top bar once the room has a product.
+- Shop a vibe: a plain cart icon (no fill or stroke, inside the toolbar's glass circle) in the top bar once the room has a product.
 
 ## Motion
 
 - **Add to cart:** a 56 pt square with the product image flies from the card to the cart icon (440 ms, x ease-out, y ease-in), shrinking to 0.25 and fading to 0.2. The cart count rises on arrival. The cart icon then beams: scale 1 to 1.18 and back, and a sage ring grows and fades (600 ms).
+- In the toolbar variant the beam ring starts at 60% of the icon frame so the toolbar never clips it.
 - Several adds: each flies on its own. "Add all" does not fly; the cart just beams.
 - If the cart icon's position is not known yet (first add), the flight waits up to 500 ms for it; if it never appears the flight is skipped and the add still happens.
 - Reduced motion: no flight, no beam.

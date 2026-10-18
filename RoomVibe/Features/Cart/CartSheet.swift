@@ -6,7 +6,10 @@ struct CartSheet: View {
     let projectID: UUID?
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editingBudget = false
+
+    private var motion: Animation? { reduceMotion ? nil : .spring(duration: 0.3, bounce: 0) }
 
     private var items: [CartItem] { RoomCart.items(in: store.projects, room: projectID) }
     private var budget: Double? { projectID.flatMap { id in store.projects.first { $0.id == id }?.budgetUSD } }
@@ -14,11 +17,23 @@ struct CartSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                header
-                if projectID != nil, let budget, !items.isEmpty { budgetCard(budget) }
-                if items.isEmpty { empty } else { list; footer }
+            Group {
+                if items.isEmpty {
+                    VStack(spacing: 0) { header; empty }
+                } else {
+                    // Everything scrolls so a long cart or large text never squeezes rows; only checkout stays pinned.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            header
+                            if projectID != nil, let budget { budgetCard(budget) }
+                            list
+                            totals
+                        }
+                    }
+                    .safeAreaInset(edge: .bottom, spacing: 0) { checkoutBar }
+                }
             }
+            .animation(motion, value: items.map(\.id))
             .background(Theme.ground)
             .toolbar(.hidden, for: .navigationBar)
         }
@@ -51,24 +66,22 @@ struct CartSheet: View {
             Text(roomName.map { "Added to \($0)" } ?? "Everything added to your rooms")
                 .font(.forma(11)).foregroundStyle(Theme.muted).padding(.leading, 48)
         }
-        .padding(.horizontal, 12).padding(.top, 8)
+        .padding(.leading, 12).padding(.trailing, 24).padding(.top, 8)
     }
 
     private var list: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if projectID == nil {
-                    ForEach(sections, id: \.id) { section in
-                        sectionHeader(section.name, section.items)
-                        rows(section.items)
-                    }
-                } else {
-                    rows(items).padding(.top, 8)
-                    if let budget, let left = Optional(budget - RoomCart.subtotal(items).total), left > 0, left <= budget * 0.2 { warning(left: left, budget: budget) }
+        VStack(alignment: .leading, spacing: 0) {
+            if projectID == nil {
+                ForEach(sections, id: \.id) { section in
+                    sectionHeader(section.name, section.items)
+                    rows(section.items)
                 }
+            } else {
+                rows(items).padding(.top, 8)
+                if let budget, let left = Optional(budget - RoomCart.subtotal(items).total), left > 0, left <= budget * 0.2 { warning(left: left, budget: budget) }
             }
-            .padding(.horizontal, 24).padding(.bottom, 16)
         }
+        .padding(.horizontal, 24).padding(.bottom, 16)
     }
 
     private var sections: [(id: UUID, name: String, items: [CartItem])] {
@@ -96,11 +109,14 @@ struct CartSheet: View {
     private func rows(_ group: [CartItem]) -> some View {
         VStack(spacing: 0) {
             ForEach(group) { item in
-                Divider().overlay(Theme.hairline)
-                NavigationLink {
-                    ProductDetailView(product: item.product, mode: .inRoom(projectID: item.projectID, placementID: item.placement.id))
-                } label: { row(item) }
-                .buttonStyle(.plain)
+                VStack(spacing: 0) {
+                    Divider().overlay(Theme.hairline)
+                    NavigationLink {
+                        ProductDetailView(product: item.product, mode: .inRoom(projectID: item.projectID, placementID: item.placement.id))
+                    } label: { row(item) }
+                    .buttonStyle(.plain)
+                }
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
             Divider().overlay(Theme.hairline)
         }
@@ -116,14 +132,17 @@ struct CartSheet: View {
             .frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 16))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.product.title).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(2)
+                Text(item.product.title).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text(item.product.retailer).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1)
                 HStack(spacing: 8) {
                     Text(item.product.price).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: true, vertical: false)
                     if let budget, budget > 0, let price = item.product.priceUSD {
                         HStack(spacing: 4) {
                             Circle().fill(Theme.sage.opacity(price / budget >= 0.5 ? 1 : 0.55)).frame(width: 8, height: 8)
                             Text("\(Int((price / budget * 100).rounded()))% of budget").font(.forma(10)).foregroundStyle(Theme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -145,6 +164,7 @@ struct CartSheet: View {
             HStack(alignment: .firstTextBaseline) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(usd(spent)).font(.forma(20, bold: true)).foregroundStyle(Theme.ink)
+                        .contentTransition(.numericText(value: spent))
                     Text("of \(usd(budget))").font(.forma(12)).foregroundStyle(Theme.muted)
                 }
                 Spacer()
@@ -167,6 +187,7 @@ struct CartSheet: View {
         }
         .padding(.vertical, 14).padding(.horizontal, 16)
         .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20))
+        .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0), value: spent)
         .padding(.horizontal, 24).padding(.top, 16)
     }
 
@@ -183,13 +204,13 @@ struct CartSheet: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var footer: some View {
+    private var totals: some View {
         let sub = RoomCart.subtotal(items)
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Subtotal")
                 Spacer()
-                Text(usd(sub.total))
+                Text(usd(sub.total)).contentTransition(.numericText(value: sub.total))
             }
             .font(.forma(12)).foregroundStyle(Theme.muted)
             .accessibilityElement(children: .combine)
@@ -197,18 +218,25 @@ struct CartSheet: View {
                 Text("\(sub.unpriced) without a listed price").font(.forma(11)).foregroundStyle(Theme.muted)
             }
             Text("Prices exclude shipping and tax.").font(.forma(11)).foregroundStyle(Theme.muted)
+        }
+        .animation(motion, value: sub.total)
+        .padding(.horizontal, 24).padding(.bottom, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var checkoutBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
             // Agent checkout is not built: the button stays visible so the design reads, but inert.
             Button {} label: { Text("Check out") }
                 .buttonStyle(PillButtonStyle())
                 .disabled(true).opacity(0.5)
-                .padding(.top, 4)
                 .accessibilityIdentifier("checkout")
             Text("Checkout isn't available yet. Open each item's original listing to buy.")
                 .font(.forma(11)).foregroundStyle(Theme.muted)
         }
-        .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 20)
+        .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.ground)
+        .background(Theme.ground, ignoresSafeAreaEdges: .bottom)
         .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
     }
 

@@ -14,11 +14,23 @@ private func segmentColor(_ index: Int, count: Int, over: Bool) -> Color {
     over && index == count - 1 ? Theme.terracotta : segmentPalette[index % segmentPalette.count]
 }
 
+/// Press feedback for plain-label buttons; no motion under Reduce Motion.
+private struct BudgetPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : .spring(duration: 0.25, bounce: 0), value: configuration.isPressed)
+    }
+}
+
 /// Budget input with quick chips and "No limit" (Paper BG1). `amount` nil = no limit.
 struct BudgetField: View {
     @Binding var amount: Double?
     @State private var text = ""
     @FocusState private var focused: Bool
+    @Namespace private var chipNS
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var large = false
 
     private static let quick: [(id: String, label: String, value: Double?)] = [
@@ -38,10 +50,15 @@ struct BudgetField: View {
             amountField
             chips
             if !large {
-                Text(amount.map { "The picks will always add up to \(money($0)) or less. Prices exclude shipping and tax." }
-                     ?? "No limit. The agents pick the best match for each item.")
+                let helper = amount.map { "The picks will always add up to \(money($0)) or less. Prices exclude shipping and tax." }
+                    ?? "No limit. The agents pick the best match for each item."
+                Text(helper)
                     .font(.forma(11)).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(helper)
+                    .transition(.opacity)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: helper)
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "sparkle").font(.system(size: 12)).foregroundStyle(Theme.sage)
                         .padding(.top, 2).accessibilityHidden(true)
@@ -69,6 +86,7 @@ struct BudgetField: View {
             Text("$").font(.forma(size, bold: true))
             TextField("", text: $text, prompt: Text("No limit").font(.forma(size, bold: true)).foregroundStyle(Theme.muted))
                 .font(.forma(size, bold: true))
+                .contentTransition(.numericText())
                 .keyboardType(.decimalPad)
                 .focused($focused)
                 .accessibilityIdentifier("budgetAmount")
@@ -105,7 +123,9 @@ struct BudgetField: View {
                         .font(.forma(12, bold: selected))
                         .foregroundStyle(selected ? Theme.onSage : Theme.wood)
                         .padding(.horizontal, 14).frame(minHeight: 32)
-                        .background(selected ? Theme.sage : .clear, in: Capsule())
+                        .background {
+                            if selected { Capsule().fill(Theme.sage).matchedGeometryEffect(id: "chipFill", in: chipNS) }
+                        }
                         .overlay { if !selected { Capsule().strokeBorder(chipBorder, lineWidth: 1) } }
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
@@ -115,6 +135,7 @@ struct BudgetField: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .animation(reduceMotion ? nil : .spring(duration: 0.35, bounce: 0.1), value: amount)
     }
 
     private static func string(_ v: Double?) -> String {
@@ -137,14 +158,17 @@ private struct BudgetChipFlow: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let r = arrange(width: bounds.width, subviews: subviews)
         for (sub, p) in zip(subviews, r.points) {
-            sub.place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y), proposal: .unspecified)
+            sub.place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y),
+                      proposal: ProposedViewSize(width: min(bounds.width, sub.sizeThatFits(.unspecified).width), height: nil))
         }
     }
     private func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, points: [CGPoint]) {
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxX: CGFloat = 0
         var pts: [CGPoint] = []
         for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
+            var sz = s.sizeThatFits(.unspecified)
+            // A chip wider than the row wraps its own text instead of overflowing.
+            if sz.width > width { sz = s.sizeThatFits(ProposedViewSize(width: width, height: nil)) }
             if x > 0, x + sz.width > width { x = 0; y += rowH + spacing; rowH = 0 }
             pts.append(CGPoint(x: x, y: y))
             x += sz.width + spacing; rowH = max(rowH, sz.height); maxX = max(maxX, x - spacing)
@@ -162,6 +186,8 @@ struct BudgetBar: View {
     }
     let budget: Double
     let segments: [Segment]
+    @State private var appeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var total: Double { segments.reduce(0) { $0 + $1.amount } }
 
@@ -172,9 +198,12 @@ struct BudgetBar: View {
             let avail = geo.size.width - CGFloat(max(shown.count - 1, 0)) * 2
             HStack(spacing: 2) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { i, seg in
+                    let width = appeared ? max(0, avail * seg.amount / denom) : 0
                     Rectangle()
                         .fill(segmentColor(i, count: shown.count, over: total > budget))
-                        .frame(width: max(0, avail * seg.amount / denom))
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: total > budget)
+                        .frame(width: width)
+                        .animation(reduceMotion ? nil : .spring(duration: 0.5, bounce: 0).delay(Double(i) * 0.04), value: width)
                 }
                 Spacer(minLength: 0)
             }
@@ -183,6 +212,7 @@ struct BudgetBar: View {
             .clipShape(Capsule())
         }
         .frame(height: 10)
+        .onAppear { appeared = true }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(money(total)) of \(money(budget))")
     }
@@ -193,6 +223,8 @@ struct BudgetSummaryCard: View {
     let budget: Double
     let segments: [BudgetBar.Segment]
     var onChange: (() -> Void)? = nil
+    @State private var legendIn = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var spent: Double { segments.reduce(0) { $0 + $1.amount } }
     private var over: Bool { spent > budget }
@@ -204,11 +236,14 @@ struct BudgetSummaryCard: View {
                     Image(systemName: over ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                         .font(.system(size: 14))
                         .foregroundStyle(over ? Theme.terracotta : Theme.sage)
+                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                         .accessibilityHidden(true)
                     Text(over ? "Over budget" : "Within budget")
                         .font(.forma(12, bold: true))
                         .foregroundStyle(over ? Theme.terracotta : Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: over)
                 Spacer()
                 if let onChange {
                     Button(action: onChange) {
@@ -219,6 +254,7 @@ struct BudgetSummaryCard: View {
                         .foregroundStyle(Theme.wood)
                         .frame(minHeight: 44).contentShape(Rectangle())
                     }
+                    .buttonStyle(BudgetPressStyle())
                     .accessibilityIdentifier("changeBudget")
                     .accessibilityLabel("Change budget")
                 }
@@ -226,7 +262,13 @@ struct BudgetSummaryCard: View {
             .padding(.vertical, -8)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(money(spent)).font(.forma(32, bold: true))
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .contentTransition(.numericText(value: spent))
+                    .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0), value: spent)
                 Text("of \(money(budget))").font(.forma(13)).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.numericText(value: budget))
+                    .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0), value: budget)
             }
             .foregroundStyle(Theme.ink)
             .accessibilityElement(children: .combine)
@@ -236,12 +278,16 @@ struct BudgetSummaryCard: View {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { i, seg in
                     legendRow(dot: AnyView(Circle().fill(segmentColor(i, count: shown.count, over: over))),
                               label: seg.label, value: money(seg.amount), muted: false)
+                        .modifier(LegendFade(shown: legendIn, index: i, reduceMotion: reduceMotion))
                 }
                 legendRow(dot: AnyView(Circle().fill(Theme.hairline).overlay(Circle().strokeBorder(chipBorder, lineWidth: 1))),
                           label: "Left to spend", value: money(max(0, budget - spent)), muted: true)
+                    .modifier(LegendFade(shown: legendIn, index: segments.filter { $0.amount > 0 }.count, reduceMotion: reduceMotion))
             }
             Text("Prices exclude shipping and tax.").font(.forma(10)).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .onAppear { legendIn = true }
         .padding(.top, 18).padding(.bottom, 16).padding(.horizontal, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.sand, in: RoundedRectangle(cornerRadius: 24))
@@ -250,12 +296,23 @@ struct BudgetSummaryCard: View {
     private func legendRow(dot: AnyView, label: String, value: String, muted: Bool) -> some View {
         HStack(spacing: 8) {
             dot.frame(width: 10, height: 10)
-            Text(label).font(.forma(11)).lineLimit(1)
+            Text(label).font(.forma(11)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             Text(value).font(.forma(11))
+                .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0), value: value)
         }
         .foregroundStyle(muted ? Theme.muted : Theme.ink)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct LegendFade: ViewModifier {
+    let shown: Bool, index: Int, reduceMotion: Bool
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || reduceMotion ? 1 : 0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.3).delay(0.15 + Double(index) * 0.06), value: shown)
     }
 }
 
@@ -270,6 +327,9 @@ struct BudgetOptionsView: View {
     /// New budget that would fit the cheapest option.
     let onRaise: (Double) -> Void
     let onSkip: () -> Void
+    @State private var cardsIn = false
+    @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var left: Double { max(0, budget - spent) }
     private var raiseTo: Double? {
@@ -292,7 +352,12 @@ struct BudgetOptionsView: View {
                 if !options.isEmpty {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top),
                                         GridItem(.flexible(), alignment: .top)], spacing: 18) {
-                        ForEach(options) { card($0) }
+                        ForEach(Array(options.enumerated()), id: \.element.id) { i, p in
+                            card(p)
+                                .opacity(cardsIn || reduceMotion ? 1 : 0)
+                                .offset(y: cardsIn || reduceMotion ? 0 : 14)
+                                .animation(reduceMotion ? nil : .spring(duration: 0.45, bounce: 0).delay(Double(i) * 0.05), value: cardsIn)
+                        }
                     }
                     .padding(.top, 18)
                 }
@@ -303,10 +368,11 @@ struct BudgetOptionsView: View {
         .background(Theme.ground)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(itemName).font(.forma(14, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+                Text(itemName).font(.forma(14, bold: true)).foregroundStyle(Theme.ink).lineLimit(2).minimumScaleFactor(0.8)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { cardsIn = true }
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
     }
 
@@ -351,7 +417,7 @@ struct BudgetOptionsView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(p.price).font(.forma(13, bold: true))
                 Spacer(minLength: 4)
-                Text(p.retailer).font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1)
+                Text(p.retailer).font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(2).multilineTextAlignment(.trailing)
             }
             NavigationLink {
                 ProductDetailView(product: p, mode: .shopping(projectID: projectID, category: category))
@@ -371,6 +437,14 @@ struct BudgetOptionsView: View {
             if let n = raiseTo {
                 Button { onRaise(n) } label: { Text("Raise budget to \(money(n))") }
                     .buttonStyle(PillButtonStyle())
+                    .scaleEffect(pulse ? 1.04 : 1)
+                    .task {
+                        guard !reduceMotion else { return }
+                        try? await Task.sleep(for: .milliseconds(500))
+                        withAnimation(.spring(duration: 0.25, bounce: 0.3)) { pulse = true }
+                        try? await Task.sleep(for: .milliseconds(250))
+                        withAnimation(.spring(duration: 0.35, bounce: 0.3)) { pulse = false }
+                    }
                     .accessibilityIdentifier("raiseBudget")
             }
             Button(action: onSkip) { Text("Skip this item") }
@@ -395,6 +469,7 @@ struct BudgetSheet: View {
 
     @State private var amount: Double?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(current: Double?, picksTotal: Double?, note: String = "Picks update right away. Products already found stay the same.",
          applyTitle: String = "Update budget", onApply: @escaping (Double?) -> Void) {
@@ -407,6 +482,7 @@ struct BudgetSheet: View {
     }
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Change your budget").font(.forma(22, bold: true))
@@ -417,9 +493,13 @@ struct BudgetSheet: View {
             if let picksTotal {
                 HStack {
                     Text("Picks now").font(.forma(11)).foregroundStyle(Theme.muted)
-                    Spacer()
+                    Spacer(minLength: 8)
                     Text(amount.map { "\(money(picksTotal)) of \(money($0))" } ?? money(picksTotal))
                         .font(.forma(11, bold: true))
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .contentTransition(.numericText(value: amount ?? 0))
+                        .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0), value: amount)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -434,7 +514,10 @@ struct BudgetSheet: View {
         }
         .foregroundStyle(Theme.ink)
         .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollBounceBehavior(.basedOnSize)
         .background(Theme.ground)
         .presentationDetents([.height(500), .large])
         .presentationDragIndicator(.visible)
