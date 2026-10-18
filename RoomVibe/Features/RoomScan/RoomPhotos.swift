@@ -89,8 +89,8 @@ final class RoomPhotos {
     }
 
     /// Matched paint: median wall color seen in the photos. `walls` must be in the ARSession world frame.
-    static func wallColor(walls: [RoomModel.Box], photos: [Shot]) -> UIColor? {
-        guard let c = RoomPhoto.wallRGB(walls: walls, shots: photos.map { ($0.photo, $0.pixels) }) else { return nil }
+    static func wallColor(walls: [RoomModel.Box], objects: [RoomModel.Box] = [], photos: [Shot]) -> UIColor? {
+        guard let c = RoomPhoto.wallRGB(walls: walls, objects: objects, shots: photos.map { ($0.photo, $0.pixels) }) else { return nil }
         return UIColor(red: CGFloat(c.x), green: CGFloat(c.y), blue: CGFloat(c.z), alpha: 1)
     }
 }

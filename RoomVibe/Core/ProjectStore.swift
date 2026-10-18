@@ -150,7 +150,7 @@ final class ProjectStore {
                 try FileManager.default.copyItem(at: jpg, to: photos.appending(path: name))
             }
         }
-        project.wallFinish = "paint:#8E694E"   // Matched Paint from the scan
+        project.wallFinish = "paint:#CEB389"   // Matched Paint from the scan (scripts/paint_check)
         project.floorFinish = "oak"
         update(project)
     }

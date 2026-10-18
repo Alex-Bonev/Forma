@@ -79,7 +79,7 @@ struct RenderView: View {
         .onAppear {
             guard model.result == nil, !model.isRunning else { return }
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
-                model.setRoom(room, placements: project.placements, objects: store.objects)
+                model.setRoom(project: project, room: room, objects: store.objects)
             }
             model.start()
         }
@@ -187,10 +187,17 @@ final class RenderModel {
         cacheKey = Self.cacheKey(prompt: prompt, styleRef: styleRef)
     }
 
-    func setRoom(_ room: RoomModel, placements: [Placement], objects: [ScannedObject]) {
-        self.room = (room, placements, objects)
-        layout = LayoutDescription.text(room: room, placements: placements, objects: objects)
+    /// Describes the room as the Designer shows it (RenderInputs.scene) and picks scan photos as ground truth.
+    func setRoom(project: Project, room: RoomModel, objects: [ScannedObject]) {
+        let s = RenderInputs.scene(project: project, room: room, objects: objects)
+        self.room = (s.room, s.placements, s.objects)
+        layout = LayoutDescription.text(room: s.room, placements: s.placements, objects: s.objects,
+                                        finishes: RenderInputs.finishes(project), standIns: s.standIns)
+        photos = RenderInputs.photos(projectID: project.id)
     }
+
+    /// Real photos of the room from the scan (≤ 3), sent so the render matches how the room really looks.
+    private(set) var photos: [UIImage] = []
 
     var isLoading: Bool { if case .loading = phase { true } else { false } }
 
@@ -254,7 +261,8 @@ final class RenderModel {
             try Task.checkCancellation()
             let fullLayout = [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
             let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: fullLayout, view: view.rawValue,
-                                                        structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef)
+                                                        structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef,
+                                                        photos: photos)
             if let cacheURL, let beforeURL {
                 try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)

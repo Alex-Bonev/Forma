@@ -83,6 +83,26 @@ def test_render_image_numbering():
     assert "listed in the layout" not in both  # no layout, no legend promised
 
 
+def test_render_scan_photos(monkeypatch):
+    sent = {}
+
+    async def create(**kw):
+        sent.update(kw)
+        return type("I", (), {"output_image": type("O", (), {"data": "out"})()})()
+
+    fake_provider(monkeypatch, None)
+    fake_gemini(monkeypatch, create)
+    files = [("image", ("a.jpg", jpeg())), ("structure", ("s.png", jpeg(), "image/png"))]
+    files += [("photos", (f"p{i}.jpg", jpeg(300, 200), "image/jpeg")) for i in range(5)]
+    r = c.post("/render", headers=H, files=files)
+    assert r.status_code == 200
+    text = sent["input"][0]["text"]
+    assert "Images 3 to 5 are real photos" in text and "Add nothing that is not in image 1" in text
+    assert len(sent["input"]) == 1 + 2 + 3  # prompt, snapshot + map, photos capped at 3
+    one = main.render_prompt("cutaway", "", "", False, False, 1)
+    assert "Image 2 is a real photo" in one
+
+
 def test_render_combined_upload_cap():
     half = b"x" * (main.MAX_UPLOAD // 2 + 1)
     r = c.post("/render", headers=H, files={"image": ("a.jpg", half), "structure": ("s.png", half)})
