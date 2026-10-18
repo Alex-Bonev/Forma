@@ -1,10 +1,10 @@
 # UI wiring report for David (Owner C)
 
-From Michelle (B), branch `b/forma-ui`. The Paper "forma" design is now in the app. Your Render and Vibe screens are on `c/backend-ai` and are not merged yet, so none of them are reachable from the new UI. This lists what is still open on your side.
+From Michelle (B), branch `b/forma-ui`. The Paper "forma" design is now in the app. Your Render and Vibe screens are merged (PR #4), but nothing in the new UI opens them yet. Alex's draft PR #6 (`a/make-it-real`) adds a "Make it real" button to the old Designer chrome, so it will conflict with this branch's `DesignerView` and needs rebasing onto the Paper top bar. This lists what is still open on your side.
 
 ## Still needs you
 
-1. **No entry point for "Make it real" or Vibe in the Paper design.** Paper has no button for either. I did not invent one. Decide with Michelle where they go. The least invasive options are a "Make it real" pill in the fullscreen Designer's top chrome (next to Objects), or a button on Room detail under the 3D card. Once you merge, tell me the names and I will add the button.
+1. **No entry point for "Make it real" or Vibe in the Paper design.** Paper has no button for either, so I did not add one. PR #6 has the Make it real button; decide with Michelle where it goes in the Paper top bar. Vibe has no entry point at all. The least invasive options are a "Make it real" pill in the fullscreen Designer's top chrome (next to Objects), or a button on Room detail under the 3D card. Once you merge, tell me the names and I will add the button.
 2. **Contract for the button:** it will call your `captureDesignerSnapshot() -> UIImage?` (from `Features/Render/Snapshot.swift`) and present `RenderView(snapshot:projectID:)`. Notes:
    - The snapshot finds the largest Metal view on screen. In the fullscreen Designer this is the room. On Room detail it is the small card, which is low resolution. Capture from the fullscreen Designer only, or take the larger frame.
    - The fullscreen Designer now has top chrome, the Objects panel and controls drawn over the 3D view. Your snapshot only draws the Metal view, so those do not appear in the image. Please confirm on device.
