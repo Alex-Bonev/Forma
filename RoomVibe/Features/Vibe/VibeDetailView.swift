@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Paper frames "v2 · Q · Vibe details" and "v2 · R · delete confirm". Edits stay in `draft` until Save Changes.
+/// Paper frames "v2 · Q · Vibe details" and "v2 · R · delete confirm". Edits save as you go, like a room's name.
 struct VibeDetailView: View {
     @Environment(VibeLibrary.self) private var library
     @Environment(ProjectStore.self) private var store
@@ -19,101 +19,34 @@ struct VibeDetailView: View {
             Theme.ground.ignoresSafeArea()
             if let saved, let binding = Binding($draft) {
                 content(saved, binding)
-                    .safeAreaInset(edge: .bottom, spacing: 0) { actions(saved) }
                 if confirmDelete { deleteCard(saved) }
             }
         }
+        .animation(.spring(duration: 0.25, bounce: 0), value: confirmDelete)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { if draft == nil { draft = library.vibe(vibeID) } }
+        .task(id: draft) {   // autosave, debounced so typing doesn't write on every key
+            try? await Task.sleep(for: .milliseconds(600))
+            if !Task.isCancelled { save() }
+        }
+        .onDisappear(perform: save)
     }
 
     private func content(_ saved: SavedVibe, _ vibe: Binding<SavedVibe>) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Button { router.path.removeLast() } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.wood)
-                        .frame(width: 44, height: 44).background(Theme.sand, in: Circle())
-                }
-                .accessibilityLabel("Back")
-                .padding(.top, 12)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    TextField("", text: vibe.name, prompt: Text("Name your vibe").foregroundStyle(Theme.muted.opacity(0.6)))
-                        .font(.system(size: 34, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
-                        .onChange(of: vibe.wrappedValue.name) { nameError = false }
-                        .accessibilityIdentifier("vibeName")
-                    if nameError {
-                        Rectangle().fill(Theme.terracotta).frame(height: 1)
-                        Text("A vibe needs a name before it can be saved.").font(.forma(11)).foregroundStyle(Theme.terracotta)
-                    } else {
-                        Text(rooms.isEmpty ? "Not in a room yet" : "Used in \(rooms.joined(separator: ", "))")
-                            .font(.forma(11)).foregroundStyle(Theme.muted)
-                    }
-                }
-                .padding(.top, 20)
-
-                VibeCollage(vibe: saved).padding(.top, 20)
-
-                section("Colors") { SwatchRow(colors: vibe.wrappedValue.colors) }
-                section("Tags", spacing: 18) {
-                    TagEditor(title: "Styles", tags: vibe.styles)
-                    TagEditor(title: "Mood", tags: vibe.mood)
-                    TagEditor(title: "Materials", tags: vibe.materials)
-                    TagEditor(title: "Textures", tags: vibe.textures)
-                    TagEditor(title: "Motifs", tags: vibe.motifs)
-                    TagEditor(title: "Lighting", tags: vibe.lighting)
-                    TagEditor(title: "Furniture", tags: vibe.furnitureCharacteristics)
-                    TagEditor(title: "Avoid", tags: vibe.avoid, avoid: true)
-                }
-                section("Description", spacing: 8) {
-                    TextField("", text: vibe.description, axis: .vertical)
-                        .font(.forma(12)).foregroundStyle(Theme.wood).lineSpacing(5)
-                }
-                section("Custom instructions", spacing: 8) {
-                    TextField("", text: vibe.customInstructions,
-                              prompt: Text("Optional. e.g. keep the existing sofa, no dark colors.").foregroundStyle(Theme.muted),
-                              axis: .vertical)
-                        .font(.forma(12)).foregroundStyle(Theme.ink).lineSpacing(5).lineLimit(2...)
-                        .padding(.horizontal, 16).padding(.vertical, 14)
-                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.hairline))
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Created \(saved.createdAt.formatted(.dateTime.month(.abbreviated).day().year()))")
-                    Text("Updated \(saved.updatedAt.formatted(.dateTime.month(.abbreviated).day().year()))")
-                    if let notice { Text(notice).foregroundStyle(Theme.terracotta).padding(.top, 6) }
-                }
-                .font(.forma(11)).foregroundStyle(Theme.muted).padding(.top, 24)
+            VStack(alignment: .leading, spacing: 24) {
+                DetailBar(backTitle: "Vibes", actionTitle: "Delete", actionIcon: "trash",
+                          back: { router.path.removeLast() }, action: { confirmDelete = true })
+                    .accessibilityIdentifier("vibeBar")
+                VibeCollage(vibe: saved)
+                VibeFields(vibe: vibe, nameMissing: $nameError,
+                           caption: rooms.isEmpty ? "Not in a room yet" : "In \(rooms.joined(separator: ", "))")
+                if let notice { Text(notice).font(.forma(11)).foregroundStyle(Theme.terracotta) }
             }
-            .padding(.horizontal, 24).padding(.bottom, 28)
+            .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 28)
         }
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
-    }
-
-    private func section<C: View>(_ title: String, spacing: CGFloat = 12, @ViewBuilder _ body: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            Text(title).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
-            body()
-        }
-        .padding(.top, 28)
-    }
-
-    private func actions(_ saved: SavedVibe) -> some View {
-        HStack(spacing: 10) {
-            Button("Save Changes") { save() }
-                .buttonStyle(PillButtonStyle())
-                .disabled(draft == saved)
-                .opacity(draft == saved ? 0.4 : 1)
-                .accessibilityIdentifier("saveChanges")
-            Button { confirmDelete = true } label: {
-                HStack(spacing: 8) { Image(systemName: "trash"); Text("Delete") }
-            }
-            .buttonStyle(PillButtonStyle(filled: false))
-            .accessibilityIdentifier("deleteVibe")
-        }
-        .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
-        .background(Theme.ground)
-        .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
     }
 
     private func deleteCard(_ saved: SavedVibe) -> some View {
@@ -121,16 +54,16 @@ struct VibeDetailView: View {
             Theme.ink.opacity(0.4).ignoresSafeArea().onTapGesture { confirmDelete = false }
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Delete this vibe?").font(.system(size: 26, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
-                    Text("Its photos and profile are removed from this device. This can't be undone.")
-                        .font(.forma(12)).lineSpacing(5).foregroundStyle(Theme.wood)
+                    Text("Delete this vibe?").font(.forma(20, bold: true)).foregroundStyle(Theme.ink)
+                    Text("Its photos are removed too. This can't be undone.")
+                        .font(.forma(12)).lineSpacing(4).foregroundStyle(Theme.muted)
                 }
                 VStack(spacing: 10) {
                     Button("Delete") { delete(saved) }
                         .font(.forma(14)).foregroundStyle(Theme.onSage)
                         .frame(maxWidth: .infinity, minHeight: 48).background(Theme.terracotta, in: Capsule())
                         .accessibilityIdentifier("confirmDelete")
-                    Button("Keep vibe") { confirmDelete = false }.buttonStyle(PillButtonStyle(filled: false))
+                    Button("Keep") { confirmDelete = false }.buttonStyle(PillButtonStyle(filled: false))
                 }
             }
             .padding(24)
@@ -140,12 +73,12 @@ struct VibeDetailView: View {
         .transition(.opacity)
     }
 
+    /// Writes the draft when it differs from the library. A blank name is kept as a draft, not saved.
     private func save() {
-        guard let draft else { return }
+        guard let draft, draft != library.vibe(vibeID) else { return }
         guard !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { nameError = true; return }
         do {
             try library.update(draft)
-            self.draft = library.vibe(vibeID)
             notice = nil
         } catch {
             notice = "Couldn't save: \(error.localizedDescription)"
