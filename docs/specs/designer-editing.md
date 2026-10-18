@@ -2,7 +2,7 @@
 
 Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/forma-ui`, Michelle). Owner: A (Alex). This records the target behavior so later work stays consistent.
 
-> **Update:** Michelle decided the Paper design fully replaces the old Designer UI. The bottom selection card, bottom library buttons and "Show hidden" button are gone. All selection actions now live on the selected row of the **Objects panel** (top bar > Objects, opens automatically on selection). Behavior below is otherwise unchanged.
+> **Update:** Michelle decided the Paper design fully replaces the old Designer UI. The bottom selection card, bottom library buttons and "Show hidden" button are gone. All selection actions now live on the selected row of the **Objects panel** (top bar > Objects, opens automatically on selection). The panel is a **bottom sheet** (Paper E2, E2a, E2b, E3): drag its grabber to resize; it snaps to peek (180 pt), medium (440 pt) or large (screen height minus 120 pt). The room recenters above it, and the vibe pill and view controls stay where they are. Behavior below is otherwise unchanged.
 
 ## Behavior
 
@@ -16,7 +16,7 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
   - Marked items: **Use <suggestion>** (if Vision found one), **Replace**, **Scan real**.
   - Twist also rotates, unless the item is locked. No Done buttons (tap empty space deselects).
 - **Lock pill** (fullscreen Designer only, not the Room detail card):
-  - Tapping a placement shows a small `Lock` / `Locked` pill at the bottom-left, clear of the room and of the Objects panel.
+  - Tapping a placement shows a small `Lock` / `Locked` pill at the bottom-left, clear of the room and of the Objects panel: with the sheet open it rides 12 pt above the sheet's top edge and follows it as the sheet resizes.
   - Any other touch hides it: tapping empty space or another item, orbit, pan, zoom, or a drag. Selecting from the Objects panel or adding an item does not show it.
   - Tapping the pill toggles the lock. A locked placement ignores one-finger drag and twist. Rotate, Size and Remove in the Objects panel still work.
 - **Undo:** Remove and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.

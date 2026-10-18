@@ -2,15 +2,18 @@ import Foundation
 import UIKit
 
 /// Talks to our FastAPI backend (backend/main.py). The backend holds every provider key;
-/// the app only knows the base URL and a shared secret.
+/// the app only knows the base URL and a shared secret, plus the cloud user's access token when signed in.
 ///
 /// Config: optional `APIConfig.json` next to this file (gitignored, bundled automatically by the synced folder),
 /// written by `scripts/run_local.sh` for the demo server on the Mac:
-///   {"baseURL": "http://<mac-lan-ip>:8000", "secret": "<APP_SHARED_SECRET>"}
+///   {"baseURL": "http://<mac-lan-ip>:8000", "secret": "<APP_SHARED_SECRET>",
+///    "cloud": {"url": "https://<ref>.supabase.co", "key": "<publishable key>"}}
 /// Without it the app talks to `http://127.0.0.1:8000`, which only works from the Simulator.
 struct APIConfig: Codable {
     var baseURL: URL
     var secret: String
+    /// Supabase project for the library mirror (CloudSync). nil = the library stays on this device only.
+    var cloud: CloudConfig? = nil
 
     static let current: APIConfig = {
         if let url = Bundle.main.url(forResource: "APIConfig", withExtension: "json") {
@@ -157,13 +160,16 @@ enum APIError: LocalizedError {
 }
 
 final class APIClient {
-    static let shared = APIClient()
+    static let shared = APIClient(cloud: CloudClient.shared)
 
     private let config: APIConfig
     private let session: URLSession
+    private let cloud: CloudClient?
 
-    init(config: APIConfig = .current) {
+    /// `cloud`: where the Bearer token comes from; nil sends only the secret.
+    init(config: APIConfig = .current, cloud: CloudClient? = nil) {
         self.config = config
+        self.cloud = cloud
         let c = URLSessionConfiguration.default
         c.timeoutIntervalForRequest = 100   // backend gives providers 90 s
         session = URLSession(configuration: c)
@@ -268,7 +274,19 @@ final class APIClient {
         return req
     }
 
+    /// The token also works against the user's PostgREST and Storage data, so it only goes over https or to this
+    /// device; the demo's plain-http LAN server gets the secret alone.
+    private var sendsToken: Bool {
+        config.baseURL.scheme?.lowercased() == "https"
+            || ["127.0.0.1", "localhost", "::1", "[::1]"].contains(config.baseURL.host()?.lowercased() ?? "")
+    }
+
+    /// Adds the cloud user's access token (Bearer) when there is a session; the backend accepts it or the secret.
     private func send<T: Decodable>(_ req: URLRequest, as: T.Type) async throws -> T {
+        var req = req
+        if sendsToken, let token = await cloud?.accessToken() {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         let data: Data, response: URLResponse
         do {
             (data, response) = try await session.data(for: req)

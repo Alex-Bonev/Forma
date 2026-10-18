@@ -8,7 +8,7 @@ final class VibeShoppingTests: XCTestCase {
         app.launchArguments = ["-demo"]
         app.launch()
 
-        let makeItReal = app.buttons["Make it real"]
+        let makeItReal = app.buttons["Make it real"].firstMatch
         XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
         let openVibe = app.buttons["openVibe"]
         // A tap during launch (the Designer still settling) can be swallowed: retry until the render sheet opens.
@@ -69,11 +69,15 @@ final class VibeShoppingTests: XCTestCase {
     /// Plan -> place -> Make it real: a shopped product goes to /render with its photo (mock echoes the snapshot).
     func testMakeItRealRendersWithAShoppedProduct() {
         let app = startVibe("Cozy japandi nook")
-        let addButton = app.buttons["Add to room"].firstMatch
+        let addButton = app.buttons["Add to room"].firstMatch, added = app.buttons["Added to room"].firstMatch
         XCTAssertTrue(addButton.waitForExistence(timeout: 20))
-        if !addButton.isHittable { app.swipeUp() }
-        addButton.tap()
-        XCTAssertTrue(app.buttons["Added to room"].firstMatch.waitForExistence(timeout: 5))
+        // A tap while the list is still scrolling can miss: retry until the card says Added.
+        for _ in 0..<3 where !added.exists {
+            if !addButton.isHittable { app.swipeUp(); sleep(1) }
+            if addButton.isHittable { addButton.tap() }
+            _ = added.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(added.exists)
         sleep(3)   // the listing photo is cached in the background (ProductPhotos)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Close"].tap()
@@ -150,7 +154,7 @@ final class VibeShoppingTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
-    /// Make it real result has two tabs: Compare (slider) and Image (the render alone).
+    /// Make it real result has two tabs (Compare, Image) and reopens on the room's latest render.
     func testMakeItRealTabs() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
@@ -166,6 +170,12 @@ final class VibeShoppingTests: XCTestCase {
         XCTAssertTrue(app.images["Render"].waitForExistence(timeout: 2))
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("image"))
         XCTAssertFalse(app.staticTexts["Drag the divider to compare"].exists, "Image tab is the render alone")
+        // The room keeps its latest render: Make it real again shows it at once.
+        app.buttons["Close"].firstMatch.tap()
+        sleep(1)
+        generate(app)
+        let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
     }
 }
 
