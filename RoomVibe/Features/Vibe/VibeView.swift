@@ -595,7 +595,7 @@ private extension Color {
 extension Placement {
     /// A catalog stand-in for a shopped product: the matching CatalogItem (or a Custom Box), scaled to the listing's
     /// width/height/depth when it has them, at the room's center (the scene origin: RoomBuilder centers the room).
-    /// The Designer keeps it inside the walls.
+    /// The Designer moves it to the nearest free floor spot and keeps it inside the walls.
     static func forProduct(_ product: ShopProduct, category: String) -> Placement {
         let item = CatalogItem.item(category) ?? CatalogItem.item("custom_box")!
         var p = Placement(id: UUID(), objectID: Placement.catalogObjectID, position: .zero, yRotation: 0,
