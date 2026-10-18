@@ -6,8 +6,10 @@ struct Project: Codable, Identifiable, Hashable {
     var name: String
     var createdAt: Date
     var placements: [Placement] = []
-    /// Indices into the room's RoomPlan objects the user hid (false detections, or replaced by a placement).
+    /// Indices into the room's RoomPlan objects the user hid (false detections). "Show hidden" brings them back.
     var hiddenRoomObjects: [Int]? = nil
+    /// RoomPlan objects replaced by a placement (Replace, Size, Scan Real). Gone for good, never restored.
+    var removedRoomObjects: [Int]? = nil
     /// Finish.id for walls / floor (nil = default white / light).
     var wallFinish: String? = nil
     var floorFinish: String? = nil
@@ -30,6 +32,8 @@ struct Placement: Codable, Identifiable, Hashable {
     var catalogItem: String? = nil
     /// Per-axis size multiplier set in the editor (nil = natural size).
     var scale: SIMD3<Float>? = nil
+    /// Scale the item was created with (fitted to a scanned box); "Reset Size" returns here. nil = 1.
+    var fitScale: SIMD3<Float>? = nil
 
     static let catalogObjectID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }

@@ -105,6 +105,7 @@ struct HomeView: View {
             .task {
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
                 guard ProcessInfo.processInfo.arguments.contains("-demo") else { return }
+                if ProcessInfo.processInfo.arguments.contains("-fresh") { store.projects.forEach(store.delete) }   // UI tests
                 if store.projects.isEmpty { try? store.loadDemoData() }
                 if let first = store.projects.first { path = [first.id] }
             }

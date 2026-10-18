@@ -47,8 +47,9 @@ struct DesignerView: View {
     var body: some View {
         if let project, let room = store.room(for: project) {
             realityView(project: project, room: room)
-                .navigationTitle(project.name)
+                .navigationTitle(nameBinding)   // tap the title > Rename
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbarRole(.editor)
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
@@ -146,6 +147,15 @@ struct DesignerView: View {
             Image(systemName: "paintbrush").font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44)
         }
         .accessibilityLabel("Finishes")
+    }
+
+    private var nameBinding: Binding<String> {
+        Binding(get: { project?.name ?? "" }, set: { name in
+            let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard var p = project, !name.isEmpty else { return }
+            p.name = name
+            store.update(p)
+        })
     }
 
     private func finishBinding(_ key: WritableKeyPath<Project, String?>, default d: String) -> Binding<String> {
@@ -437,7 +447,7 @@ struct DesignerView: View {
         roomEntity = built.entity
         roomSize = built.size
         walls.collect(from: built.entity)
-        for i in project?.hiddenRoomObjects ?? [] { roomObjectEntity(i)?.isEnabled = false }
+        for i in (project?.hiddenRoomObjects ?? []) + (project?.removedRoomObjects ?? []) { roomObjectEntity(i)?.isEnabled = false }
         let wall = Finish.wall(project?.wallFinish), floor = Finish.floor(project?.floorFinish)
         Task {
             await Finish.apply(to: built.entity, wall: wall, floor: floor)
@@ -457,6 +467,7 @@ struct DesignerView: View {
             return
         }
         naturalSize[p.id] = e.visualBounds(relativeTo: e).extents
+        placed[p.id]?.removeFromParent()   // never two entities for one placement
         e.name = p.id.uuidString
         e.position = p.position
         e.orientation = simd_quatf(angle: p.yRotation, axis: [0, 1, 0])
@@ -496,7 +507,7 @@ struct DesignerView: View {
         selected = p.id
     }
 
-    /// Hide a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
+    /// Remove a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
     /// Catalog replacements are stretched to RoomPlan's measured box; scans keep their real scale.
     /// Wall-mounted objects keep their height (bottom of RoomPlan's box above the floor).
     private func replaceRoomObject(_ i: Int, object: ScannedObject? = nil, catalog: CatalogItem? = nil) async {
@@ -507,9 +518,9 @@ struct DesignerView: View {
         if box.label == RoomModel.markedLabel, let away = yawAwayFromNearestWall(pos) { yaw = away }
         var p = Placement(id: UUID(), objectID: object?.id ?? Placement.catalogObjectID,
                           position: [pos.x, bottom > 0.1 ? bottom : 0, pos.z], yRotation: yaw, catalogItem: catalog?.id)
-        if let catalog { p.scale = box.dimensions / catalog.size }
+        if let catalog { p.scale = box.dimensions / catalog.size; p.fitScale = p.scale }
         project.placements.append(p)
-        project.hiddenRoomObjects = Array(Set((project.hiddenRoomObjects ?? []) + [i])).sorted()
+        project.removedRoomObjects = Array(Set((project.removedRoomObjects ?? []) + [i])).sorted()
         store.update(project)
         anchor.isEnabled = false
         selectedRoomObject = nil
@@ -555,6 +566,7 @@ struct DesignerView: View {
             project.placements[k].objectID = object.id
             project.placements[k].catalogItem = nil
             project.placements[k].scale = nil
+            project.placements[k].fitScale = nil
             store.update(project)
             placed.removeValue(forKey: id)?.removeFromParent()
             await spawn(project.placements[k])
@@ -572,7 +584,7 @@ struct DesignerView: View {
                     dimensionRow("Width", id: id, axis: 0)
                     dimensionRow("Height", id: id, axis: 1)
                     dimensionRow("Depth", id: id, axis: 2)
-                    Button("Reset to Natural Size") { setScale(id) { _ in .one } }
+                    Button("Reset Size") { setScale(id) { _ in fitScale(id) } }
                 }
                 Section {
                     LabeledContent("Height above floor", value: String(format: "%.2f m", elevation(id)))
@@ -604,11 +616,14 @@ struct DesignerView: View {
     private func setScale(_ id: UUID, _ change: (SIMD3<Float>) -> SIMD3<Float>) {
         guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
         let s = change(project.placements[k].scale ?? .one)
+        guard s != (project.placements[k].scale ?? .one) else { return }
         project.placements[k].scale = s == .one ? nil : s
         store.update(project)
         placed[id]?.scale = s
         if let e = placed[id] { highlight(e) }   // resize the selection disc
     }
+
+    private func fitScale(_ id: UUID) -> SIMD3<Float> { project?.placements.first { $0.id == id }?.fitScale ?? .one }
 
     private func elevation(_ id: UUID) -> Float { project?.placements.first { $0.id == id }?.position.y ?? 0 }
 
@@ -643,20 +658,42 @@ struct DesignerView: View {
         selected = nil
     }
 
-    /// Soft disc on the floor under the selected object (a placement or scanned furniture).
+    /// Selection marker: blue corner brackets around the object's bounds plus a soft disc on the floor.
+    /// Parented to the object so it follows drags; bar thickness divides out the object's scale.
     private func highlight(_ e: Entity?) {
         highlighted?.findEntity(named: "selection")?.removeFromParent()
         highlighted = e
         guard let e else { return }
         let b = e.visualBounds(relativeTo: e)
-        let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
+        let marker = Entity()
+        marker.name = "selection"
         var m = UnlitMaterial(color: .systemBlue)
-        m.blending = .transparent(opacity: 0.4)
+        m.blending = .transparent(opacity: 0.35)
+        let radius = max(b.extents.x, b.extents.z) / 2 + 0.12
         let disc = ModelEntity(mesh: .generateCylinder(height: 0.004, radius: radius), materials: [m])
-        disc.name = "selection"
         // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
-        disc.position.y = 0.003 - e.position(relativeTo: scene).y
-        e.addChild(disc)
+        disc.position = [b.center.x, (0.003 - e.position(relativeTo: scene).y) / e.scale.y, b.center.z]
+        marker.addChild(disc)
+
+        let pad: Float = 0.05, t: Float = 0.03
+        var lo = b.min - pad, hi = b.max + pad
+        lo.y = b.min.y + t / 2   // bottom brackets sit on the floor, not in it
+        let size = hi - lo
+        let bar = UnlitMaterial(color: .systemBlue)
+        for corner in 0..<8 {
+            let c = SIMD3<Float>(corner & 1 == 0 ? lo.x : hi.x, corner & 2 == 0 ? lo.y : hi.y, corner & 4 == 0 ? lo.z : hi.z)
+            for axis in 0..<3 {
+                let len = min(0.3, size[axis] * 0.35)
+                var dims = SIMD3<Float>(repeating: t) / e.scale
+                dims[axis] = len
+                var pos = c
+                pos[axis] += (c[axis] == lo[axis] ? 1 : -1) * len / 2   // run inward from the corner
+                let piece = ModelEntity(mesh: .generateBox(size: dims), materials: [bar])
+                piece.position = pos
+                marker.addChild(piece)
+            }
+        }
+        e.addChild(marker)
     }
 
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.

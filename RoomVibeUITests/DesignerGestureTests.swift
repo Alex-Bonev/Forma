@@ -93,6 +93,48 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
     }
 
+    /// Size on scanned furniture swaps in one fitted item; Reset Size returns to that fit, and the original is gone for good.
+    func testResetSizeKeepsOneItem() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        sleep(2)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.58, dy: 0.45)).tap()   // scanned coffee table
+        XCTAssertTrue(app.buttons["Size"].waitForExistence(timeout: 3))
+        app.buttons["Size"].tap()
+        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 5))
+        app.steppers["Width, 1.10 m"].buttons["Increment"].tap()
+        XCTAssertTrue(app.steppers["Width, 1.15 m"].waitForExistence(timeout: 2))
+        app.buttons["Reset Size"].tap()
+        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
+        app.buttons["Done"].firstMatch.tap()
+        canvas.tap()   // deselect
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show'")).firstMatch.waitForExistence(timeout: 2),
+                       "a replaced scanned object is removed, not hidden")
+        XCUIScreen.main.screenshot().attach(named: "after-reset", to: self)
+    }
+
+    func testRenameRoom() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons["Demo Living Room, Actions Menu"].tap()
+        let rename = app.buttons["Rename"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 3))
+        rename.tap()
+        let field = app.navigationBars.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.clearAndType("Den\n")
+        XCTAssertTrue(app.navigationBars["Den"].waitForExistence(timeout: 3))
+        XCUIScreen.main.screenshot().attach(named: "renamed", to: self)
+        app.navigationBars["Den"].buttons["Den"].tap()
+        app.buttons["Rename"].tap()
+        app.navigationBars.textFields.firstMatch.clearAndType("Demo Living Room\n")
+    }
+
     /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
     func testMarkedItemSuggestion() {
         let app = XCUIApplication()

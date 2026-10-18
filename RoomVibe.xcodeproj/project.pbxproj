@@ -23,13 +23,17 @@
 /* Begin PBXFileReference section */
 		1B716CE99EA41667D4331F16 /* DesignerGestureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignerGestureTests.swift; sourceTree = "<group>"; };
 		8B48A8288098F4BFBCFF9E53 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
-		944CEFEF2389ED2B0780AD34 /* RoomVibe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RoomVibe.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AAFE176ACCDF943F97D493CF /* RoomVibeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RoomVibeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		944CEFEF2389ED2B0780AD34 /* RoomVibe.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RoomVibe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AAFE176ACCDF943F97D493CF /* RoomVibeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RoomVibeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		363F7AB0FB19849D85E8350E /* RoomVibe */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
 			path = RoomVibe;
 			sourceTree = "<group>";
 		};
