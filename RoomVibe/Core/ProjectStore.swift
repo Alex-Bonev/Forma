@@ -100,7 +100,33 @@ final class ProjectStore {
 
     /// Bundled fallback: sample room + sample chair. Works on any device, including Simulator.
     /// The chair is the bundled scan (sample_chair.usdz, see scripts/pull_demo_assets.py) or, if absent, a procedural one.
+    static let dormName = "UCLA dorm"
+
+    /// Adds the bundled UCLA dorm scan (room, scan photos, finishes) unless a room with that name exists.
+    /// Files: Resources/DemoData/UCLADorm/dorm_room.json, dorm_photos.json, dorm_photo_NNN.jpg (bundle is flat).
+    func addBundledDorm() throws {
+        guard !projects.contains(where: { $0.name.caseInsensitiveCompare(Self.dormName) == .orderedSame }),
+              let url = Bundle.main.url(forResource: "dorm_room", withExtension: "json") else { return }
+        let model = try JSONDecoder().decode(RoomModel.self, from: Data(contentsOf: url))
+        var project = try addRoom(name: Self.dormName, model: model) { dir in
+            let photos = dir.appending(path: "photos")
+            try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
+            if let index = Bundle.main.url(forResource: "dorm_photos", withExtension: "json") {
+                try FileManager.default.copyItem(at: index, to: photos.appending(path: "photos.json"))
+            }
+            for jpg in Bundle.main.urls(forResourcesWithExtension: "jpg", subdirectory: nil) ?? []
+            where jpg.lastPathComponent.hasPrefix("dorm_photo_") {
+                let name = String(jpg.lastPathComponent.dropFirst("dorm_photo_".count))
+                try FileManager.default.copyItem(at: jpg, to: photos.appending(path: name))
+            }
+        }
+        project.wallFinish = "paint:#8E694E"   // Matched Paint from the scan
+        project.floorFinish = "oak"
+        update(project)
+    }
+
     func loadDemoData() throws {
+        try addBundledDorm()
         guard let url = Bundle.main.url(forResource: "sample_room", withExtension: "json") else { return }
         let model = try JSONDecoder().decode(RoomModel.self, from: Data(contentsOf: url))
         try addRoom(name: "Demo Living Room", model: model)

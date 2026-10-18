@@ -667,7 +667,8 @@ struct DesignerView: View {
         roomEntity = built.entity
         roomSize = built.size
         outline = room.floorOutline
-        walls.collect(from: built.entity)
+        let offset = built.entity.children.first?.position ?? .zero   // RoomBuilder's content offset (-center)
+        walls.collect(from: built.entity, outline: room.floorOutline?.map { SIMD2($0.x + offset.x, $0.z + offset.z) })
         for i in (project?.hiddenRoomObjects ?? []) + (project?.removedRoomObjects ?? []) { roomObjectEntity(i)?.isEnabled = false }
         let wall = Finish.wall(project?.wallFinish), floor = Finish.floor(project?.floorFinish)
         Task {
@@ -1002,14 +1003,20 @@ struct DesignerView: View {
 final class WallCutaway {
     private var surfaces: [(entity: Entity, center: SIMD2<Float>, outward: SIMD2<Float>)] = []
 
-    func collect(from room: Entity) {
+    /// `outline`: floor polygon in scene x/z. With it, "outside" is the side of each wall away from the floor,
+    /// which is right for L-shaped rooms; without it, the side away from the room center (fine for boxes only).
+    func collect(from room: Entity, outline: [SIMD2<Float>]? = nil) {
         surfaces = []
+        let poly = (outline?.count ?? 0) >= 3 ? outline : nil
         func visit(_ e: Entity) {
             if e.name.hasPrefix(RoomBuilder.surfaceName) {
                 let p = e.position(relativeTo: nil)
                 let z = e.orientation(relativeTo: nil).act([0, 0, 1])
                 var n = simd_normalize(SIMD2(z.x, z.z))
-                if simd_dot(n, SIMD2(p.x, p.z)) < 0 { n = -n }   // room is centered on the origin
+                let c = SIMD2(p.x, p.z)
+                if let poly, FloorClamp.contains(c + n * 0.3, poly) != FloorClamp.contains(c - n * 0.3, poly) {
+                    if FloorClamp.contains(c + n * 0.3, poly) { n = -n }   // floor is on the +n side: outward is -n
+                } else if simd_dot(n, c) < 0 { n = -n }   // room is centered on the origin
                 surfaces.append((e, SIMD2(p.x, p.z), n))
             }
             e.children.forEach(visit)

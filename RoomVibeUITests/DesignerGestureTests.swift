@@ -182,6 +182,21 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Make it real"].waitForExistence(timeout: 5))
     }
 
+    /// Bundled UCLA dorm (L-shaped): screenshots from two sides to check the wall cutaway and the L-shaped floor.
+    func testDormCutaway() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh", "-room", "UCLA dorm"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        sleep(4)
+        XCUIScreen.main.screenshot().attach(named: "dorm-a", to: self)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(3)
+        XCUIScreen.main.screenshot().attach(named: "dorm-b", to: self)
+    }
+
     func testRenameRoom() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]

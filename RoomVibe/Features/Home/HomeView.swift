@@ -64,6 +64,11 @@ struct HomeView: View {
                 ObjectScanView()
             }
             .task {
+                // Shared team data: everyone gets the bundled UCLA dorm once (deleting it keeps it gone).
+                if !UserDefaults.standard.bool(forKey: "seededUCLADorm"), !ProcessInfo.processInfo.arguments.contains("-demo") {
+                    UserDefaults.standard.set(true, forKey: "seededUCLADorm")
+                    if store.projects.isEmpty { try? store.loadDemoData() } else { try? store.addBundledDorm() }
+                }
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
                 guard ProcessInfo.processInfo.arguments.contains("-demo"), !openedDemo else { return }
                 openedDemo = true   // .task reruns whenever Home reappears; jump in only once
@@ -71,7 +76,9 @@ struct HomeView: View {
                 if ProcessInfo.processInfo.arguments.contains("-fresh") { store.projects.forEach(store.delete) }   // UI tests
                 #endif
                 if store.projects.isEmpty { try? store.loadDemoData() }
-                if let first = store.projects.first { router.path = [.designer(first.id)] }
+                let args = ProcessInfo.processInfo.arguments
+                let named = args.firstIndex(of: "-room").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }   // `-room "UCLA dorm"`
+                if let p = store.projects.first(where: { $0.name == named }) ?? store.projects.first { router.path = [.designer(p.id)] }
             }
             .alert("Rename", isPresented: .constant(renaming != nil)) {
                 TextField("Name", text: $newName)
