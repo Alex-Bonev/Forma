@@ -57,7 +57,9 @@ final class VibeFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Lock"].exists, "and doesn't select anything")
         app.buttons["roomVibe"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'vibeOption'")).firstMatch.waitForExistence(timeout: 3))
-        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'vibeOption'")).firstMatch.tap()
+        let option = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'vibeOption'")).firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
         XCTAssertTrue(app.buttons["roomVibe"].label.hasPrefix("Vibe: "), "pill shows the applied vibe")
     }
 

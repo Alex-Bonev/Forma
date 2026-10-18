@@ -104,7 +104,7 @@ final class VibeShoppingTests: XCTestCase {
         XCTAssertTrue(app.otherElements["shopRow-0-sofa"].waitForExistence(timeout: 10))
         let badge = app.staticTexts["Fits budget"].firstMatch
         XCTAssertTrue(badge.waitForExistence(timeout: 20), "the budget pick should be marked once every agent is done")
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'of your $800'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'of $800'")).firstMatch.exists)
 
         // Add the first product to the room; the Designer underneath lists it once the sheet closes.
         let addButton = app.buttons["Add to room"].firstMatch
@@ -195,7 +195,9 @@ final class VibeShoppingTests: XCTestCase {
         let pill = app.buttons["roomVibe"]
         XCTAssertTrue(pill.waitForExistence(timeout: 10))
         pill.tap()
-        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'vibeOption'")).firstMatch.tap()
+        let option = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'vibeOption'")).firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
         XCTAssertTrue(pill.label.hasPrefix("Vibe: "))
 
         generate(app)

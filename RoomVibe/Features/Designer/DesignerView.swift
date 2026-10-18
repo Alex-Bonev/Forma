@@ -711,9 +711,13 @@ struct DesignerView: View {
                         HStack(spacing: 10) {
                             Image(systemName: info.symbol).font(.system(size: 13)).foregroundStyle(Theme.wood)
                                 .frame(width: 28, height: 28).background(Theme.tiles[0], in: RoundedRectangle(cornerRadius: 8))
-                            (Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
-                                + Text("  \(info.dims)").font(.forma(11)).foregroundStyle(Theme.muted))
-                                .lineLimit(1).minimumScaleFactor(0.75)
+                            // Two texts on one baseline, not one concatenated Text: the name stays its own element
+                            // (VoiceOver reads it alone, and UI tests find the row by name).
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(info.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                                Text(info.dims).font(.forma(11)).foregroundStyle(Theme.muted)
+                            }
+                            .lineLimit(1).minimumScaleFactor(0.75)
                             Spacer(minLength: 4)
                             if case .placement(let id) = row, isLocked(id) {
                                 Image(systemName: "lock.fill").font(.system(size: 12)).foregroundStyle(Theme.muted)
