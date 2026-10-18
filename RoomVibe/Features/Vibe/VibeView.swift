@@ -31,11 +31,22 @@ struct VibeView: View {
                     if model.shopRows != nil || model.shopError != nil { shoppingSection } else { productsSection }
                 }
             }
-            .padding(.vertical)
+            .padding(.vertical, 16)
         }
-        .navigationTitle("Vibe")
-        .navigationBarTitleDisplayMode(.inline)
+        .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
+        .background(Theme.ground.ignoresSafeArea())
+        .navigationTitle("Shop a vibe")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Theme.ground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Shop a vibe").font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+            }
+        }
+        .tint(Theme.ink)
+        .environment(\.colorScheme, .light)   // Paper is light-only
         .onAppear {
             if let preset, !model.started {
                 photo = preset
@@ -63,54 +74,69 @@ struct VibeView: View {
     private var canStart: Bool { photo != nil || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private var input: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 PhotosPicker(selection: $pick, matching: .images) {
                     Group {
                         if let photo {
                             Image(uiImage: photo).resizable().scaledToFill()
                         } else {
-                            Image(systemName: "photo.badge.plus").font(.title2)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(.quaternary)
+                            VStack(spacing: 4) {
+                                Image(systemName: "plus").font(.system(size: 16))
+                                Text("Photo").font(.forma(10))
+                            }
+                            .foregroundStyle(Theme.wood)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Theme.sand)
                         }
                     }
-                    .frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
                 }
                 .accessibilityLabel(photo == nil ? "Add an inspiration photo" : "Change the inspiration photo")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Describe a vibe, add a photo, or both").font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Describe a vibe").font(.system(size: 26, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink)
                         // Hidden stage trigger (kept in Release): long-press the title on a fresh screen to show the
                         // bundled demo result.
                         .onLongPressGesture(minimumDuration: 0.8) {
                             if !model.started, let demo = VibeDemo.load() { prompt = demo.prompt; model.showDemo(demo) }
                         }
-                    Text("We'll restyle your room and send agents to shop for real pieces.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("Add a photo, words, or both. We restyle your room and agents shop real stores for it.")
+                        .font(.forma(11)).foregroundStyle(Theme.muted)
                 }
                 Spacer(minLength: 0)
                 if photo != nil {
-                    Button { photo = nil } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove photo")
+                    Button { photo = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
+                            .frame(width: 32, height: 32).background(Theme.sand, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())   // 44 pt hit target
+                    }
+                    .accessibilityLabel("Remove photo")
                 }
             }
-            TextField("Cozy reading nook, warm wood, under $800", text: $prompt, axis: .vertical)
+            TextField("", text: $prompt, prompt: Text("Cozy reading nook, warm wood, under $800").foregroundStyle(Theme.muted),
+                      axis: .vertical)
+                .font(.forma(12)).foregroundStyle(Theme.ink)
                 .lineLimit(1...4)
-                .textFieldStyle(.roundedBorder)
+                .padding(16)
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.hairline))
                 .focused($promptFocused)
                 .submitLabel(.go)
                 .onSubmit(start)
                 .accessibilityIdentifier("vibePrompt")
             Button(action: start) {
-                Label(model.started ? "Find a new vibe" : "Find my vibe", systemImage: "sparkles").frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                    Text(model.started ? "Find a new vibe" : "Find my vibe")
+                }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PillButtonStyle())
             .disabled(!canStart)
+            .opacity(canStart ? 1 : 0.4)
             .accessibilityIdentifier("vibeStart")
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
+        .padding(.horizontal, 24)
     }
 
     private func start() {
@@ -305,14 +331,35 @@ struct VibeView: View {
     }
 
     private func errorCard(_ message: String, retry: (() async -> Void)? = nil) -> some View {
-        HStack {
-            Label(message, systemImage: "exclamationmark.triangle").font(.footnote)
-            Spacer()
-            if let retry { Button("Retry") { Task { await retry() } }.buttonStyle(.bordered) }
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 15)).foregroundStyle(Theme.terracotta)
+            Text(message).font(.forma(12)).foregroundStyle(Theme.ink)
+            Spacer(minLength: 8)
+            if let retry { Button("Retry") { Task { await retry() } }.buttonStyle(SmallPillStyle(filled: false)) }
         }
-        .padding(12)
-        .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
+        .padding(16)
+        .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.terracotta.opacity(0.35)))
+        .padding(.horizontal, 24)
+    }
+}
+
+/// Compact pill for row-level actions (Retry, Add, Open, Try quick search): sage filled, or a 1 pt ink outline.
+private struct SmallPillStyle: ButtonStyle {
+    var filled = true
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.forma(12, bold: true))
+            .lineLimit(1)
+            .foregroundStyle(filled ? Theme.onSage : Theme.ink)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 34)
+            .background(filled ? Theme.sage : .clear, in: Capsule())
+            .overlay { if !filled { Capsule().strokeBorder(Theme.ink, lineWidth: 1) } }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
+            .padding(.vertical, 5)   // 34 pt pill, 44 pt hit target
+            .contentShape(Rectangle())
     }
 }
 
