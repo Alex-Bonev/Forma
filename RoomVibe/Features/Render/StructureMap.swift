@@ -27,6 +27,11 @@ enum StructureMap {
 
     enum Kind: CaseIterable {
         case floor, wall, door, window, sofa, chair, table, bed, storage, television, otherFurniture, placedObject
+        /// Shopped products, numbered like the product photos sent with the render (RenderInputs.scene).
+        /// Only 3: the depth shading keeps hue, and these are the hues left clear of the other kinds.
+        case product1, product2, product3
+
+        static let products: [Kind] = [.product1, .product2, .product3]
 
         var color: SIMD3<Float> {
             switch self {
@@ -42,6 +47,9 @@ enum StructureMap {
             case .television: [0, 0, 0.35]
             case .otherFurniture: [1, 0, 1]
             case .placedObject: [0, 0.3, 1]
+            case .product1: [1, 0.55, 0.75]
+            case .product2: [0.6, 1, 0.2]
+            case .product3: [0, 1, 0.5]
             }
         }
 
@@ -59,6 +67,9 @@ enum StructureMap {
             case .television: "navy"
             case .otherFurniture: "magenta"
             case .placedObject: "blue"
+            case .product1: "pink"
+            case .product2: "lime"
+            case .product3: "mint"
             }
         }
 
@@ -76,6 +87,9 @@ enum StructureMap {
             case .television: "TV"
             case .otherFurniture: "other furniture"
             case .placedObject: "the detailed 3D model(s)"
+            case .product1: "product 1"
+            case .product2: "product 2"
+            case .product3: "product 3"
             }
         }
 
@@ -93,13 +107,14 @@ enum StructureMap {
     }
 
     /// `width`: output pixels across; height follows the camera's view aspect. Call off the main thread.
+    /// `products`: placement ids of shopped products in product order (≤ 3), each drawn in its own color.
     /// Returns nil when cancelled.
     static func render(room: RoomModel, placements: [Placement], objects: [ScannedObject],
-                       camera: RenderCamera, width: Int = 384) -> Output? {
+                       camera: RenderCamera, products: [UUID] = [], width: Int = 384) -> Output? {
         guard camera.viewSize.width >= 1, camera.viewSize.height >= 1, width > 0 else { return nil }
         let aspect = min(max(Float(camera.viewSize.height / camera.viewSize.width), 1.0 / 3), 3)
         let height = Int((Float(width) * aspect).rounded())
-        let solids = scene(room: room, placements: placements, objects: objects, wallScale: camera.wallScale)
+        let solids = scene(room: room, placements: placements, objects: objects, products: products, wallScale: camera.wallScale)
 
         let origin = SIMD3(camera.transform.columns.3.x, camera.transform.columns.3.y, camera.transform.columns.3.z)
         let rot = simd_float3x3(SIMD3(camera.transform.columns.0.x, camera.transform.columns.0.y, camera.transform.columns.0.z),
@@ -155,7 +170,8 @@ enum StructureMap {
     }
 
     /// Room boxes moved into the Designer's frame (RoomBuilder centers the room and puts the floor at y = 0).
-    private static func scene(room: RoomModel, placements: [Placement], objects: [ScannedObject], wallScale: Float) -> [Solid] {
+    private static func scene(room: RoomModel, placements: [Placement], objects: [ScannedObject], products: [UUID],
+                              wallScale: Float) -> [Solid] {
         let outline = room.walls.isEmpty ? room.objects : room.walls
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude), hi = -lo
         for b in outline {   // same bounds as RoomBuilder.build
@@ -192,7 +208,8 @@ enum StructureMap {
             guard let o = objects.first(where: { $0.id == p.objectID }) else { continue }
             let m = simd_float4x4(translation: p.position + [0, o.boundingBox.y / 2, 0])
                 * simd_float4x4(simd_quatf(angle: p.yRotation, axis: [0, 1, 0]))
-            add(m, o.boundingBox, .placedObject)
+            let n = products.prefix(Kind.products.count).firstIndex(of: p.id)
+            add(m, o.boundingBox, n.map { Kind.products[$0] } ?? .placedObject)
         }
         return solids
     }
