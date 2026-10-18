@@ -78,20 +78,21 @@ struct VibeView: View {
         }
         .sheet(isPresented: $showCart) { CartSheet(projectID: model.projectID) }
         .sheet(isPresented: $showBudgetSheet) {
-            BudgetSheet(current: model.budgetUSD, picksTotal: model.totalUSD) { new in Task { await model.applyBudget(new) } }
+            BudgetSheet(current: model.budgetUSD, picksTotal: model.totalUSD) { new in changeBudget(new) }
         }
         .onChange(of: model.style?.budgetUsd) { _, parsed in
             if budget == nil, let parsed { budget = parsed }   // only fills an empty field
         }
+        .onChange(of: budget) { _, new in saveBudget(new) }
         .onChange(of: model.settledBudget) { _, settled in
-            guard var room else { return }
-            room.budgetUSD = settled
-            store.update(room)
+            if let settled { saveBudget(settled) }   // a reset run (nil) leaves the room's budget alone
         }
         .overlay { flightLayer }
         .tint(Theme.ink)
         .environment(\.colorScheme, .light)   // Paper is light-only
         .onAppear {
+            // The room's budget, unless a restored run shows a different one.
+            if budget == nil, model.budgetUSD == nil || model.budgetUSD == room?.budgetUSD { budget = room?.budgetUSD }
             if let preset, !model.started {
                 photo = preset
                 model.begin(with: preset, prompt: "")
@@ -116,6 +117,20 @@ struct VibeView: View {
     }
 
     private var room: Project? { store.projects.first { $0.id == model.projectID } }
+
+    /// The room owns the budget (nil = no limit). The demo run never writes it.
+    private func saveBudget(_ usd: Double?) {
+        guard !model.isDemo, var room, room.budgetUSD != usd else { return }
+        room.budgetUSD = usd
+        store.update(room)
+    }
+
+    /// Budget sheet or Raise budget: re-picks the set and saves the choice, No limit included.
+    private func changeBudget(_ usd: Double?) {
+        saveBudget(usd)
+        budget = usd   // the field follows, so the next run uses it
+        Task { await model.applyBudget(usd) }
+    }
     /// The room's saved vibe, unless the user set it aside for this screen.
     private var roomVibe: SavedVibe? { useRoomVibe ? room?.vibeID.flatMap(library.vibe) : nil }
 
@@ -218,6 +233,7 @@ struct VibeView: View {
         guard canStart else { return }
         promptFocused = false
         model.budgetOverride = budget
+        if let budget { saveBudget(budget) }
         let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if let vibe = roomVibe, let room {
             // What the user typed goes first so a budget survives the backend's prompt cap.
@@ -428,7 +444,7 @@ struct VibeView: View {
                         Spacer()
                         NavigationLink {
                             BudgetOptionsWrapper(row: row, budget: budget, spent: model.totalUSD ?? 0, options: over,
-                                                 projectID: model.projectID) { new in Task { await model.applyBudget(new) } }
+                                                 projectID: model.projectID) { new in changeBudget(new) }
                         } label: {
                             Text("See \(over.count) options").font(.forma(11, bold: true)).foregroundStyle(Theme.ink)
                         }
@@ -690,7 +706,7 @@ final class VibeModel {
     private var shopDone = false
     /// Budget the user typed into the field; beats the one the backend parsed from the prompt.
     var budgetOverride: Double?
-    /// The budget once the run has settled, nil before (and for a run without one). The screen saves it to the project.
+    /// The budget once the run has settled, nil before (and for a run without one). The screen saves it to the room.
     var settledBudget: Double? { shopDone && !isDemo ? budgetUSD : nil }
     private var poller: Task<Void, Never>?
     /// The current restyle is already on disk.
