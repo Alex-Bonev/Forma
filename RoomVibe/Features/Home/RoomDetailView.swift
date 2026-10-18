@@ -11,6 +11,7 @@ struct RoomDetailView: View {
     @State private var confirmRescan = false
     @State private var rescanning = false
     @State private var toastVisible = false
+    @State private var showStage = false   // 3D card mounts after the push settles (building it mid-transition stutters)
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
 
@@ -23,14 +24,20 @@ struct RoomDetailView: View {
                     DetailBar(backTitle: added == nil ? "Rooms" : "Library", actionTitle: "Rescan", actionIcon: "arrow.clockwise",
                               actionDisabled: !Capabilities.canScanRoom,
                               back: { dismiss() }, action: { confirmRescan = true })
-                    NameField(text: $name, commit: rename)
+                    NameField(text: Binding(get: { name.isEmpty ? project.name : name }, set: { name = $0 }), commit: rename)
                     HStack {
                         Measure(label: "Width", value: String(format: "%.1f m", hi.x - lo.x))
                         Measure(label: "Depth", value: String(format: "%.1f m", hi.z - lo.z))
                         Measure(label: "Height", value: String(format: "%.1f m", height))
                     }
                     StageCard {
-                        DesignerView(projectID: projectID, style: .card) { router.path.append(.designer(projectID)) }
+                        // Fixed space from the first frame: an empty card collapsed, then pushed the list down.
+                        Color.clear.overlay { if showStage {
+                            DesignerView(projectID: projectID, style: .card,
+                                         onExpand: { router.path.append(.designer(projectID)) },
+                                         onMakeItReal: { router.path.append(.designer(projectID, framing: true)) })
+                                .transition(.opacity)
+                        } }
                     }
                     .overlay(alignment: .topLeading) {
                         if toastVisible, let n = addedName(project) { Toast(text: "\(n) added").padding(12).transition(.opacity.combined(with: .move(edge: .top))) }
@@ -45,8 +52,12 @@ struct RoomDetailView: View {
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { name = project.name }
             .task {
+                try? await Task.sleep(for: .milliseconds(800))   // after the zoom push has fully landed
+                withAnimation(.easeInOut(duration: 0.8)) { showStage = true }
+            }
+            .task {
                 guard added != nil else { return }
-                withAnimation(.easeOut(duration: 0.3)) { toastVisible = true }
+                withAnimation(.spring(duration: 0.35, bounce: 0.25)) { toastVisible = true }
                 try? await Task.sleep(for: .seconds(2.5))
                 withAnimation(.easeOut(duration: 0.3)) { toastVisible = false }
             }

@@ -191,6 +191,10 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
         sleep(2)
         app.buttons["Make it real"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Eye level"].waitForExistence(timeout: 5), "Make it real starts by picking the angle")
+        app.buttons["Eye level"].tap()
+        app.buttons["Turn"].tap()
+        generate(app)
         XCTAssertTrue(app.navigationBars["Make it real"].waitForExistence(timeout: 5))
     }
 
@@ -233,15 +237,19 @@ final class DesignerGestureTests: XCTestCase {
     /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
     func testMarkedItemSuggestion() {
         let app = XCUIApplication()
-        app.launchArguments = ["-demo"]
+        app.launchArguments = ["-demo", "-fresh"]   // an earlier test may have used up the marked item
         app.launch()
         let canvas = app.otherElements["designer-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         sleep(2)
         app.buttons["Objects"].tap()
-        app.staticTexts["Marked item"].firstMatch.tap()
         let use = app.buttons["Use Plant"]
-        XCTAssertTrue(use.waitForExistence(timeout: 3), "marked item should offer its Vision suggestion")
+        for _ in 0..<3 where !use.exists {   // the panel may still be sliding in and swallow the row tap
+            let row = app.staticTexts["Marked item"].firstMatch
+            if row.waitForExistence(timeout: 3), row.isHittable { row.tap() }
+            _ = use.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(use.exists, "marked item should offer its Vision suggestion")
         XCUIScreen.main.screenshot().attach(named: "after-suggestion", to: self)
         use.tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))

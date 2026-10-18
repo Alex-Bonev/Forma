@@ -15,6 +15,7 @@ struct HomeView: View {
     @State private var objectQuery = ""
 
     private enum Rename { case room(Project), object(ScannedObject) }
+    @Namespace private var zoom   // Home thumbnails zoom into their detail screens
 
     var body: some View {
         NavigationStack(path: $router.path) {
@@ -33,6 +34,9 @@ struct HomeView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
                 .padding(.bottom, 24)
+                // New rooms / scans slide in; counts roll (SectionHeader).
+                .animation(.spring(duration: 0.4, bounce: 0.15), value: store.projects.map(\.id))
+                .animation(.spring(duration: 0.4, bounce: 0.15), value: store.objects.map(\.id))
             }
             .scrollIndicators(.hidden)
             .background(Theme.ground.ignoresSafeArea())
@@ -46,9 +50,12 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self) { route in
                 Group { switch route {
-                case .room(let id, let added): RoomDetailView(projectID: id, added: added)
-                case .object(let id): ObjectDetailView(objectID: id)
-                case .designer(let id, let opensCatalog): DesignerView(projectID: id, opensCatalog: opensCatalog)
+                case .room(let id, let added):
+                    RoomDetailView(projectID: id, added: added).navigationTransition(.zoom(sourceID: id, in: zoom))
+                case .object(let id, let picks):
+                    ObjectDetailView(objectID: id, picks: picks).navigationTransition(.zoom(sourceID: id, in: zoom))
+                case .designer(let id, let opensCatalog, let framing):
+                    DesignerView(projectID: id, opensCatalog: opensCatalog, opensFraming: framing)
                 case .newVibe(let applyTo): CreateVibeView(applyTo: applyTo)
                 case .vibe(let id): VibeDetailView(vibeID: id)
                 } }
@@ -76,7 +83,8 @@ struct HomeView: View {
                 RoomScanView { project in router.path.append(.room(project.id)) }
             }
             .fullScreenCover(isPresented: $scanningObject) {
-                ObjectScanView()
+                // Fresh scan: open it with "Add to a room" ready, the next thing you'd do.
+                ObjectScanView { object in router.path.append(.object(object.id, picks: !store.projects.isEmpty)) }
             }
             .task {
                 // Shared team data: everyone gets the bundled UCLA dorm once (deleting it keeps it gone).
@@ -130,8 +138,11 @@ struct HomeView: View {
                     .font(.forma(12)).foregroundStyle(Theme.muted).padding(.vertical, 12)
             }
             ForEach(rooms) { project in
-                NavigationLink(value: Route.room(project.id)) { RoomRow(project: project) }
+                Button { open(.room(project.id)) } label: {
+                    RoomRow(project: project).matchedTransitionSource(id: project.id, in: zoom)
+                }
                     .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                     .contextMenu {
                         Button("Rename", systemImage: "pencil") { startRename(.room(project), project.name) }
                         Button("Delete", systemImage: "trash", role: .destructive) { store.delete(project) }
@@ -150,9 +161,11 @@ struct HomeView: View {
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: 3), spacing: 16) {
                 ForEach(Array(objects.enumerated()), id: \.element.id) { i, object in
-                    NavigationLink(value: Route.object(object.id)) {
+                    Button { open(.object(object.id)) } label: {
                         ObjectTile(object: object, tint: Theme.tiles[i % Theme.tiles.count])
+                            .matchedTransitionSource(id: object.id, in: zoom)
                     }
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
                     .buttonStyle(.plain)
                     .contentShape(Rectangle())
                         .contextMenu {
@@ -162,6 +175,11 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// Push with a slow, soft zoom instead of the default quick one.
+    private func open(_ route: Route) {
+        withTransaction(Transaction(animation: .smooth(duration: 0.75))) { router.path.append(route) }
     }
 
     private func matches(_ name: String, _ query: String) -> Bool {

@@ -62,6 +62,7 @@ struct SectionHeader: View {
             Text(title).font(.forma(13, bold: true))
             Spacer()
             Text(String(format: "%02d", count)).font(.forma(12)).foregroundStyle(Theme.muted)
+                .contentTransition(.numericText(value: Double(count)))
         }
         .foregroundStyle(Theme.ink)
         .accessibilityElement(children: .combine)

@@ -38,6 +38,23 @@ Renders were more elaborate than the real room. Causes:
   Faithful rules apply only to a plain Make it real.
 - Shopped products (`Placement.product`, from Vibe) are named by their listing title in the layout.
 
+## Angle and accuracy (round 2)
+
+- **Angle first.** Make it real opens an angle bar on the fullscreen Designer:
+  - Overview / Top / Eye level, a quarter-turn button, free orbit; then Generate, or open the Last render.
+  - The Room-detail card's Make it real pushes the fullscreen Designer straight into this bar.
+- **Eye level** (`OrbitCamera.show(.eye, side:floor:clear:)`):
+  - Samples the real floor outline on a 25 cm grid and aims at its middle.
+  - Stands as far toward the requested corner as a spot allows: on the floor, 40 cm off walls, 30 cm clear of furniture, line of sight on the floor, and nothing within 1.2 m in front.
+  - 1.5 m high, 80° vertical lens.
+- **Scan photos are opt-in** ("Real-photo look", off by default). With photos, a real dorm render copied a second loft bed and shelving that the 3D model doesn't have. Without them, the furniture, L-shape and size were exact.
+- **Layout text:**
+  - "Room exactly W x D m … keep this size and these proportions".
+  - A note when the floor isn't a rectangle.
+  - "Furniture, exactly N pieces and nothing else".
+- **Prompt:** keep image 1's framing, size and proportions; photos only for looks, never objects.
+- **Snapshot:** picks the Metal view closest to the Designer's measured size (on a tie, the innermost). Before this, fullscreen fell back to the window and sent the app's buttons to the model.
+
 ## Checks
 
 - `backend/test_main.py::test_render_scan_photos`: image numbering, the 3-photo cap and the rules text.

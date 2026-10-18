@@ -15,6 +15,15 @@ struct DesignerView: View {
     var onExpand: (() -> Void)? = nil
     /// Full only: open the Add Item catalog as soon as the editor appears (Room detail's "+ Add object").
     var opensCatalog = false
+    /// Full only: open straight into choosing the "Make it real" angle (the card's Make it real button).
+    var opensFraming = false
+    /// Card only: Make it real hands off to the full editor, where the angle is chosen.
+    var onMakeItReal: (() -> Void)? = nil
+    @State private var framing = false          // choosing the camera angle for Make it real
+    @State private var angle = OrbitCamera.Angle.overview
+    @State private var side = 0
+    @State private var hasLastRender = false
+    @AppStorage(RenderInputs.usePhotosKey) private var usePhotos = false
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var showObjects = false
@@ -69,13 +78,102 @@ struct DesignerView: View {
         let id = UUID()
         let image: UIImage
         let camera: RenderCamera
+        var fresh = true   // false: open on the room's last render
     }
     @State private var renderShot: RenderShot?
     @State private var lockMenuFor: UUID?   // placement whose Lock pill is showing
 
-    /// Capture before presenting: the snapshot and the camera must describe the same frame.
-    /// Selection markers are cleared first so the image model doesn't render them as objects.
+    /// Make it real, step 1: pick the angle (presets or free orbit), then Generate.
+    private func beginFraming() {
+        selected = nil
+        selectedRoomObject = nil
+        showObjects = false
+        touched = true
+        checkLastRender()
+        withAnimation(.spring(duration: 0.35, bounce: 0)) { framing = true }
+    }
+
+    private func frame(_ a: OrbitCamera.Angle, turn: Bool = false) {
+        if turn { side = (side + 1) % 4 } else if a != angle { side = 0 }
+        angle = a
+        let offset = roomEntity?.children.first?.position ?? .zero   // RoomBuilder's content offset (-center)
+        let poly = outline?.map { SIMD2($0.x + offset.x, $0.z + offset.z) }
+        // Eye level stands on open floor: inside the outline, 30 cm clear of every visible piece.
+        var pieces: [Entity] = Array(placed.values)
+        if let content = roomEntity?.children.first {
+            for e in content.children where e.name.hasPrefix(RoomBuilder.furniturePrefix) && e.isEnabled { pieces.append(e) }
+        }
+        let footprints: [BoundingBox] = pieces.map { $0.visualBounds(relativeTo: scene) }
+        func onFloor(_ p: SIMD2<Float>) -> Bool { poly.map { FloorClamp.contains(p, $0) } ?? true }
+        func clear(_ p: SIMD2<Float>) -> Bool {
+            !footprints.contains { b in abs(p.x - b.center.x) < b.extents.x / 2 + 0.3 && abs(p.y - b.center.z) < b.extents.z / 2 + 0.3 }
+        }
+        camera.show(a, side: side, floor: onFloor, clear: clear)
+    }
+
+    /// Opens the room's last render without generating (it pairs with its own saved "before").
+    private func showLastRender() {
+        guard renderShot == nil, let image = captureDesignerSnapshot(size: viewSize) else { return }
+        renderShot = RenderShot(image: image, camera: renderCamera(), fresh: false)
+    }
+
+    private func renderCamera() -> RenderCamera {
+        RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
+                     verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
+                     viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
+    }
+
+    /// Refreshed when the angle bar opens and when the render sheet closes (a new render may have been saved).
+    private func checkLastRender() {
+        hasLastRender = FileManager.default.fileExists(
+            atPath: ProjectStore.projectDir(projectID).appending(path: "render-latest.jpg").path(percentEncoded: false))
+    }
+
+    /// Bottom bar while choosing the angle: presets, a quarter turn, Generate, last render, cancel.
+    private var framingBar: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Pick the angle · drag to fine-tune").font(.forma(12)).foregroundStyle(Theme.muted)
+                Spacer()
+                if !RoomPhotos.photoURLs(projectDir: ProjectStore.projectDir(projectID)).isEmpty {
+                    Toggle("Real-photo look", isOn: $usePhotos).font(.forma(11)).toggleStyle(.button)
+                        .tint(Theme.sage).foregroundStyle(Theme.ink)
+                        .accessibilityHint("Uses scan photos for materials. Less exact: may add things the model doesn't have.")
+                }
+            }
+            HStack(spacing: 8) {
+                ForEach(OrbitCamera.Angle.allCases, id: \.self) { a in
+                    Button(a.rawValue) { frame(a) }
+                        .buttonStyle(PillButtonStyle(filled: a == angle))
+                }
+                Button { frame(angle, turn: true) } label: { Image(systemName: "arrow.trianglehead.clockwise.rotate.90") }
+                    .buttonStyle(PillButtonStyle(filled: false))
+                    .accessibilityLabel("Turn")
+                    .frame(width: 64)
+            }
+            HStack(spacing: 8) {
+                Button { withAnimation { framing = false }; camera.useNormalLens(); camera.reset() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(PillButtonStyle(filled: false)).frame(width: 64)
+                    .accessibilityLabel("Cancel")
+                if hasLastRender {
+                    Button("Last render") { showLastRender() }.buttonStyle(PillButtonStyle(filled: false))
+                }
+                Button { makeItReal() } label: { Label("Generate", systemImage: "sparkles") }
+                    .buttonStyle(PillButtonStyle())
+            }
+        }
+        .padding(16)
+        .background(Theme.ground.opacity(0.92), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, 12)
+        .sensoryFeedback(.selection, trigger: angle)
+        .sensoryFeedback(.selection, trigger: side)
+    }
+
+    /// Make it real, step 2 (Generate). Capture before presenting: the snapshot and the camera must describe the
+    /// same frame. Selection markers are cleared first so the image model doesn't render them as objects.
     private func makeItReal() {
+        guard renderShot == nil else { return }   // a second tap would replace the sheet mid-presentation
+        touched = true   // no thumbnail capture racing this snapshot and the sheet
         if selected != nil || selectedRoomObject != nil {
             selected = nil
             selectedRoomObject = nil
@@ -85,17 +183,15 @@ struct DesignerView: View {
             }
             return
         }
-        guard let image = captureDesignerSnapshot() else { return }
-        let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
-                               verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
-                               viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
-        renderShot = RenderShot(image: image, camera: cam)
+        guard let image = captureDesignerSnapshot(size: viewSize) else { return }
+        renderShot = RenderShot(image: image, camera: renderCamera())
     }
 
     var body: some View {
         stack.sheet(item: $renderShot) { shot in
-            RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera)
+            RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera, fresh: shot.fresh)
         }
+        .onChange(of: renderShot == nil) { _, closed in if closed { checkLastRender() } }
         .onDisappear { making3D?.task.cancel() }
     }
 
@@ -104,7 +200,7 @@ struct DesignerView: View {
             realityView(project: project, room: room)
                 .overlay(alignment: .topTrailing) {
                     HStack(spacing: 8) {
-                        MakeItRealButton(action: makeItReal)
+                        MakeItRealButton(action: onMakeItReal ?? makeItReal)
                         Button { onExpand?() } label: {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -121,7 +217,10 @@ struct DesignerView: View {
             realityView(project: project, room: room)
                 .padding(.trailing, showObjects ? 268 : 0)   // room slides left of the Objects panel (Paper E2/E3)
                 .toolbar(.hidden, for: .navigationBar)
-                .onAppear { if opensCatalog { showCatalog = true } }
+                .onAppear {
+                    if opensCatalog { showCatalog = true }
+                    if opensFraming { beginFraming() }
+                }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
                 .onChange(of: selected) { _, new in
@@ -145,7 +244,7 @@ struct DesignerView: View {
                                     ink: lightBackdrop ? Theme.ground : Theme.ink) {
                         MakeItRealButton(compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
                                          ink: lightBackdrop ? Theme.ground : Theme.ink,
-                                         sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
+                                         sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: beginFraming)
                     }
                     .padding(.leading, 16).padding(.top, 8 + 44 + 12)
                 }
@@ -155,7 +254,11 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .overlay(alignment: .bottom) {
-                    VStack(spacing: 12) { undoBar; hint.allowsHitTesting(false) }.padding(.bottom, 36)
+                    if framing {
+                        framingBar.padding(.bottom, 24).transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        VStack(spacing: 12) { undoBar; hint.allowsHitTesting(false) }.padding(.bottom, 36)
+                    }
                 }
                 .overlay(alignment: .bottomLeading) {
                     lockMenu().padding(.leading, 16).padding(.bottom, 36)
@@ -700,7 +803,7 @@ struct DesignerView: View {
     /// Saves the room's default view as its Home thumbnail, unless the user has already moved the camera.
     /// The snapshot's empty (transparent) background is trimmed and the room is fitted onto a square in the app's ground color.
     private func saveThumbnail() {
-        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false)?.cgImage, let box = Self.contentBounds(shot),
+        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false, size: viewSize, fallbackToWindow: false)?.cgImage, let box = Self.contentBounds(shot),
               let room = shot.cropping(to: box) else { return }
         let side: CGFloat = 360, pad: CGFloat = 18
         let scale = min((side - 2 * pad) / box.width, (side - 2 * pad) / box.height)
@@ -888,7 +991,7 @@ struct DesignerView: View {
         project.placements.append(p)
         store.update(project)
         await spawn(p)
-        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
         objectHint = true
         try? await Task.sleep(for: .seconds(4))
@@ -902,8 +1005,19 @@ struct DesignerView: View {
         project.placements.append(p)
         store.update(project)
         await spawn(p)
-        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit() }
+        if let e = placed[p.id] { e.position = clamp(e.position, keeping: e); commit(); dropIn(e) }
         selected = p.id
+    }
+
+    /// New item falls in from a little above and settles, with a light tap. Purely visual: already committed.
+    private func dropIn(_ e: Entity) {
+        let rest = e.transform
+        var start = rest
+        start.translation.y += 0.35
+        start.scale = rest.scale * 0.9
+        e.transform = start
+        e.move(to: rest, relativeTo: e.parent, duration: 0.45, timingFunction: .easeOut)
+        lifts += 1
     }
 
     /// Remove a scanned piece of furniture and put a scan or catalog item exactly where it stood, facing the same way.
@@ -1063,7 +1177,12 @@ struct DesignerView: View {
     private func remove(_ id: UUID) {
         guard var project else { return }
         offerUndo("Deleted", project)
-        placed.removeValue(forKey: id)?.removeFromParent()
+        if let e = placed.removeValue(forKey: id) {   // shrink away, then go
+            var gone = e.transform
+            gone.scale *= 0.01
+            e.move(to: gone, relativeTo: e.parent, duration: 0.22, timingFunction: .easeIn)
+            Task { try? await Task.sleep(for: .milliseconds(240)); e.removeFromParent() }
+        }
         project.placements.removeAll { $0.id == id }
         store.update(project)
         selected = nil
@@ -1115,6 +1234,13 @@ struct DesignerView: View {
         // On the floor: placements have their origin there; scanned furniture is anchored at its box center.
         ring.position = [b.center.x, (0.003 - e.position(relativeTo: scene).y) / e.scale.y, b.center.z]
         e.addChild(ring)
+        // Pops in: a touch small and turned, then settles.
+        let rest = ring.transform
+        var start = rest
+        start.scale = [0.8, 1, 0.8]
+        start.rotation = simd_quatf(angle: -0.4, axis: [0, 1, 0])
+        ring.transform = start
+        ring.move(to: rest, relativeTo: e, duration: 0.25, timingFunction: .easeOut)
     }
 
     /// Write entity transforms back to the project. `rotation` overrides an in-flight animation.
