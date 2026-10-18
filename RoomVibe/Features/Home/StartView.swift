@@ -27,17 +27,18 @@ struct StartView: View {
 }
 
 /// Splash and busy screen (Paper "0b · Loading"). The sage square slides clockwise around the inside of the ring,
-/// flush against its edge, 1.2 s linear, loops. Reduced motion holds it still.
+/// keeping the logo's 14-unit gap to the ring, 1.2 s linear, loops. Reduced motion holds it still.
 struct LoadingView: View {
     var status: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let period = 1.2
 
     /// Center of the sage square on the logo's 200-unit grid after `loops` laps. The ring's inner edge spans
-    /// 28...172 and the square is 60 wide, so its center runs along the 58...142 rectangle. Starts bottom-right,
+    /// 28...172, the square is 60 wide and keeps the logo's 14-unit gap (resting center 128), so its center runs
+    /// along the 72...128 rectangle. Starts bottom-right,
     /// then bottom-left, top-left, top-right (clockwise on screen).
     static func position(at loops: Double) -> CGPoint {
-        let lo = 58.0, hi = 142.0
+        let lo = 72.0, hi = 128.0
         let u = (loops - loops.rounded(.down)) * 4   // 0..<4: which side, and how far along it
         let f = u - u.rounded(.down)
         switch Int(u) {
