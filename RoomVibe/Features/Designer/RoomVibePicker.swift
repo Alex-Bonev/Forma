@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Fullscreen room: the vibe pill next to "Make it real", its dropdown (Paper E5) and the add-a-vibe sheet (Paper E4).
-/// Applying only stores `Project.vibeID`; it never touches the render restyle.
+/// Fullscreen room: the vibe pill and its dropdown (Paper E5). With no saved vibes the pill goes straight to making one.
+/// Applying stores `Project.vibeID`; Shop a vibe then starts from it. The faithful Make it real render ignores it.
 struct RoomVibeControl<Leading: View>: View {
     @Environment(ProjectStore.self) private var store
     @Environment(VibeLibrary.self) private var library
@@ -12,7 +12,6 @@ struct RoomVibeControl<Leading: View>: View {
     var ink = Theme.ink
     @ViewBuilder var leading: Leading
     @State private var showMenu = false
-    @State private var showSheet = false
 
     private var project: Project? { store.projects.first { $0.id == projectID } }
     private var applied: SavedVibe? { project?.vibeID.flatMap(library.vibe) }
@@ -27,16 +26,11 @@ struct RoomVibeControl<Leading: View>: View {
         }
         .animation(.spring(duration: 0.25, bounce: 0), value: showMenu)
         .onChange(of: compact) { showMenu = false }
-        .sheet(isPresented: $showSheet) {
-            AddVibeSheet(projectID: projectID) { showSheet = false; newVibe() }
-                .presentationDetents([.medium, .large])
-                .presentationBackground(Theme.ground)
-        }
     }
 
     private var pill: some View {
         Button {
-            if applied == nil { showSheet = true } else { showMenu.toggle() }
+            if library.vibes.isEmpty { newVibe() } else { showMenu.toggle() }
         } label: {
             HStack(spacing: 8) {
                 if let applied {
@@ -49,7 +43,13 @@ struct RoomVibeControl<Leading: View>: View {
                 } else {
                     Image(systemName: "swatchpalette").font(.system(size: compact ? 18 : 15, weight: .semibold))
                         .foregroundStyle(Theme.sageDeep)
-                    if !compact { Text("Vibe").font(.forma(12, bold: true)).foregroundStyle(ink) }
+                    if !compact {
+                        Text("Vibe").font(.forma(12, bold: true)).foregroundStyle(ink)
+                        if !library.vibes.isEmpty {
+                            Image(systemName: showMenu ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .bold)).foregroundStyle(ink)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, compact ? 0 : 16)
@@ -63,8 +63,6 @@ struct RoomVibeControl<Leading: View>: View {
 
     private var menu: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("VIBE FOR \((project?.name ?? "").uppercased())").font(.forma(10)).foregroundStyle(Theme.muted)
-                .lineLimit(1).padding(.horizontal, 8).padding(.bottom, 4)
             ForEach(library.vibes) { vibe in
                 Button { apply(vibe.id); showMenu = false } label: {
                     VibeRow(vibe: vibe, tile: 36).overlay(alignment: .trailing) {
@@ -74,13 +72,15 @@ struct RoomVibeControl<Leading: View>: View {
                     .background(vibe.id == applied?.id ? Theme.sand : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("vibeOption")
             }
             Theme.hairline.frame(height: 1).padding(.vertical, 4)
             Button { showMenu = false; newVibe() } label: {
-                menuRow("plus", "New vibe from photos", bold: true)
+                menuRow("plus", "New vibe", bold: true)
             }
-            Button { apply(nil); showMenu = false } label: {
-                menuRow("xmark", "Remove vibe from room", bold: false)
+            .accessibilityIdentifier("newRoomVibe")
+            if applied != nil {
+                Button { apply(nil); showMenu = false } label: { menuRow("xmark", "Remove", bold: false) }
             }
         }
         .buttonStyle(.plain)
@@ -108,63 +108,7 @@ struct RoomVibeControl<Leading: View>: View {
     private func newVibe() { router.path.append(.newVibe(applyTo: projectID)) }
 }
 
-/// "Add a vibe" sheet (Paper E4): pick a saved vibe, Apply, or start a new one from photos.
-private struct AddVibeSheet: View {
-    @Environment(ProjectStore.self) private var store
-    @Environment(VibeLibrary.self) private var library
-    @Environment(\.dismiss) private var dismiss
-    let projectID: UUID
-    let onNew: () -> Void
-    @State private var picked: UUID?
-
-    private var chosen: SavedVibe? { picked.flatMap(library.vibe) ?? library.vibes.first }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Add a vibe").font(.system(size: 28, weight: .bold, design: .serif)).foregroundStyle(Theme.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Text("to \(store.projects.first { $0.id == projectID }?.name ?? "this room")")
-                    .font(.forma(12)).foregroundStyle(Theme.muted)
-                ForEach(library.vibes) { vibe in
-                    let on = vibe.id == chosen?.id
-                    Button { picked = vibe.id } label: {
-                        HStack {
-                            VibeRow(vibe: vibe, tile: 52)
-                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 24)).foregroundStyle(on ? Theme.sage : Theme.hairline)
-                        }
-                        .padding(12)
-                        .background(on ? Theme.sand : .clear, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(on ? Theme.sage : .clear, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-                if library.vibes.isEmpty {
-                    Text("No saved vibes yet.").font(.forma(12)).foregroundStyle(Theme.muted)
-                }
-                if let chosen {
-                    Button("Apply \(chosen.name)") {
-                        if var p = store.projects.first(where: { $0.id == projectID }) {
-                            p.vibeID = chosen.id
-                            store.update(p)
-                        }
-                        dismiss()
-                    }
-                    .buttonStyle(PillButtonStyle()).padding(.top, 8)
-                    .accessibilityIdentifier("applyVibe")
-                }
-                Button(action: onNew) { Label("New vibe from photos", systemImage: "plus") }
-                    .buttonStyle(PillButtonStyle(filled: false))
-            }
-            .padding(24)
-        }
-    }
-}
-
-/// Tile, serif name and tag line for one vibe.
+/// Tile, name and tag line for one vibe.
 private struct VibeRow: View {
     let vibe: SavedVibe
     let tile: CGFloat
@@ -173,7 +117,7 @@ private struct VibeRow: View {
         HStack(spacing: 12) {
             VibeTile(vibe: vibe, corner: 10).frame(width: tile, height: tile)
             VStack(alignment: .leading, spacing: 2) {
-                Text(vibe.name).font(.system(size: 17, weight: .bold, design: .serif)).foregroundStyle(Theme.ink).lineLimit(1)
+                Text(vibe.name).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
                 Text((vibe.mood.prefix(1) + vibe.materials.prefix(1)).joined(separator: " · "))
                     .font(.forma(10)).foregroundStyle(Theme.muted).lineLimit(1)
             }

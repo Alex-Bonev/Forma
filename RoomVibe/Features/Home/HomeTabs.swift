@@ -35,7 +35,7 @@ struct HomeTabBar: View {
     }
 }
 
-/// Vibes tab (Paper "v2 · A3"): dashed "+ Vibe" card first, then two-column vibe cards.
+/// Vibes tab (Paper "v2 · A3"): dashed "New vibe" card first, then two-column vibe cards.
 struct VibesTab: View {
     @Environment(VibeLibrary.self) private var library
     @Environment(ProjectStore.self) private var store
@@ -48,7 +48,7 @@ struct VibesTab: View {
                 VStack(spacing: 10) {
                     Image(systemName: "plus").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.onSage)
                         .frame(width: 40, height: 40).background(Theme.sage, in: Circle())
-                    Text("+ Vibe").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                    Text("New vibe").font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
                 }
                 .frame(maxWidth: .infinity).frame(height: 132)
                 .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -76,12 +76,10 @@ private struct VibeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             VibeTile(vibe: vibe, square: false).frame(height: 132).frame(maxWidth: .infinity)
-            Text(vibe.name).font(.system(size: 18, weight: .semibold, design: .serif)).foregroundStyle(Theme.ink).lineLimit(2)
+            Text(vibe.name).font(.forma(14, bold: true)).foregroundStyle(Theme.ink).lineLimit(2)
             Text(vibe.styles.prefix(2).joined(separator: " · ")).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1)
             SwatchDots(colors: vibe.colors, size: 12)
-            if rooms.isEmpty {
-                Text("Not in a room yet").font(.forma(10)).foregroundStyle(Theme.muted)
-            } else {
+            if !rooms.isEmpty {
                 FlowLayout(spacing: 4) {
                     ForEach(rooms, id: \.self) {
                         Text($0).font(.forma(10)).foregroundStyle(Theme.wood)
