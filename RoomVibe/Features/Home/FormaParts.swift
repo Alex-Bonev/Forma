@@ -14,10 +14,59 @@ struct Logo: View {
             ctx.stroke(Path(CGRect(x: 14 * u, y: 14 * u, width: 172 * u, height: 172 * u)),
                        with: .color(Color(hex: 0x2B2118)), lineWidth: 28 * u)
             ctx.fill(Path(CGRect(x: (square.x - 30) * u, y: (square.y - 30) * u, width: 60 * u, height: 60 * u)),
-                     with: .color(Color(hex: 0x8A9A7B)))
+                     with: .color(Theme.sage))
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+}
+
+/// "forma" in Space Mono Bold with hand-set gaps (em): f–o is tight, r–m and m–a open up so the mono cells read evenly.
+struct Wordmark: View {
+    var size: CGFloat = 24
+    private static let gaps: [CGFloat] = [0.125, 0.25, 0.29, 0.32]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array("forma".enumerated()), id: \.offset) { i, letter in
+                Text(String(letter)).font(.custom("SpaceMono-Bold", fixedSize: size))
+                if i < Self.gaps.count { Color.clear.frame(width: Self.gaps[i] * size, height: 1) }
+            }
+        }
+        .foregroundStyle(Color(hex: 0x2B2118))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("forma")
+    }
+}
+
+/// Glass-free sand pill with a sage outline and sparkle: starts the photoreal render of the room.
+/// `compact` is the icon-only circle used when the Objects panel covers the room.
+struct MakeItRealButton: View {
+    var compact = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").font(.system(size: compact ? 18 : 15, weight: .semibold)).foregroundStyle(Theme.sageDeep)
+                if !compact { Text("Make it real").font(.forma(12, bold: true)).foregroundStyle(Theme.ink) }
+            }
+            .padding(.horizontal, compact ? 0 : 16)
+            .frame(width: compact ? 44 : nil, height: 44)
+            .background(Theme.sand, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.sage, lineWidth: 1.5))
+        }
+        .buttonStyle(PressStyle())
+        .accessibilityLabel("Make it real")
+    }
+
+    private struct PressStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .opacity(configuration.isPressed ? 0.7 : 1)
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .animation(.spring(duration: 0.25, bounce: 0), value: configuration.isPressed)
+        }
     }
 }
 

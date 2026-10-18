@@ -1,10 +1,16 @@
 # UI wiring report for David (Owner C)
 
-From Michelle (B), branch `b/forma-ui`. The Paper "forma" design is now in the app. Your Render and Vibe screens are merged (PR #4), but nothing in the new UI opens them yet. Alex's draft PR #6 (`a/make-it-real`) adds a "Make it real" button to the old Designer chrome, so it will conflict with this branch's `DesignerView` and needs rebasing onto the Paper top bar. This lists what is still open on your side.
+From Michelle (B), branch `b/forma-ui`. The Paper "forma" design is now in the app. Your Render and Vibe screens are merged (PR #4). The new UI now opens `RenderView` from a "Make it real" button; nothing opens `VibeView`. Alex's draft PR #6 (`a/make-it-real`) adds a "Make it real" button to the old Designer chrome, so it overlaps this branch's `DesignerView`. This lists what is still open on your side.
 
 ## Decision from Michelle
 
-"Make it real" is not needed in the app, so the Paper UI has no button for it and I did not add one. Nothing opens `RenderView` or `VibeView`. Alex's draft PR #6 (`a/make-it-real`, adds the button) should not be merged. Whether to delete the merged Render and Vibe code (PR #4) is your and Michelle's call; I left it alone.
+"Make it real" is in the app. It turns the 3D render of the furnished room into a hyperrealistic render of that room, using your `/render` backend and `RenderView`.
+
+- **Where the button is.** On Room detail it sits left of the fullscreen button on the room card. In fullscreen it sits under the back (exit) button. While the Objects panel is open it shrinks to an icon-only circle.
+- **What it does.** `DesignerView.makeItReal()` calls `captureDesignerSnapshot()`, builds a `RenderCamera` from the Designer camera, and presents `RenderView(snapshot:projectID:camera:)` as a sheet.
+- **Look.** Sand fill (`Theme.sand`), sage outline, `Theme.ink` text, sage-deep sparkle. See `MakeItRealButton` in `Features/Home/FormaParts.swift`.
+- **PR #6.** It targets the old Designer chrome and conflicts with this branch. Rebase it onto the Paper top bar or close it; the button itself is already here. That is Alex's and your call.
+- **Not decided here:** whether to delete the parked Vibe code (`VibeView`). I left it alone.
 
 ## Still open on your side
 

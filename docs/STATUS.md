@@ -67,9 +67,9 @@ Also added: undo for Delete / Hide (5 s bar), drags clamped to the scanned floor
 ## Future work (A)
 
 - Bundle the final demo room and chair (`scripts/pull_demo_assets.py`), then rehearse with `docs/DEMO.md`.
-- **Demo gap:** "Make it real" button is built on `a/make-it-real` (draft PR #6, stacked on #4 + #5). Merge #4 and #5 first.
+- **Demo gap:** the "Make it real" button is now in the Paper UI on `b/forma-ui` (Room detail card and fullscreen Designer, see `docs/wiring-for-C.md`). Alex's draft PR #6 (`a/make-it-real`) built it on the old chrome and overlaps; reconcile or close it.
   It works against the mock backend in the Simulator. On device it needs David's Vercel deploy + `APIConfig.json`.
-  Michelle has no branch pushed yet.
+  Not yet tested on a device or in the Simulator on `b/forma-ui`; only the build is confirmed.
 - Render the floor from `floorOutline` instead of the walls' bounding box (B's room visuals).
 - Coordinate with Michelle (her room visuals) and David (`c/backend-ai`; review comment posted on commit 6082487).
 
