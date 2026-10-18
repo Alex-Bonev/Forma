@@ -16,6 +16,8 @@ struct TouchSurface: UIViewRepresentable {
         var pinch: (Phase, CGFloat) -> Void = { _, _ in }
         var twist: (Phase, CGFloat) -> Void = { _, _ in }
         var tap: (CGPoint) -> Void = { _ in }
+        /// Held still for 0.4 s. The tap that ends the same touch is not reported.
+        var longPress: (CGPoint) -> Void = { _ in }
     }
 
     var handlers: Handlers
@@ -28,7 +30,7 @@ struct TouchSurface: UIViewRepresentable {
         view.isAccessibilityElement = true
         view.accessibilityIdentifier = "designer-canvas"
         view.accessibilityLabel = "Room 3D view"
-        view.onTouchDown = { context.coordinator.handlers.touchDown() }
+        view.onTouchDown = { context.coordinator.held = false; context.coordinator.handlers.touchDown() }
         view.onTouchUp = { context.coordinator.handlers.touchUp() }
         let c = context.coordinator
         let pan = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.pan(_:)))
@@ -36,7 +38,9 @@ struct TouchSurface: UIViewRepresentable {
         let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.pinch(_:)))
         let twist = UIRotationGestureRecognizer(target: c, action: #selector(Coordinator.twist(_:)))
         let tap = UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap(_:)))
-        for r in [pan, pinch, twist, tap] as [UIGestureRecognizer] {
+        let hold = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.hold(_:)))
+        hold.minimumPressDuration = 0.4
+        for r in [pan, pinch, twist, tap, hold] as [UIGestureRecognizer] {
             r.delegate = c
             view.addGestureRecognizer(r)
         }
@@ -53,6 +57,8 @@ struct TouchSurface: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var handlers: Handlers
         private var touches = 0
+        /// A long press fired during the current touch: its lift is not also a tap.
+        var held = false
         private var wasMultiTouch = false   // after two fingers, a lifted finger shouldn't start orbiting
 
         init(handlers: Handlers) { self.handlers = handlers }
@@ -108,7 +114,13 @@ struct TouchSurface: UIViewRepresentable {
             }
         }
 
-        @objc func tap(_ r: UITapGestureRecognizer) { handlers.tap(r.location(in: r.view)) }
+        @objc func tap(_ r: UITapGestureRecognizer) { if !held { handlers.tap(r.location(in: r.view)) } }
+
+        @objc func hold(_ r: UILongPressGestureRecognizer) {
+            guard r.state == .began else { return }
+            held = true
+            handlers.longPress(r.location(in: r.view))
+        }
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             !(g is UITapGestureRecognizer || other is UITapGestureRecognizer)
