@@ -30,8 +30,7 @@ final class VibeBudgetTests: XCTestCase {
         for _ in 0..<tries {
             if element.exists && element.isHittable { return true }
             let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.975, dy: 0.85))
-            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.975, dy: 0.3))
-            from.press(forDuration: 0.05, thenDragTo: to)
+            from.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.975, dy: 0.3)))
             sleep(1)
         }
         return element.exists && element.isHittable
@@ -110,13 +109,13 @@ final class VibeBudgetTests: XCTestCase {
     /// fullscreen room's bottom bar. Not verified on a device: the cart icon may need the Objects panel closed.
     func testCartShowsBudgetCard() {
         let app = startVibe(chip: "budgetChip-800")
-        let addButton = app.buttons["Add to room"].firstMatch, added = app.buttons["Added to room"].firstMatch
-        XCTAssertTrue(addButton.waitForExistence(timeout: 60))
-        for _ in 0..<3 where !added.exists {
-            if scrollUntilHittable(app, addButton) { addButton.tap() }
-            _ = added.waitForExistence(timeout: 3)
+        let addAll = el(app, "addAllPicks")
+        XCTAssertTrue(addAll.waitForExistence(timeout: 60), "Add all picks is shown once the picks are in")
+        for _ in 0..<3 where !app.buttons["All picks are in your room"].exists {
+            if scrollUntilHittable(app, addAll) { addAll.tap() }
+            _ = app.buttons["All picks are in your room"].waitForExistence(timeout: 3)
         }
-        XCTAssertTrue(added.exists)
+        XCTAssertTrue(app.buttons["All picks are in your room"].exists)
         sleep(3)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["Close"].tap()
