@@ -15,7 +15,12 @@ struct RenderView: View {
 
     /// `camera`: the Designer camera at capture time. With it, a structure map of the same view is sent too,
     /// and a low camera starts in Photo mode.
-    init(snapshot: UIImage, projectID: UUID? = nil, camera: RenderCamera? = nil, prompt: String = "", styleRef: UIImage? = nil) {
+    /// `fresh`: generate from this snapshot now; false opens the room's last render (and generates only if there is none).
+    private let fresh: Bool
+
+    init(snapshot: UIImage, projectID: UUID? = nil, camera: RenderCamera? = nil, prompt: String = "", styleRef: UIImage? = nil,
+         fresh: Bool = true) {
+        self.fresh = fresh
         _model = State(initialValue: RenderModel(snapshot: snapshot, projectID: projectID, camera: camera, prompt: prompt,
                                                  styleRef: styleRef))
     }
@@ -91,7 +96,7 @@ struct RenderView: View {
                 model.setRoom(project: project, room: room, objects: store.objects)
             }
             // The room's last render opens instantly; "Render again" (toolbar) makes a new one.
-            if !model.showSaved() { model.start() }
+            if fresh || !model.showSaved() { model.start() }
         }
         .onDisappear { model.cancel() }
         .sensoryFeedback(trigger: model.result != nil) { _, done in done ? .success : nil }
@@ -213,7 +218,8 @@ final class RenderModel {
         self.room = (s.room, s.placements, s.objects)
         layout = LayoutDescription.text(room: s.room, placements: s.placements, objects: s.objects,
                                         finishes: RenderInputs.finishes(project), standIns: s.standIns)
-        photos = RenderInputs.photos(projectID: project.id)
+        // Opt-in: photos make looks truer but tempt the model to copy furniture the 3D model doesn't have.
+        photos = UserDefaults.standard.bool(forKey: RenderInputs.usePhotosKey) ? RenderInputs.photos(projectID: project.id) : []
     }
 
     /// Real photos of the room from the scan (≤ 3), sent so the render matches how the room really looks.

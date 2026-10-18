@@ -11,10 +11,8 @@ final class VibeShoppingTests: XCTestCase {
         XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
         let openVibe = app.buttons["openVibe"]
         // A tap during launch (the Designer still settling) can be swallowed: retry until the render sheet opens.
-        for _ in 0..<3 where !openVibe.exists {
-            makeItReal.firstMatch.tap()
-            _ = openVibe.waitForExistence(timeout: 5)
-        }
+        generate(app)
+        _ = openVibe.waitForExistence(timeout: 8)
         XCTAssertTrue(openVibe.exists)
         let start = app.buttons["vibeStart"]
         // The render sheet may still be animating in, which can swallow the first tap.
@@ -94,10 +92,8 @@ final class VibeShoppingTests: XCTestCase {
         let makeItReal = app.buttons["Make it real"].firstMatch
         XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
         let image = app.buttons["Image"]
-        for _ in 0..<3 where !image.exists {
-            makeItReal.tap()
-            _ = image.waitForExistence(timeout: 8)
-        }
+        generate(app)
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Drag the divider to compare"].exists)
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("compare"))
         image.tap()
@@ -105,13 +101,24 @@ final class VibeShoppingTests: XCTestCase {
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("image"))
         XCTAssertFalse(app.staticTexts["Drag the divider to compare"].exists, "Image tab is the render alone")
         app.buttons["Close"].firstMatch.tap()
-        XCTAssertTrue(makeItReal.waitForExistence(timeout: 5))
+        let lastButton = app.buttons["Last render"]   // the angle bar stays up after closing
+        XCTAssertTrue(lastButton.waitForExistence(timeout: 5))
         sleep(1)
-        makeItReal.tap()
+        lastButton.tap()
         let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
         XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("reopened"))
     }
+}
+
+/// Make it real → angle bar → Generate. A tap during launch can be swallowed, so retry until the bar shows.
+func generate(_ app: XCUIApplication) {
+    let makeItReal = app.buttons["Make it real"].firstMatch, go = app.buttons["Generate"]
+    for _ in 0..<3 where !go.exists {
+        if makeItReal.waitForExistence(timeout: 10) { makeItReal.tap() }
+        _ = go.waitForExistence(timeout: 4)
+    }
+    go.tap()
 }
 
 private extension XCTAttachment {

@@ -179,6 +179,10 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
         sleep(2)
         app.buttons["Make it real"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Eye level"].waitForExistence(timeout: 5), "Make it real starts by picking the angle")
+        app.buttons["Eye level"].tap()
+        app.buttons["Turn"].tap()
+        generate(app)
         XCTAssertTrue(app.navigationBars["Make it real"].waitForExistence(timeout: 5))
     }
 
