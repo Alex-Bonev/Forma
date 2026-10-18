@@ -91,6 +91,7 @@ struct RenderView: View {
             if online, model.needsRetry { model.start() }
         }
         .onAppear {
+            model.onFilesChanged = { [store] in store.filesChanged() }
             guard model.result == nil, !model.isRunning else { return }
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
                 model.setRoom(project: project, room: room, objects: store.objects)
@@ -201,6 +202,9 @@ final class RenderModel {
     private(set) var savedBefore: UIImage?
     /// When the shown saved render was made; nil once a fresh one is shown.
     private(set) var savedAt: Date?
+    /// Called after the render cache is written or pruned: those files live in the room's folder, outside the
+    /// store, so sync would otherwise not see them until the next unrelated change. Set by RenderView.
+    @ObservationIgnored var onFilesChanged: (() -> Void)?
 
     init(snapshot: UIImage, projectID: UUID?, camera: RenderCamera? = nil, prompt: String, styleRef: UIImage?) {
         self.snapshot = snapshot.croppedToRenderAspect()
@@ -301,6 +305,7 @@ final class RenderModel {
                 where f.lastPathComponent.hasPrefix("render-") && !f.lastPathComponent.hasPrefix("render-latest") {
                     try? FileManager.default.removeItem(at: f)
                 }
+                onFilesChanged?()
             }
             guard gen == generation else { return }
             savedBefore = nil
