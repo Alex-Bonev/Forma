@@ -27,6 +27,25 @@ enum RoomBuilder {
         return (lo, hi)
     }
 
+    /// Floor shaped like the scanned outline (L-shaped rooms), centered on `center`, facing +Y.
+    /// UVs span the outline's bounding box, like `generatePlane`, so Finish tiling works the same.
+    private static func floorMesh(_ outline: [SIMD3<Float>]?, center: SIMD3<Float>) -> MeshResource? {
+        guard let outline, outline.count >= 3 else { return nil }
+        let pts = outline.map { SIMD2($0.x - center.x, $0.z - center.z) }
+        var tris = FloorMesh.triangulate(pts)
+        guard !tris.isEmpty else { return nil }
+        let lo = pts.reduce(pts[0], simd_min), hi = pts.reduce(pts[0], simd_max), span = simd_max(hi - lo, [0.01, 0.01])
+        let a = pts[Int(tris[0])], b = pts[Int(tris[1])], c = pts[Int(tris[2])]
+        let up = simd_cross(SIMD3(b.x - a.x, 0, b.y - a.y), SIMD3(c.x - a.x, 0, c.y - a.y)).y
+        if up < 0 { for i in stride(from: 0, to: tris.count, by: 3) { tris.swapAt(i + 1, i + 2) } }   // front face up
+        var d = MeshDescriptor(name: "floor")
+        d.positions = MeshBuffer(pts.map { SIMD3($0.x, 0, $0.y) })
+        d.normals = MeshBuffer(Array(repeating: SIMD3<Float>(0, 1, 0), count: pts.count))
+        d.textureCoordinates = MeshBuffer(pts.map { ($0 - lo) / span })
+        d.primitives = .triangles(tris)
+        return try? MeshResource.generate(from: [d])
+    }
+
     static func build(_ room: RoomModel, wallScale: Float = 1) -> Built {
         let (lo, hi) = bounds(room)
         let center = SIMD3((lo.x + hi.x) / 2, lo.y, (lo.z + hi.z) / 2)
@@ -37,7 +56,7 @@ enum RoomBuilder {
         content.position = -center
         root.addChild(content)
 
-        let floor = ModelEntity(mesh: .generatePlane(width: size.x + 0.4, depth: size.y + 0.4),
+        let floor = ModelEntity(mesh: floorMesh(room.floorOutline, center: center) ?? .generatePlane(width: size.x + 0.4, depth: size.y + 0.4),
                                 materials: [material(.init(white: 0.93, alpha: 1), roughness: 0.9)])
         floor.position = center
         floor.name = floorName
