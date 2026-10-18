@@ -480,7 +480,8 @@ struct DesignerView: View {
     // MARK: Hint and selected-row actions
 
     @ViewBuilder private var hint: some View {
-        if objectHint { HintPill("Drag to move · Twist to rotate") }
+        if showObjects { EmptyView() }   // the panel covers the hint's spot
+        else if objectHint { HintPill("Drag to move · Twist to rotate") }
         else if showHint { HintPill("Drag to orbit · Pinch to zoom") }
     }
 
