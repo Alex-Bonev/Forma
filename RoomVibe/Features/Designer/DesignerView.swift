@@ -24,6 +24,7 @@ struct DesignerView: View {
     @State private var walls = WallCutaway()
     @State private var roomEntity: Entity?
     @State private var roomSize: SIMD2<Float> = .zero
+    @State private var touched = false   // camera moved since open: no thumbnail from this visit
     @State private var outline: [SIMD3<Float>]?   // scanned floor polygon, room coordinates (cached: room(for:) reads disk)
     @State private var placed: [UUID: Entity] = [:]   // placement id -> entity
     @State private var selected: UUID?
@@ -268,6 +269,7 @@ struct DesignerView: View {
     private var touchHandlers: TouchSurface.Handlers {
         var h = TouchSurface.Handlers()
         h.touchDown = {
+            touched = true
             camera.grab()
             lockMenuFor = nil   // the menu belongs to a tap on the item; any new touch hides it
             if showHint { showHint = false }
@@ -383,7 +385,7 @@ struct DesignerView: View {
     /// Orbit, pan and zoom only: the card previews the room, it doesn't edit it.
     private var cardHandlers: TouchSurface.Handlers {
         var h = TouchSurface.Handlers()
-        h.touchDown = { camera.grab() }
+        h.touchDown = { touched = true; camera.grab() }
         h.touchUp = { camera.release() }
         h.oneFinger = { phase, _, delta, velocity in
             switch phase {
@@ -660,6 +662,43 @@ struct DesignerView: View {
 
     // MARK: Actions
 
+    /// Saves the room's default view as its Home thumbnail, unless the user has already moved the camera.
+    /// The snapshot's empty (transparent) background is trimmed and the room is fitted onto a square in the app's ground color.
+    private func saveThumbnail() {
+        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false)?.cgImage, let box = Self.contentBounds(shot),
+              let room = shot.cropping(to: box) else { return }
+        let side: CGFloat = 360, pad: CGFloat = 18
+        let scale = min((side - 2 * pad) / box.width, (side - 2 * pad) / box.height)
+        let size = CGSize(width: box.width * scale, height: box.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let out = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).jpegData(withCompressionQuality: 0.8) { ctx in
+            UIColor(Theme.ground).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: side, height: side))
+            UIImage(cgImage: room).draw(in: CGRect(origin: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), size: size))
+        }
+        try? out.write(to: RoomThumb.url(projectID), options: .atomic)
+    }
+
+    /// Bounding box of visible pixels (the rendered room), found on a 128-px-wide copy. nil if empty.
+    private static func contentBounds(_ image: CGImage) -> CGRect? {
+        let w = 128, h = max(1, image.height * 128 / max(image.width, 1))
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var lo = (x: w, y: h), hi = (x: -1, y: -1)
+        for y in 0..<h { for x in 0..<w {
+            let i = (y * w + x) * 4
+            guard px[i + 3] > 8 else { continue }   // alpha
+            lo = (min(lo.x, x), min(lo.y, y)); hi = (max(hi.x, x), max(hi.y, y))
+        } }
+        guard hi.x >= lo.x else { return nil }
+        let k = CGFloat(image.width) / CGFloat(w)   // rows in the bitmap run top-down, like CGImage cropping
+        return CGRect(x: CGFloat(lo.x) * k, y: CGFloat(lo.y) * k, width: CGFloat(hi.x - lo.x + 1) * k, height: CGFloat(hi.y - lo.y + 1) * k)
+            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    }
+
     private func rebuildRoom(_ room: RoomModel) {
         roomEntity?.removeFromParent()
         let built = RoomBuilder.build(room, wallScale: lowWalls ? 0.3 : 1)
@@ -674,6 +713,8 @@ struct DesignerView: View {
         Task {
             await Finish.apply(to: built.entity, wall: wall, floor: floor)
             await RoomBuilder.furnish(built, room: room)
+            try? await Task.sleep(for: .seconds(1.5))   // placements stream in, cutaway walls finish fading
+            saveThumbnail()
         }
     }
 

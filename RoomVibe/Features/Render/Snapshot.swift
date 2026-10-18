@@ -7,7 +7,8 @@ import UIKit
 /// and nothing else. Falls back to the whole key window if no Metal view is found.
 // VERIFY: confirmed in Simulator (iOS 26) that drawHierarchy captures the RealityView content; re-check on device.
 @MainActor
-func captureDesignerSnapshot() -> UIImage? {
+/// `opaque: false` keeps the empty background transparent (room thumbnails draw it over their own color).
+func captureDesignerSnapshot(opaque: Bool = true) -> UIImage? {
     guard let window = UIApplication.shared.connectedScenes
         .compactMap({ $0 as? UIWindowScene })
         .flatMap(\.windows)
@@ -15,7 +16,7 @@ func captureDesignerSnapshot() -> UIImage? {
     let target = largestMetalView(in: window) ?? window
     guard target.bounds.width > 0, target.bounds.height > 0 else { return nil }
     let format = UIGraphicsImageRendererFormat()
-    format.opaque = true
+    format.opaque = opaque
     return UIGraphicsImageRenderer(bounds: target.bounds, format: format).image { _ in
         target.drawHierarchy(in: target.bounds, afterScreenUpdates: true)
     }

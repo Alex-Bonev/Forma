@@ -44,11 +44,13 @@ struct HomeView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack(spacing: 12) {
                     Button { scanningRoom = true } label: {
-                        HStack(spacing: 10) { Text("Scan Room"); Image(systemName: "arrow.right") }
+                        HStack(spacing: 10) { Text("Scan Room"); Image(systemName: "cube.transparent") }
                     }
                     .buttonStyle(PillButtonStyle())
                     .disabled(!Capabilities.canScanRoom)
-                    Button("Scan Object") { scanningObject = true }
+                    Button { scanningObject = true } label: {
+                        HStack(spacing: 10) { Text("Scan Object"); Image(systemName: "camera.viewfinder") }
+                    }
                         .buttonStyle(PillButtonStyle(filled: false))
                         .disabled(!Capabilities.canScanObject)
                 }
@@ -179,7 +181,7 @@ private struct RoomRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            RoomGlyph().frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 16))
+            RoomThumb(projectID: project.id).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 16))
             VStack(alignment: .leading, spacing: 4) {
                 Text(project.name).font(.forma(15, bold: true)).foregroundStyle(Theme.ink)
                 Text(summary).font(.forma(12)).foregroundStyle(Theme.muted)
