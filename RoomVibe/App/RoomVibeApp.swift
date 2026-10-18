@@ -16,6 +16,7 @@ struct RoomVibeApp: App {
             ZStack {
                 HomeView()
                     .environment(store)
+                    .environment(connectivity)
                 if !skipIntro && !seenStart && !splash {
                     StartView { withAnimation(.easeOut(duration: 0.3)) { seenStart = true } }
                         .transition(.opacity)
@@ -24,6 +25,10 @@ struct RoomVibeApp: App {
                     LoadingView(status: connectivity.online ? nil : "No connection · retrying")
                         .transition(.opacity)
                 }
+            }
+            .task {
+                // Wake a cold Vercel function now, so the first "Make it real" doesn't pay for the cold start.
+                _ = try? await APIClient.shared.health()
             }
             .task {
                 // One full loop of the mark, then hand over to Start (first launch) or Home.

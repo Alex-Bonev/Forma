@@ -2,13 +2,13 @@ import CryptoKit
 import SwiftUI
 
 /// "Make it real": sends a Designer snapshot to /render and shows a before/after slider.
-/// B presents this from the Designer: on tap, `guard let snap = captureDesignerSnapshot()`, then a sheet with
-/// `RenderView(snapshot: snap, projectID:)`.
+/// Presented as a sheet by `DesignerView.makeItReal()`, which captures the snapshot and camera before presenting.
 /// Vibe mode reuses its BeforeAfterSlider and calls APIClient.render directly.
 struct RenderView: View {
     @State private var model: RenderModel
     @Environment(\.dismiss) private var dismiss
     @Environment(ProjectStore.self) private var store
+    @Environment(Connectivity.self) private var connectivity
 
     /// `camera`: the Designer camera at capture time. With it, a structure map of the same view is sent too,
     /// and a low camera starts in Photo mode.
@@ -21,28 +21,33 @@ struct RenderView: View {
         NavigationStack {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
+                .background(Theme.ground.ignoresSafeArea())
+                .safeAreaInset(edge: .bottom) {
+                    // Vibe mode (VibeView) is parked for the MVP demo; it would go next to this picker.
+                    ViewPicker(selection: Binding(get: { model.view }, set: { model.view = $0 }))
+                        .disabled(model.isLoading)
+                        .padding(.horizontal, 24).padding(.bottom, 8)
+                }
                 .navigationTitle("Make it real")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(Theme.ground, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
-                    ToolbarItem(placement: .bottomBar) {
-                        // Vibe mode (VibeView) is parked for the MVP demo; it would go next to this picker.
-                        Picker("View", selection: Binding(get: { model.view }, set: { model.view = $0 })) {
-                            ForEach(RenderModel.View.allCases, id: \.self) { Text($0.title) }
-                        }
-                        .pickerStyle(.segmented)
-                        .disabled(model.isLoading)
+                    ToolbarItem(placement: .principal) {
+                        Text("Make it real").font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
+                    }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }.font(.forma(13)).foregroundStyle(Theme.ink)
                     }
                     if let result = model.result {
                         ToolbarItem(placement: .primaryAction) {
                             ShareLink(item: Image(uiImage: result), preview: SharePreview("RoomVibe render", image: Image(uiImage: result)))
+                                .foregroundStyle(Theme.ink)
                         }
                     }
                 }
         }
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, .light)   // Paper is light-only
         .overlay {
             // The app's loading screen (sage square sliding around the ring, Paper colors) instead of a spinner.
             if model.isLoading {
@@ -60,6 +65,10 @@ struct RenderView: View {
         }
         .animation(.easeOut(duration: 0.25), value: model.isLoading)
         .onChange(of: model.view) { model.start() }
+        // Back online after an offline failure or a cached render: try again without a tap.
+        .onChange(of: connectivity.online) { _, online in
+            if online, model.needsRetry { model.start() }
+        }
         .onAppear {
             guard model.result == nil, !model.isRunning else { return }
             if let project = store.projects.first(where: { $0.id == model.projectID }), let room = store.room(for: project) {
@@ -75,27 +84,62 @@ struct RenderView: View {
         case .loading:
             Color.clear   // covered by the loading screen overlay in `body`
         case .done(let after, let isStale):
-            VStack(spacing: 10) {
+            VStack(spacing: 14) {
+                Spacer(minLength: 0)
                 BeforeAfterSlider(before: isStale ? model.staleBefore ?? model.snapshot : model.snapshot, after: after)
                 if isStale {
-                    Label("Offline: showing the last render of this room", systemImage: "clock.arrow.circlepath")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Button("Try again") { model.start() }.buttonStyle(.bordered)
+                    Label("Offline · showing the last render of this room", systemImage: "clock.arrow.circlepath")
+                        .font(.forma(11)).foregroundStyle(Theme.muted)
+                    Button("Try again") { model.start() }
+                        .buttonStyle(PillButtonStyle(filled: false))
+                        .frame(maxWidth: 200)
                 } else {
-                    Text("Drag the divider to compare").font(.footnote).foregroundStyle(.secondary)
+                    Text("Drag the divider to compare").font(.forma(11)).foregroundStyle(Theme.muted)
                 }
+                Spacer(minLength: 0)
             }
-            .padding(.bottom)
+            .padding(.vertical)
         case .failed(let message):
-            ContentUnavailableView {
-                Label("Couldn't render", systemImage: "wifi.exclamationmark")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try again") { model.start() }.buttonStyle(.borderedProminent)
+            VStack(spacing: 12) {
+                Image(systemName: "wifi.exclamationmark").font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(Theme.sageDeep)
+                Text("Couldn't render").font(.forma(18, bold: true)).foregroundStyle(Theme.ink)
+                Text(message).font(.forma(12)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+                Button("Try again") { model.start() }
+                    .buttonStyle(PillButtonStyle())
+                    .frame(maxWidth: 200)
+                    .padding(.top, 8)
             }
-            .foregroundStyle(.white)
+            .padding(.horizontal, 32)
         }
+    }
+}
+
+/// Dollhouse / Photo switch: sage pill on the chosen side, ink outline around both.
+private struct ViewPicker: View {
+    @Binding var selection: RenderModel.View
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(RenderModel.View.allCases, id: \.self) { view in
+                let on = view == selection
+                Button { selection = view } label: {
+                    Text(view.title).font(.forma(13, bold: on))
+                        .foregroundStyle(on ? Theme.onSage : Theme.ink)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(on ? Theme.sage : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .overlay(Capsule().strokeBorder(Theme.ink, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("View")
+        .animation(.spring(duration: 0.25, bounce: 0), value: selection)
+        .sensoryFeedback(.selection, trigger: selection)
     }
 }
 
@@ -142,6 +186,14 @@ final class RenderModel {
     }
 
     var isLoading: Bool { if case .loading = phase { true } else { false } }
+
+    /// A failed run or a cached (stale) render: worth retrying once the network is back.
+    var needsRetry: Bool {
+        switch phase {
+        case .failed, .done(_, isStale: true): !isRunning
+        default: false
+        }
+    }
 
     var result: UIImage? {
         if case .done(let image, _) = phase { image } else { nil }
@@ -270,7 +322,7 @@ struct BeforeAfterSlider: View {
     }
 
     private func tag(_ text: String) -> some View {
-        Text(text).font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 4)
+        Text(text).font(.forma(11, bold: true)).padding(.horizontal, 8).padding(.vertical, 4)
             .background(.ultraThinMaterial, in: Capsule())
     }
 }
