@@ -388,3 +388,53 @@ def test_check_public_host():
     for bad in ("https://127.0.0.1/m.glb", "https://[::1]/m.glb", "https://localhost/m.glb"):
         with pytest.raises(ValueError):
             main.check_public_host(bad)
+
+
+def test_profile_inputs():
+    assert c.post("/vibe/profile", headers=H).status_code == 422
+    many = [("images", ("a.jpg", jpeg(40, 40)))] * (main.MAX_VIBE_IMAGES + 1)
+    assert c.post("/vibe/profile", headers=H, files=many).status_code == 400
+    assert c.post("/vibe/profile", headers=H, files=[("images", ("a.txt", b"hello"))]).status_code == 415
+    big = c.post("/vibe/profile", headers=H, files=[("images", ("a.jpg", b"x" * (main.MAX_UPLOAD + 1)))])
+    assert big.status_code == 413
+    ok = c.post("/vibe/profile", headers=H, files=[("images", ("a.jpg", jpeg(40, 40)))] * 3)
+    assert ok.status_code == 200 and ok.json()["name"] == "Enchanted Cottage"
+
+
+def test_profile_provider(monkeypatch):
+    sent = {}
+
+    async def parse(**kw):
+        sent.update(kw)
+        p = main.MOCK_PROFILE.model_copy(deep=True, update={"name": "  Moss  ", "styles": [" a ", "a", ""]})
+        p.colors.append(main.VibeColor(name="bad", hex="green"))
+        return type("M", (), {"stop_reason": "end_turn", "parsed_output": p})()
+
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(main, "MOCK", False)
+    monkeypatch.setattr(main, "LLM_API_KEY", "k")
+    monkeypatch.setattr(main.anthropic, "AsyncAnthropic", lambda **kw: NS(beta=NS(messages=NS(parse=parse))))
+    files = [("images", ("a.jpg", jpeg(40, 40))), ("images", ("b.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
+    assert c.post("/vibe/profile", headers=H, files=files).status_code == 415  # truncated PNG is not an image
+    r = c.post("/vibe/profile", headers=H, files=[("images", ("a.jpg", jpeg(40, 40)))] * 2)
+    assert r.status_code == 200
+    # One model call carries every image plus the prompt.
+    assert [p["type"] for p in sent["messages"][0]["content"]] == ["image", "image", "text"]
+    body = r.json()
+    assert body["name"] == "Moss" and body["styles"] == ["a"] and len(body["colors"]) == 2
+
+
+def test_profile_description_length(monkeypatch):
+    lo, hi = main.DESC_WORDS
+    assert lo <= len(main.MOCK_PROFILE.description.split()) <= hi
+    test_profile_provider(monkeypatch)  # sets the fake provider; its description is in range
+    assert c.post("/vibe/profile", headers=H, files=[("images", ("a.jpg", jpeg(40, 40)))]).status_code == 200
+    short = main.MOCK_PROFILE.model_copy(update={"description": "too short"})
+
+    async def parse(**kw):
+        return type("M", (), {"stop_reason": "end_turn", "parsed_output": short})()
+
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(main.anthropic, "AsyncAnthropic", lambda **kw: NS(beta=NS(messages=NS(parse=parse))))
+    r = c.post("/vibe/profile", headers=H, files=[("images", ("a.jpg", jpeg(40, 40)))])
+    assert r.status_code == 502 and "2-word" in r.text

@@ -7,6 +7,9 @@ enum Route: Hashable {
     case object(UUID, picks: Bool = false)
     /// `framing`: open on choosing the Make it real angle.
     case designer(UUID, opensCatalog: Bool = false, framing: Bool = false)
+    /// `applyTo`: a room to link the vibe to once it is saved (from the room's add-a-vibe sheet).
+    case newVibe(applyTo: UUID? = nil)
+    case vibe(UUID)
 }
 
 @Observable final class Router {

@@ -12,6 +12,7 @@ enum Theme {
     static let sageDeep = Color(hex: 0x6F7F62)   // sparkle on the Make it real pill
     static let sand = Color(hex: 0xEFE6DA)       // Make it real pill fill
     static let wood = Color(hex: 0x4A3828)
+    static let terracotta = Color(hex: 0x8A4B2A)   // avoid tags, errors, delete
     static let tiles = [Color(hex: 0xDADCCF), Color(hex: 0xE6DCCF), Color(hex: 0xE9DFD2)]
 
     /// Space Mono ships as two bundled files; registering at launch avoids an Info.plist edit.
