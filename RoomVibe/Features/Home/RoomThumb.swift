@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Room thumbnail: the Designer's default view saved as `Projects/<id>/thumb.jpg` (DesignerView.saveThumbnail).
+/// Room thumbnail: the Designer's default view saved as `Projects/<id>/preview.jpg` (DesignerView.saveThumbnail).
 /// Falls back to the glyph until the room has been opened once.
 struct RoomThumb: View {
     let projectID: UUID
     @State private var image: UIImage?
 
-    static func url(_ id: UUID) -> URL { ProjectStore.projectDir(id).appending(path: "thumb.jpg") }
+    /// "preview.jpg", not the old "thumb.jpg": older builds could save a full-screen capture there.
+    static func url(_ id: UUID) -> URL { ProjectStore.projectDir(id).appending(path: "preview.jpg") }
 
     var body: some View {
         Group {

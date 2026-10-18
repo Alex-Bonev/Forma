@@ -87,7 +87,7 @@ struct DesignerView: View {
             }
             return
         }
-        guard let image = captureDesignerSnapshot() else { return }
+        guard let image = captureDesignerSnapshot(size: viewSize) else { return }
         let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
                                verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
                                viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
@@ -699,7 +699,7 @@ struct DesignerView: View {
     /// Saves the room's default view as its Home thumbnail, unless the user has already moved the camera.
     /// The snapshot's empty (transparent) background is trimmed and the room is fitted onto a square in the app's ground color.
     private func saveThumbnail() {
-        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false)?.cgImage, let box = Self.contentBounds(shot),
+        guard !touched, !lowWalls, let shot = captureDesignerSnapshot(opaque: false, size: viewSize, fallbackToWindow: false)?.cgImage, let box = Self.contentBounds(shot),
               let room = shot.cropping(to: box) else { return }
         let side: CGFloat = 360, pad: CGFloat = 18
         let scale = min((side - 2 * pad) / box.width, (side - 2 * pad) / box.height)

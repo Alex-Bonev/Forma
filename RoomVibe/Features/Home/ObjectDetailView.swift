@@ -30,7 +30,9 @@ struct ObjectDetailView: View {
                         Measure(label: "Height", value: cm(object.boundingBox.y))
                     }
                     StageCard {
-                        if showStage { ObjectStage(object: object, fullscreen: false) { fullscreen = true }.transition(.opacity) }
+                        Color.clear.overlay {   // fixed space from the first frame, so nothing below jumps
+                            if showStage { ObjectStage(object: object, fullscreen: false) { fullscreen = true }.transition(.opacity) }
+                        }
                     }
                     Button { picking = true } label: { Label("Add to room", systemImage: "plus") }
                         .buttonStyle(PillButtonStyle())
@@ -48,8 +50,8 @@ struct ObjectDetailView: View {
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { name = object.name }
             .task {
-                try? await Task.sleep(for: .milliseconds(420))
-                withAnimation(.easeOut(duration: 0.35)) { showStage = true }
+                try? await Task.sleep(for: .milliseconds(800))   // after the zoom push has fully landed
+                withAnimation(.easeInOut(duration: 0.8)) { showStage = true }
             }
             .task {
                 guard picks, !store.projects.isEmpty else { return }

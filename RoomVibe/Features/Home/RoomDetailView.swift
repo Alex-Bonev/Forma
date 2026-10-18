@@ -31,10 +31,11 @@ struct RoomDetailView: View {
                         Measure(label: "Height", value: String(format: "%.1f m", height))
                     }
                     StageCard {
-                        if showStage {
+                        // Fixed space from the first frame: an empty card collapsed, then pushed the list down.
+                        Color.clear.overlay { if showStage {
                             DesignerView(projectID: projectID, style: .card) { router.path.append(.designer(projectID)) }
                                 .transition(.opacity)
-                        }
+                        } }
                     }
                     .overlay(alignment: .topLeading) {
                         if toastVisible, let n = addedName(project) { Toast(text: "\(n) added").padding(12).transition(.opacity.combined(with: .move(edge: .top))) }
@@ -49,8 +50,8 @@ struct RoomDetailView: View {
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { name = project.name }
             .task {
-                try? await Task.sleep(for: .milliseconds(420))
-                withAnimation(.easeOut(duration: 0.35)) { showStage = true }
+                try? await Task.sleep(for: .milliseconds(800))   // after the zoom push has fully landed
+                withAnimation(.easeInOut(duration: 0.8)) { showStage = true }
             }
             .task {
                 guard added != nil else { return }

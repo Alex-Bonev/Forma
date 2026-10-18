@@ -125,7 +125,7 @@ struct HomeView: View {
                     .font(.forma(12)).foregroundStyle(Theme.muted).padding(.vertical, 12)
             }
             ForEach(rooms) { project in
-                NavigationLink(value: Route.room(project.id)) {
+                Button { open(.room(project.id)) } label: {
                     RoomRow(project: project).matchedTransitionSource(id: project.id, in: zoom)
                 }
                     .buttonStyle(.plain)
@@ -149,7 +149,7 @@ struct HomeView: View {
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: 3), spacing: 16) {
                 ForEach(Array(objects.enumerated()), id: \.element.id) { i, object in
-                    NavigationLink(value: Route.object(object.id)) {
+                    Button { open(.object(object.id)) } label: {
                         ObjectTile(object: object, tint: Theme.tiles[i % Theme.tiles.count])
                             .matchedTransitionSource(id: object.id, in: zoom)
                     }
@@ -163,6 +163,11 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// Push with a slow, soft zoom instead of the default quick one.
+    private func open(_ route: Route) {
+        withTransaction(Transaction(animation: .smooth(duration: 0.75))) { router.path.append(route) }
     }
 
     private func matches(_ name: String, _ query: String) -> Bool {
