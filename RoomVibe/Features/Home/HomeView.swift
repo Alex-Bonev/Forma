@@ -2,114 +2,76 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(ProjectStore.self) private var store
-    @State private var path: [UUID] = []
+    @State private var router = Router()
+    @State private var openedDemo = false
     @State private var scanningRoom = false
     @State private var scanningObject = false
     @State private var error: String?
     @State private var renaming: Rename?
     @State private var newName = ""
+    @State private var roomQuery = ""
+    @State private var objectQuery = ""
 
     private enum Rename { case room(Project), object(ScannedObject) }
 
     var body: some View {
-        NavigationStack(path: $path) {
-            List {
-                Section("Rooms") {
-                    if store.projects.isEmpty {
-                        Text("No rooms yet. Scan one, or load the demo room.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(store.projects) { project in
-                        NavigationLink(value: project.id) {
-                            Label {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(project.name).font(.headline)
-                                    Text(project.createdAt, style: .date)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            } icon: {
-                                Image(systemName: "cube.transparent").foregroundStyle(.tint)
-                            }
-                        }
-                        .swipeActions {
-                            Button("Delete", role: .destructive) { store.delete(project) }
-                            Button("Rename") { startRename(.room(project), project.name) }.tint(.indigo)
-                        }
-                        .contextMenu {
-                            Button("Rename", systemImage: "pencil") { startRename(.room(project), project.name) }
-                            Button("Delete", systemImage: "trash", role: .destructive) { store.delete(project) }
-                        }
+        NavigationStack(path: $router.path) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    roomsSection
+                    objectsSection
+                    if !Capabilities.canScanRoom {
+                        Text("This device has no LiDAR. Scanning is off; use the demo data to explore.")
+                            .font(.forma(11)).foregroundStyle(Theme.muted)
                     }
                 }
-
-                Section("Object Library") {
-                    if store.objects.isEmpty {
-                        Text("Scan a real object to place it in your rooms.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(store.objects) { object in
-                        Label(object.name, systemImage: object.modelFile == nil ? "chair" : "chair.fill")
-                            .swipeActions {
-                                Button("Delete", role: .destructive) { store.delete(object) }
-                                Button("Rename") { startRename(.object(object), object.name) }.tint(.indigo)
-                            }
-                            .contextMenu {
-                                Button("Rename", systemImage: "pencil") { startRename(.object(object), object.name) }
-                                Button("Delete", systemImage: "trash", role: .destructive) { store.delete(object) }
-                            }
-                    }
-                }
-
-                if !Capabilities.canScanRoom {
-                    Section {
-                        Label("This device has no LiDAR. Scanning is off; use the demo data to explore.",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
             }
-            .navigationTitle("RoomVibe")
-            .navigationDestination(for: UUID.self) { DesignerView(projectID: $0) }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Load Demo Data", systemImage: "shippingbox") {
-                            do { try store.loadDemoData() } catch { self.error = error.localizedDescription }
-                        }
-                    } label: { Image(systemName: "ellipsis.circle") }
-                }
+            .scrollIndicators(.hidden)
+            .background(Theme.ground.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: Route.self) { route in
+                Group { switch route {
+                case .room(let id, let added): RoomDetailView(projectID: id, added: added)
+                case .object(let id): ObjectDetailView(objectID: id)
+                case .designer(let id, let opensCatalog): DesignerView(projectID: id, opensCatalog: opensCatalog)
+                } }
+                .environment(router)
             }
-            .safeAreaInset(edge: .bottom) {
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack(spacing: 12) {
                     Button { scanningRoom = true } label: {
-                        Label("Scan Room", systemImage: "viewfinder").frame(maxWidth: .infinity)
+                        HStack(spacing: 10) { Text("Scan Room"); Image(systemName: "arrow.right") }
                     }
+                    .buttonStyle(PillButtonStyle())
                     .disabled(!Capabilities.canScanRoom)
-                    Button { scanningObject = true } label: {
-                        Label("Scan Object", systemImage: "camera.metering.center.weighted").frame(maxWidth: .infinity)
-                    }
-                    .disabled(!Capabilities.canScanObject)
+                    Button("Scan Object") { scanningObject = true }
+                        .buttonStyle(PillButtonStyle(filled: false))
+                        .disabled(!Capabilities.canScanObject)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding()
-                .background(.bar)
+                .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
+                .background(Theme.ground.opacity(0.7))
+                .background(.ultraThinMaterial)
+                .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
             }
             .fullScreenCover(isPresented: $scanningRoom) {
-                RoomScanView { project in path.append(project.id) }
+                RoomScanView { project in router.path.append(.room(project.id)) }
             }
             .fullScreenCover(isPresented: $scanningObject) {
                 ObjectScanView()
             }
             .task {
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
-                guard ProcessInfo.processInfo.arguments.contains("-demo") else { return }
+                guard ProcessInfo.processInfo.arguments.contains("-demo"), !openedDemo else { return }
+                openedDemo = true   // .task reruns whenever Home reappears; jump in only once
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("-fresh") { store.projects.forEach(store.delete) }   // UI tests
                 #endif
                 if store.projects.isEmpty { try? store.loadDemoData() }
-                if let first = store.projects.first { path = [first.id] }
+                if let first = store.projects.first { router.path = [.designer(first.id)] }
             }
             .alert("Rename", isPresented: .constant(renaming != nil)) {
                 TextField("Name", text: $newName)
@@ -120,6 +82,71 @@ struct HomeView: View {
                 Button("OK") { error = nil }
             } message: { Text(error ?? "") }
         }
+    }
+
+    private var header: some View {
+        HStack {
+            Text("forma").font(.forma(24, bold: true, relativeTo: .largeTitle)).tracking(-0.7)
+                .foregroundStyle(Theme.ink)
+            Spacer()
+            Menu {
+                Button("Load Demo Data", systemImage: "shippingbox") {
+                    do { try store.loadDemoData() } catch { self.error = error.localizedDescription }
+                }
+            } label: {
+                Image(systemName: "ellipsis").foregroundStyle(Theme.ink).frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("More")
+        }
+    }
+
+    private var roomsSection: some View {
+        let rooms = store.projects.filter { matches($0.name, roomQuery) }
+        return VStack(alignment: .leading, spacing: 4) {
+            SectionHeader(title: "Rooms", count: store.projects.count).padding(.bottom, 4)
+            if store.projects.count > 5 { SearchField(text: $roomQuery, prompt: "Search \(store.projects.count) rooms").padding(.bottom, 8) }
+            if store.projects.isEmpty {
+                Text("No rooms yet. Scan one, or load the demo room.")
+                    .font(.forma(12)).foregroundStyle(Theme.muted).padding(.vertical, 12)
+            }
+            ForEach(rooms) { project in
+                NavigationLink(value: Route.room(project.id)) { RoomRow(project: project) }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Rename", systemImage: "pencil") { startRename(.room(project), project.name) }
+                        Button("Delete", systemImage: "trash", role: .destructive) { store.delete(project) }
+                    }
+            }
+        }
+    }
+
+    private var objectsSection: some View {
+        let objects = store.objects.filter { matches($0.name, objectQuery) }
+        return VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Object library", count: store.objects.count)
+            if store.objects.count > 6 { SearchField(text: $objectQuery, prompt: "Search \(store.objects.count) objects") }
+            if store.objects.isEmpty {
+                Text("Scan a real object to place it in your rooms.")
+                    .font(.forma(12)).foregroundStyle(Theme.muted)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: 3), spacing: 16) {
+                ForEach(Array(objects.enumerated()), id: \.element.id) { i, object in
+                    NavigationLink(value: Route.object(object.id)) {
+                        ObjectTile(object: object, tint: Theme.tiles[i % Theme.tiles.count])
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") { startRename(.object(object), object.name) }
+                            Button("Delete", systemImage: "trash", role: .destructive) { store.delete(object) }
+                        }
+                }
+            }
+        }
+    }
+
+    private func matches(_ name: String, _ query: String) -> Bool {
+        query.isEmpty || name.localizedCaseInsensitiveContains(query)
     }
 
     private func startRename(_ target: Rename, _ current: String) {
@@ -136,5 +163,50 @@ struct HomeView: View {
         case .object(let o): store.rename(o, to: name)
         case nil: break
         }
+    }
+}
+
+private struct RoomRow: View {
+    @Environment(ProjectStore.self) private var store
+    let project: Project
+    @State private var summary = ""
+
+    var body: some View {
+        HStack(spacing: 16) {
+            RoomGlyph().frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 16))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(project.name).font(.forma(15, bold: true)).foregroundStyle(Theme.ink)
+                Text(summary).font(.forma(12)).foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.wood)
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) { Theme.hairline.frame(height: 1) }
+        .contentShape(Rectangle())
+        .task(id: project) {
+            summary = roomSummary(project, store: store) ?? ""
+        }
+    }
+}
+
+private struct ObjectTile: View {
+    let object: ScannedObject
+    let tint: Color
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "chair.lounge.fill")
+                .font(.system(size: 30)).foregroundStyle(Theme.wood)
+                .frame(maxWidth: .infinity).frame(height: 96)
+                .background(tint, in: RoundedRectangle(cornerRadius: 20))
+            Text(object.name).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)
+            Text(dims).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.8)
+        }
+    }
+
+    /// Width × depth × height in cm.
+    private var dims: String {
+        let b = object.boundingBox * 100
+        return String(format: "%.0f × %.0f × %.0f cm", b.x, b.z, b.y)
     }
 }

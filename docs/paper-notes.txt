@@ -1,0 +1,45 @@
+Paper (paper.design): notes for the hackathon
+Owner: Michelle (B). Written 2026-10-17.
+
+Status: nothing here has been tried in the app. Details come from third-party reviews, not Paper's official docs. Check each item in Paper before relying on it.
+
+What Paper is
+- A design canvas built on real HTML and CSS, so designs export as code with no conversion step.
+- Ships a MCP server (reviews say 24 tools) that Claude Code can both read from and write to.
+- Paper Desktop must be running with a file open for the MCP server to work. Local endpoint is reported as port 29979.
+- Open alpha as of a February 2026 review. macOS desktop app plus web app.
+- Free tier: 100 MCP calls per week. Pro: about $16-20/month, 1M calls per week, video export, more image generations.
+
+Animations
+- Shaders (grain gradients, halftone, Swirl, Water, Liquid Metal) are GPU-rendered with live preview and parameter control.
+- No source confirmed that the shaders animate, or that the canvas supports prototyping or transitions. Test before planning around it.
+
+Features other than shaders, and how RoomVibe could use them
+1. Design-to-code loop
+   - get_jsx returns a node as React + Tailwind JSX. get_computed_styles returns CSS, usable to extract colors, spacing and type.
+   - Idea: design Home and a token sheet (colors, type, spacing) in Paper, then have Claude read the tokens over MCP and write them into Assets.xcassets and a SwiftUI theme file.
+   - Limit: output is web code, so the SwiftUI translation is manual.
+2. Verify loop with get_screenshot
+   - Agent screenshots after each write to check the result. Artboards come in standard device sizes (mobile 375x812).
+   - Idea: Claude builds Home, app icon and launch artboards, looks at them, and iterates.
+3. Built-in image generation
+   - Models: Flux 2, Nano Banana Pro, OpenAI Image Edit, Seedream.
+   - Idea: app icon base, empty-state art, room thumbnails, pitch art.
+   - Judging note: "differentiate from AI-generated designs" means hand-edit generated images, do not ship them raw.
+4. Video export (Pro): possible demo teaser. Unconfirmed what it animates.
+5. Live data into designs: agents can pull content from Notion, Figma or APIs onto the canvas.
+6. Real HTML/CSS canvas: flexbox layouts and real font rendering, so responsive artboards are cheap.
+
+Recommendation
+Lead with 1 and 2. They show the two-way link between Paper and the codebase, which is what sets Paper apart, and they fit the Best Designed Hack criteria (design fundamentals, ease of use, craft and character).
+
+Open checks
+- Is Paper an LA Hacks sponsor or prize track?
+- Is 100 MCP calls per week enough on the free tier?
+- Is Paper Desktop installed on the machine that will run the MCP?
+
+Sources
+- https://www.banani.co/blog/paper-design-mcp-review
+- https://azukiazusa.dev/en/blog/ai-agent-design-tool-paper
+- https://abduzeedo.com/node/89066
+- https://skills.sh/tdimino/claude-code-minoan/paper-design

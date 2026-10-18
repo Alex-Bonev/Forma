@@ -10,24 +10,25 @@ final class DesignerGestureTests: XCTestCase {
 
         let canvas = app.otherElements["designer-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
         let add = app.buttons["Demo Chair"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.tap()
-        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5), "new object should be selected")
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "new object should be selected")
 
         // Chair sits on the camera target, which projects to the canvas center.
         let chair = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
         // Hit testing alone: deselect (tap empty floor near the top), then tap the chair to select it again.
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08)).tap()
-        XCTAssertFalse(app.buttons["Delete"].exists)
+        XCTAssertFalse(app.buttons["Remove"].exists)
         chair.tap()
-        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 2), "tap on the chair should select it")
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 2), "tap on the chair should select it")
         let before = canvas.value as? String
         chair.press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.62)))
         sleep(1)
         let after = canvas.value as? String
         XCTAssertNotNil(before)
-        XCTAssertTrue(app.buttons["Delete"].exists, "chair should stay selected after the drag")
+        XCTAssertTrue(app.buttons["Remove"].exists, "chair should stay selected after the drag")
         XCTAssertGreaterThan(x(after), x(before) + 0.3, "dragging right should move the chair +x (\(before ?? "-") -> \(after ?? "-"))")
         XCUIScreen.main.screenshot().attach(named: "after-drag", to: self)
 
@@ -48,29 +49,26 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
 
         // Catalog item drops in and is selected.
-        app.buttons["Add Item"].tap()
+        openCatalog(app)
         let plant = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Plant'")).firstMatch
         XCTAssertTrue(plant.waitForExistence(timeout: 3))
         plant.tap()
-        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5), "catalog item should be placed and selected")
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5), "catalog item should be placed and selected")
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
-        app.buttons["Delete"].tap()
+        app.buttons["Remove"].tap()
 
-        // Scanned sofa (demo room) is selectable, hideable, restorable.
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
-        XCTAssertTrue(app.buttons["Replace"].waitForExistence(timeout: 3), "tapping scanned furniture should select it")
-        app.buttons["Hide"].tap()
-        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2), "hide offers undo first")
-        let restore = app.buttons["Show 1 hidden scanned item"]
-        XCTAssertTrue(restore.waitForExistence(timeout: 8), "then the restore button")
-        restore.tap()
-        XCTAssertFalse(restore.waitForExistence(timeout: 1))
+        // Scanned sofa (demo room): select from the Objects panel, hide and show with the eye.
+        app.staticTexts["Sofa"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Replace"].waitForExistence(timeout: 3), "selecting scanned furniture should offer Replace")
+        app.buttons["Hide Sofa"].tap()
+        XCTAssertTrue(app.buttons["Show Sofa"].waitForExistence(timeout: 3))
+        app.buttons["Show Sofa"].tap()
+        XCTAssertTrue(app.buttons["Hide Sofa"].waitForExistence(timeout: 3))
 
         // Replace the scanned sofa with a catalog model at the same spot.
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.39)).tap()
         app.buttons["Replace"].tap()
         app.buttons["Corner Sofa"].tap()
-        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Corner Sofa at") == true)
         sleep(1)
         XCUIScreen.main.screenshot().attach(named: "after-replace", to: self)
@@ -81,7 +79,7 @@ final class DesignerGestureTests: XCTestCase {
         app.launchArguments = ["-demo"]
         app.launch()
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
-        app.buttons["Add Item"].tap()
+        openCatalog(app)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Custom Box'")).firstMatch.tap()
         let edit = app.buttons["Size"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
@@ -123,32 +121,36 @@ final class DesignerGestureTests: XCTestCase {
         app.launch()
         let canvas = app.otherElements["designer-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
         app.buttons["Demo Chair"].tap()
-        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
-        app.buttons["Delete"].tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        app.buttons["Remove"].tap()
         XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2))
         app.buttons["Undo"].tap()
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)).tap()   // the chair dropped at the view center
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Demo Chair at") == true, "undo brings the chair back")
     }
 
+    /// Rooms are renamed from the Name field on Room detail.
     func testRenameRoom() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
         app.launch()
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
-        app.navigationBars.buttons["Demo Living Room, Actions Menu"].tap()
-        let rename = app.buttons["Rename"]
-        XCTAssertTrue(rename.waitForExistence(timeout: 3))
-        rename.tap()
-        let field = app.navigationBars.textFields.firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        app.buttons["Close fullscreen"].tap()   // -demo opens the Designer straight from Home
+        func row(_ name: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        }
+        XCTAssertTrue(row("Demo Living Room").waitForExistence(timeout: 5))
+        row("Demo Living Room").tap()
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.clearAndType("Den\n")
-        XCTAssertTrue(app.navigationBars["Den"].waitForExistence(timeout: 3))
+        app.buttons["Back to Rooms"].tap()
+        XCTAssertTrue(row("Den").waitForExistence(timeout: 3), "Home lists the new name")
         XCUIScreen.main.screenshot().attach(named: "renamed", to: self)
-        app.navigationBars["Den"].buttons["Den"].tap()
-        app.buttons["Rename"].tap()
-        app.navigationBars.textFields.firstMatch.clearAndType("Demo Living Room\n")
+        row("Den").tap()
+        app.textFields.firstMatch.clearAndType("Demo Living Room\n")
     }
 
     /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
@@ -159,12 +161,13 @@ final class DesignerGestureTests: XCTestCase {
         let canvas = app.otherElements["designer-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         sleep(2)
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.80, dy: 0.565)).tap()
+        app.buttons["Objects"].tap()
+        app.staticTexts["Marked item"].firstMatch.tap()
         let use = app.buttons["Use Plant"]
         XCTAssertTrue(use.waitForExistence(timeout: 3), "marked item should offer its Vision suggestion")
         XCUIScreen.main.screenshot().attach(named: "after-suggestion", to: self)
         use.tap()
-        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
         XCTAssertTrue((canvas.value as? String)?.hasPrefix("Plant at") == true)
     }
 
@@ -172,22 +175,31 @@ final class DesignerGestureTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-demo"]
         app.launch()
-        app.navigationBars.buttons.firstMatch.tap()   // back to Home
-        let chair = app.staticTexts["Demo Chair"].firstMatch
-        XCTAssertTrue(chair.waitForExistence(timeout: 5))
-        chair.press(forDuration: 1.0)
+        app.buttons["Close fullscreen"].tap()   // -demo opens the Designer straight from Home
+        // Library tiles are navigation links whose label starts with the object's name.
+        func tile(_ name: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        }
+        XCTAssertTrue(tile("Demo Chair").waitForExistence(timeout: 5))
+        tile("Demo Chair").press(forDuration: 1.0)
         app.buttons["Rename"].tap()
         let field = app.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 2))
         field.clearAndType("Store chair")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.staticTexts["Store chair"].waitForExistence(timeout: 2))
-        // Undo, so the other test still finds "Demo Chair".
-        app.staticTexts["Store chair"].press(forDuration: 1.0)
+        XCTAssertTrue(tile("Store chair").waitForExistence(timeout: 2))
+        // Undo, so the other tests still find "Demo Chair".
+        tile("Store chair").press(forDuration: 1.0)
         app.buttons["Rename"].tap()
         app.textFields.firstMatch.clearAndType("Demo Chair")
         app.buttons["Save"].tap()
     }
+}
+
+/// Fullscreen Designer: Objects panel > "Add object" opens the catalog sheet.
+private func openCatalog(_ app: XCUIApplication) {
+    if !app.buttons["Add object"].exists { app.buttons["Objects"].tap() }
+    app.buttons["Add object"].tap()
 }
 
 private extension XCUIElement {

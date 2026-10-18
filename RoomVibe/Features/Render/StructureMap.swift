@@ -116,11 +116,14 @@ enum StructureMap {
             for x in 0..<width {
                 // Same ray math as DesignerView.ray(at:), at pixel centers.
                 let px = Float(x) + 0.5, py = Float(y) + 0.5
-                let local = normalize(SIMD3((2 * px / w - 1) * t * w / h, (1 - 2 * py / h) * t, -1))
+                let nx: Float = (2 * px / w - 1) * t * w / h
+                let ny: Float = (1 - 2 * py / h) * t
+                let local = normalize(SIMD3<Float>(nx, ny, -1))
                 let dir = rot * local
                 var best: (Float, Kind)?
                 for s in solids {
-                    if let d = intersect(origin, dir, s), d < best?.0 ?? .greatestFiniteMagnitude { best = (d, s.kind) }
+                    let limit: Float = best?.0 ?? Float.greatestFiniteMagnitude
+                    if let d = intersect(origin, dir, s), d < limit { best = (d, s.kind) }
                 }
                 buf[y * width + x] = best
             }
