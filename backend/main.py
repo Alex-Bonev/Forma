@@ -5,16 +5,22 @@ Providers (checked against docs 2026-10-17):
   /render          Gemini image editing via the Interactions API (IMAGE_API_KEY, IMAGE_MODEL)
   /vibe/analyze    Claude (vision optional) + structured output (LLM_API_KEY)
   /vibe/products   SerpAPI Google Shopping (SHOPPING_API_KEY)
+  /vibe/shop       Browser Use Cloud API V4 agents, one per shopping-list item (BROWSER_USE_API_KEY)
 """
 import asyncio
 import base64
+import hashlib
+import hmac
 import io
+import json
 import logging
 import math
 import os
 import re
 import secrets
+import time
 from typing import Literal
+from urllib.parse import urlsplit
 
 import anthropic
 import httpx
@@ -22,6 +28,8 @@ from google import genai
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from PIL import Image
 from pydantic import BaseModel, ValidationError
+
+from budget import pick_within_budget
 
 MOCK = os.getenv("MOCK", "1") == "1"
 APP_SHARED_SECRET = os.getenv("APP_SHARED_SECRET", "")
@@ -31,6 +39,11 @@ IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1K")  # 512 / 1K / 2K
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-opus-5-5")
 SHOPPING_API_KEY = os.getenv("SHOPPING_API_KEY", "")
+BROWSER_USE_API_KEY = os.getenv("BROWSER_USE_API_KEY", "")
+BROWSER_USE_MODEL = os.getenv("BROWSER_USE_MODEL", "")  # empty: the provider's default model
+BROWSER_USE_MAX_COST = float(os.getenv("BROWSER_USE_MAX_COST", "0.5"))  # USD cap per agent run
+BROWSER_USE_URL = "https://api.browser-use.com/api/v4"
+SHOP_TIMEOUT = 6 * 60  # an agent still running after this counts as failed
 MAX_UPLOAD = 4 * 1024 * 1024  # Vercel caps bodies at 4.5 MB
 TIMEOUT = 90
 MAX_RESPONSE_B64 = 4_400_000  # base64 render must fit Vercel's 4.5 MB response cap
@@ -118,10 +131,13 @@ class Style(BaseModel):
 
 class Product(BaseModel):
     title: str
-    price: str
+    price: str  # display text
     image_url: str
     product_url: str
     retailer: str
+    price_usd: float | None = None
+    category: str | None = None
+    dimensions_cm: list[float] | None = None  # [width, height, depth]
 
 
 def http() -> httpx.AsyncClient:
@@ -259,7 +275,7 @@ def clean_style(style: Style) -> Style:
     for it in items:
         if it.category not in CATEGORIES:
             it.category = "decor"
-    budget = style.budget_usd if style.budget_usd and style.budget_usd > 0 else None
+    budget = style.budget_usd if style.budget_usd and math.isfinite(style.budget_usd) and style.budget_usd > 0 else None
     if budget is None:
         for it in items:
             it.max_price_usd = None
@@ -357,3 +373,202 @@ async def vibe_products(style: Style):
                 seen.add(key)
                 products.append(hits[rank].model_dump())
     return {"products": products[:8]}
+
+
+class AgentProduct(BaseModel):
+    title: str
+    price_usd: float
+    image_url: str
+    product_url: str
+    retailer: str
+    width_cm: float | None = None
+    height_cm: float | None = None
+    depth_cm: float | None = None
+
+
+class AgentResult(BaseModel):
+    products: list[AgentProduct]
+
+
+class ShopRequest(BaseModel):
+    style: Style
+    budget_usd: float | None = None  # overrides style.budget_usd when set
+
+
+SHOP_TASK = """Find {n} real products to buy online for this room design.
+Room: {room}. Style: {style}. Colors: {palette}. Materials: {materials}.
+Find: {query}.{price}
+Rules:
+- Use any online store (search engines, retailer sites), but never facebook.com or Facebook Marketplace.
+- Do not log in, create accounts, add to cart or check out. Only read public product pages.
+- Each product must be in stock and match the style. Prefer different retailers.
+- Return the direct product page URL (not a search page), the main product image URL, the current price in USD,
+  the retailer name, and the width, height and depth in centimeters if the page lists them."""
+
+PRODUCTS_PER_ITEM = 2
+BLOCKED_HOSTS = ("facebook.com", "fb.com", "fb.me")  # Facebook Marketplace is not allowed
+
+
+def allowed_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower().rstrip(".")  # "facebook.com." resolves to Facebook too
+    return parts.scheme == "https" and bool(host) and not any(host == b or host.endswith("." + b) for b in BLOCKED_HOSTS)
+
+
+def shop_task(style: Style, item: ShoppingItem) -> str:
+    price = f" Each must cost at most ${item.max_price_usd:,.2f}." if item.max_price_usd else ""
+    return SHOP_TASK.format(n=PRODUCTS_PER_ITEM, room=style.room_type or "room", style=style.style_name,
+                            palette=", ".join(style.palette), materials=", ".join(style.materials),
+                            query=item.query, price=price)
+
+
+def agent_products(output, item: dict) -> list[Product]:
+    """Validated products from one run's structured output. Drops blocked or non-https links and bad prices."""
+    raw = output.get("products") if isinstance(output, dict) else None
+    products = []
+    for entry in raw if isinstance(raw, list) else []:
+        try:
+            p = AgentProduct.model_validate(entry)
+        except ValidationError:
+            continue
+        cap = item.get("cap")
+        if not math.isfinite(p.price_usd) or p.price_usd <= 0 or (cap and p.price_usd > cap * 1.05) or not allowed_url(p.product_url):
+            continue
+        dims = [p.width_cm, p.height_cm, p.depth_cm]
+        products.append(Product(
+            title=p.title, price=f"${p.price_usd:,.2f}", price_usd=p.price_usd, product_url=p.product_url,
+            image_url=p.image_url if allowed_url(p.image_url) else "", retailer=p.retailer, category=item["category"],
+            dimensions_cm=dims if all(d and math.isfinite(d) and d > 0 for d in dims) else None))
+    return products
+
+
+RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
+
+
+def job_signature(body: str) -> str:
+    # Signed so a client can't change run ids, caps, budget or start time. Key: the app secret (empty in local mock).
+    return hmac.new(f"vibe-shop:{APP_SHARED_SECRET}".encode(), body.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def encode_job(job: dict) -> str:
+    body = base64.urlsafe_b64encode(json.dumps(job, separators=(",", ":")).encode()).decode().rstrip("=")
+    return f"{body}.{job_signature(body)}"
+
+
+def decode_job(token: str) -> dict:
+    body, _, sig = token.partition(".")
+    if not hmac.compare_digest(sig.encode(), job_signature(body).encode()):
+        raise HTTPException(400, "bad shopping job")
+    try:
+        job = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        assert isinstance(job["t"], (int, float)) and isinstance(job["items"], list)
+        for it in job["items"]:
+            assert isinstance(it["category"], str) and isinstance(it["query"], str)
+            assert it.get("run") is None or RUN_ID.fullmatch(it["run"])
+        return job
+    except Exception:
+        raise HTTPException(400, "bad shopping job")
+
+
+def browser_use_headers() -> dict:
+    return {"X-Browser-Use-API-Key": BROWSER_USE_API_KEY}
+
+
+async def start_run(client: httpx.AsyncClient, task: str) -> str | None:
+    body = {"task": task, "outputSchema": AgentResult.model_json_schema(), "maxCostUsd": BROWSER_USE_MAX_COST}
+    if BROWSER_USE_MODEL:
+        body["model"] = BROWSER_USE_MODEL
+    try:
+        r = await client.post(f"{BROWSER_USE_URL}/runs", json=body, headers=browser_use_headers())
+        run_id = r.json()["id"] if r.status_code < 300 else None
+        return run_id if isinstance(run_id, str) and RUN_ID.fullmatch(run_id) else None
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return None
+
+
+async def read_run(client: httpx.AsyncClient, run_id: str) -> dict | None:
+    """The run, or None if it can't be read right now (treated as still running)."""
+    try:
+        r = await client.get(f"{BROWSER_USE_URL}/runs/{run_id}", headers=browser_use_headers())
+    except httpx.HTTPError:
+        return None
+    if r.status_code in (401, 403):  # fail fast instead of "running" until the timeout
+        raise HTTPException(502, "shopping provider rejected the API key")
+    try:
+        return r.json() if r.status_code == 200 else None
+    except ValueError:
+        return None
+
+
+@app.post("/vibe/shop")
+async def vibe_shop(req: ShopRequest):
+    """Starts one browser agent per shopping-list item and returns at once. Poll GET /vibe/shop/{job}."""
+    budget = req.budget_usd if req.budget_usd is not None else req.style.budget_usd
+    style = clean_style(req.style.model_copy(update={"budget_usd": budget}))
+    if not style.shopping_list:
+        raise HTTPException(400, "style has nothing to shop for")
+    items = [{"category": it.category, "query": it.query, "cap": it.max_price_usd} for it in style.shopping_list]
+    if MOCK:
+        run_ids = [f"mock-{i}" for i in range(len(items))]
+    else:
+        require(BROWSER_USE_API_KEY, "BROWSER_USE_API_KEY")
+        async with http() as client:
+            run_ids = await asyncio.gather(*(start_run(client, shop_task(style, it)) for it in style.shopping_list))
+        if not any(run_ids):
+            raise HTTPException(502, "shopping agents could not start")
+    for it, run_id in zip(items, run_ids):
+        it["run"] = run_id
+    job = encode_job({"items": items, "budget": style.budget_usd, "t": int(time.time())})
+    return {"job": job, "items": [{"category": it["category"], "query": it["query"]} for it in items]}
+
+
+def mock_run(i: int, item: dict, elapsed: float) -> dict:
+    if i % 2 and elapsed < 4:  # half the items finish a poll later, so the app's streaming UI shows
+        return {"status": "running"}
+    base = item.get("cap") or 120 * (i + 1)  # mock prices stay under the item's cap
+    return {"status": "completed", "output": {"products": [
+        {"title": f"{item['query'].title()} {n + 1}", "price_usd": round(base * (0.9 - 0.3 * n), 2), "retailer": "Example",
+         "image_url": f"https://picsum.photos/seed/{i}-{n}/400", "product_url": f"https://example.com/{i}-{n}",
+         "width_cm": 80, "height_cm": 75, "depth_cm": 80}
+        for n in range(PRODUCTS_PER_ITEM)]}}
+
+
+@app.get("/vibe/shop/{job}")
+async def vibe_shop_status(job: str):
+    """Each item's agent status and products. When all are finished, `chosen` is the set that fits the budget."""
+    state = decode_job(job)
+    items, budget = state["items"], state.get("budget")
+    elapsed = max(0.0, time.time() - state["t"])
+    if MOCK:
+        runs = [mock_run(i, it, elapsed) for i, it in enumerate(items)]
+    else:
+        require(BROWSER_USE_API_KEY, "BROWSER_USE_API_KEY")
+        async with http() as client:
+            runs = await asyncio.gather(*(
+                read_run(client, it["run"]) if it.get("run") else asyncio.sleep(0, {"status": "failed"})
+                for it in items))
+    out, seen = [], set()
+    for it, run in zip(items, runs):
+        status = (run or {}).get("status")
+        products = []
+        if status == "completed":
+            products = [p for p in agent_products(run.get("output"), it) if p.product_url not in seen]
+            seen.update(p.product_url for p in products)
+            state_ = "done" if products else "failed"
+        elif status in ("failed", "cancelled") or elapsed > SHOP_TIMEOUT:
+            state_ = "failed"
+        else:
+            state_ = "running"
+        out.append({"category": it["category"], "query": it["query"], "status": state_,
+                    "products": [p.model_dump() for p in products]})
+    done = all(it["status"] != "running" for it in out)
+    result = {"done": done, "budget_usd": budget, "items": out}
+    if done:
+        pick = pick_within_budget([[p["price_usd"] for p in it["products"]] for it in out], budget)
+        chosen = [out[i]["products"][j] for i, j in enumerate(pick) if j is not None]
+        result["chosen"] = [p["product_url"] for p in chosen]
+        result["total_usd"] = round(sum(p["price_usd"] for p in chosen), 2)
+    return result

@@ -1,4 +1,5 @@
 import io
+import json
 import os
 os.environ["APP_SHARED_SECRET"] = "s"
 import httpx
@@ -181,3 +182,101 @@ def test_clean_style_budget_shares():
     fallback = main.clean_style(main.MOCK_STYLE.model_copy(update={"shopping_list": []}))
     assert [it.query for it in fallback.shopping_list] == main.MOCK_STYLE.search_queries
     assert main.MOCK_STYLE.shopping_list[0].category == "sofa"  # input not mutated
+
+
+def shop_request(budget=None):
+    return {"style": main.MOCK_STYLE.model_dump(), "budget_usd": budget}
+
+
+def test_shop_mock_streams_then_picks(monkeypatch):
+    start = c.post("/vibe/shop", headers=H, json=shop_request(500)).json()
+    assert [it["category"] for it in start["items"]] == ["sofa", "round_table", "armchair", "floor_lamp"]
+    first = c.get(f"/vibe/shop/{start['job']}", headers=H).json()
+    assert not first["done"] and [it["status"] for it in first["items"]] == ["done", "running", "done", "running"]
+    assert "chosen" not in first
+    monkeypatch.setattr(main.time, "time", lambda: 10**10)  # later poll
+    last = c.get(f"/vibe/shop/{start['job']}", headers=H).json()
+    assert last["done"] and last["budget_usd"] == 500
+    assert 0 < last["total_usd"] <= 500 and len(last["chosen"]) >= 2
+    product = last["items"][0]["products"][0]
+    assert product["category"] == "sofa" and product["dimensions_cm"] == [80, 75, 80] and product["price_usd"] > 0
+
+
+def test_shop_bad_job():
+    assert c.get("/vibe/shop/not-a-job", headers=H).status_code == 400
+    job = c.post("/vibe/shop", headers=H, json=shop_request()).json()["job"]
+    body = job.split(".")[0]
+    forged = main.encode_job({"items": [{"category": "sofa", "query": "q", "run": "../billing?x"}], "t": 0})
+    assert c.get(f"/vibe/shop/{body}.{'0' * 32}", headers=H).status_code == 400  # tampered signature
+    assert c.get(f"/vibe/shop/{forged}", headers=H).status_code == 400  # bad run id, even when signed
+
+
+def test_allowed_url():
+    assert main.allowed_url("https://www.ikea.com/p/1")
+    for bad in ("http://ikea.com/p", "https://www.facebook.com/marketplace/item/1", "https://m.facebook.com/x",
+                "https://fb.me/x", "javascript:alert(1)", "https://", "not a url", "https://facebook.com./x",
+                "https://www.facebook.com./marketplace", "https://fb.me./x", "https://WWW.FaceBook.COM/x"):
+        assert not main.allowed_url(bad), bad
+    assert main.allowed_url("https://notfacebook.com/x")  # only facebook.com and its subdomains are blocked
+
+
+def test_shop_provider(monkeypatch):
+    created, runs = [], {}
+    good = {"title": "Oak Table", "price_usd": 199.0, "image_url": "https://img/1.jpg",
+            "product_url": "https://shop.example/oak", "retailer": "Shop", "width_cm": 90, "height_cm": 45}
+    fb = {**good, "product_url": "https://www.facebook.com/marketplace/item/9"}
+    pricey = {**good, "product_url": "https://shop.example/gold", "price_usd": 99999}
+    inf = {**good, "product_url": "https://shop.example/inf", "price_usd": float("inf"), "depth_cm": float("nan")}
+
+    def handler(req):
+        assert req.headers["X-Browser-Use-API-Key"] == "bu"
+        if req.method == "POST":
+            body = json.loads(req.content)
+            created.append(body)
+            if "Find: rattan lounge chair" in body["task"]:
+                return httpx.Response(500)  # this agent never starts
+            return httpx.Response(200, json={"id": f"r{len(created)}", "status": "queued"})
+        return httpx.Response(200, content=json.dumps(runs[req.url.path.rsplit("/", 1)[1]]))  # allows Infinity
+
+    fake_provider(monkeypatch, handler)
+    monkeypatch.setattr(main, "BROWSER_USE_API_KEY", "bu")
+    r = c.post("/vibe/shop", headers=H, json=shop_request(1000))
+    assert r.status_code == 200, r.text
+    start = r.json()
+    assert len(created) == 4 and created[0]["maxCostUsd"] == main.BROWSER_USE_MAX_COST
+    assert "never facebook.com" in created[0]["task"] and "at most $" in created[0]["task"]
+    assert created[0]["outputSchema"]["properties"]["products"]
+    runs.update({"r1": {"status": "completed", "output": {"products": [fb, good, {"title": "junk"}]}},
+                 "r2": {"status": "running"}, "r4": {"status": "completed", "output": {"products": [good, pricey, inf]}}})
+    poll = c.get(f"/vibe/shop/{start['job']}", headers=H).json()
+    statuses = [it["status"] for it in poll["items"]]
+    assert statuses == ["done", "running", "failed", "failed"]  # r4's only valid product is a duplicate of r1's
+    assert [p["product_url"] for p in poll["items"][0]["products"]] == ["https://shop.example/oak"]
+    assert poll["items"][0]["products"][0]["dimensions_cm"] is None  # depth missing
+    runs["r2"] = {"status": "failed"}
+    done = c.get(f"/vibe/shop/{start['job']}", headers=H).json()
+    assert done["done"] and done["chosen"] == ["https://shop.example/oak"] and done["total_usd"] == 199
+
+
+def test_shop_provider_timeout_and_down(monkeypatch):
+    fake_provider(monkeypatch, lambda req: httpx.Response(200, json={"id": "r1"}) if req.method == "POST"
+                  else httpx.Response(503))
+    monkeypatch.setattr(main, "BROWSER_USE_API_KEY", "bu")
+    job = c.post("/vibe/shop", headers=H, json=shop_request()).json()["job"]
+    assert not c.get(f"/vibe/shop/{job}", headers=H).json()["done"]  # unreadable run: still running
+    monkeypatch.setattr(main.time, "time", lambda: 10**10)
+    assert {it["status"] for it in c.get(f"/vibe/shop/{job}", headers=H).json()["items"]} == {"failed"}
+    fake_provider(monkeypatch, lambda req: httpx.Response(401))
+    assert c.post("/vibe/shop", headers=H, json=shop_request()).status_code == 502
+    assert c.get(f"/vibe/shop/{job}", headers=H).status_code == 502  # key revoked mid-job
+
+
+def test_shop_ignores_non_finite_budget(monkeypatch):
+    for bad in ("Infinity", "NaN", "-5"):
+        body = json.dumps(shop_request()).replace('"budget_usd": null', f'"budget_usd": {bad}')
+        start = c.post("/vibe/shop", headers={**H, "Content-Type": "application/json"}, content=body)
+        assert start.status_code == 200, bad
+        monkeypatch.setattr(main.time, "time", lambda: 10**10)
+        done = c.get(f"/vibe/shop/{start.json()['job']}", headers=H).json()
+        assert done["budget_usd"] is None and len(done["chosen"]) == 4  # no budget: first product of each item
+        monkeypatch.undo()
