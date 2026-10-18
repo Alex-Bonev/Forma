@@ -247,10 +247,10 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Make it real"].firstMatch.exists)
         app.buttons["Add object"].firstMatch.tap()
-        XCTAssertTrue(app.buttons["Scan a real one"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.buttons["Scan a real one"].isEnabled, "no LiDAR in the Simulator")
+        XCTAssertTrue(app.buttons["Scan a physical object"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Scan a physical object"].isEnabled, "no LiDAR in the Simulator")
         XCUIScreen.main.screenshot().attach(named: "add-choice", to: self)
-        app.buttons["Choose a preset"].tap()
+        app.buttons["Select a preset"].tap()
         let plant = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Plant'")).firstMatch
         XCTAssertTrue(plant.waitForExistence(timeout: 3))
         plant.tap()
@@ -290,7 +290,12 @@ final class DesignerGestureTests: XCTestCase {
         let use = app.buttons["Use Plant"]
         for _ in 0..<3 where !use.exists {   // the panel may still be sliding in and swallow the row tap
             let row = app.staticTexts["Marked item"].firstMatch
-            if row.waitForExistence(timeout: 3), row.isHittable { row.tap() }
+            guard row.waitForExistence(timeout: 3) else { continue }
+            if !row.isHittable {   // last row of the Objects sheet can sit under the screen edge: drag the list up
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55)))
+            }
+            if row.isHittable { row.tap() }
             _ = use.waitForExistence(timeout: 3)
         }
         XCTAssertTrue(use.exists, "marked item should offer its Vision suggestion")
@@ -327,10 +332,10 @@ final class DesignerGestureTests: XCTestCase {
 }
 
 /// Fullscreen Designer: Objects panel > "Add object" opens the catalog sheet.
-/// Add object (bottom bar) → Choose a preset → the catalog.
+/// Add object (bottom bar) → Select a preset → the catalog.
 private func openCatalog(_ app: XCUIApplication) {
     app.buttons["Add object"].firstMatch.tap()
-    let preset = app.buttons["Choose a preset"]
+    let preset = app.buttons["Select a preset"]
     XCTAssertTrue(preset.waitForExistence(timeout: 3))
     preset.tap()
     let cancel = app.navigationBars["Add object"].buttons["Cancel"]

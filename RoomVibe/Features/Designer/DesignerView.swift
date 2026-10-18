@@ -33,7 +33,7 @@ struct DesignerView: View {
     @State private var selectedRoomObject: Int?   // index into the scan's RoomPlan objects
     @State private var highlighted: Entity?
     @State private var showCatalog = false
-    @State private var showAddChoice = false   // Add object: scan a real one, or pick a preset
+    @State private var showAddChoice = false   // Add object: scan a physical object, or select a preset
     @State private var editing: UUID?   // placement open in the Size sheet; not tied to `selected`, which taps can change
     @State private var showPhotos = false
     @State private var scanTarget: ScanTarget?
@@ -728,15 +728,11 @@ struct DesignerView: View {
     private var addChoiceSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add an object").font(.forma(18, bold: true)).foregroundStyle(Theme.ink)
-            addChoice("Scan a real one", detail: Capabilities.canScanObject
-                        ? "Walk around it with your phone. About 2 minutes, then it drops into the room."
-                        : "Needs an iPhone Pro with LiDAR.",
-                      icon: "camera.viewfinder", enabled: Capabilities.canScanObject) {
+            addChoice("Scan a physical object", icon: "camera.viewfinder", enabled: Capabilities.canScanObject) {
                 showAddChoice = false
                 Task { try? await Task.sleep(for: .milliseconds(350)); scanTarget = .new }   // after the sheet is gone
             }
-            addChoice("Choose a preset", detail: "Sofas, beds, desks, lamps… at real sizes. Your past scans are here too.",
-                      icon: "square.grid.2x2") {
+            addChoice("Select a preset", icon: "square.grid.2x2") {
                 showAddChoice = false
                 Task { try? await Task.sleep(for: .milliseconds(350)); showCatalog = true }
             }
@@ -744,20 +740,17 @@ struct DesignerView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.ground)
-        .presentationDetents([.height(320)])
+        .presentationDetents([.height(250)])
         .presentationBackground(Theme.ground)
     }
 
-    private func addChoice(_ title: String, detail: String, icon: String, enabled: Bool = true,
+    private func addChoice(_ title: String, icon: String, enabled: Bool = true,
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
                 Image(systemName: icon).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.wood)
                     .frame(width: 52, height: 52).background(Theme.hairline, in: RoundedRectangle(cornerRadius: 16))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
-                    Text(detail).font(.forma(11)).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
-                }
+                Text(title).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.wood)
             }
