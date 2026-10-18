@@ -57,6 +57,7 @@ struct DesignerView: View {
     }
     @AppStorage(RoomBuilder.realisticKey) private var realisticFurniture = true
     @State private var moving: (id: UUID, offset: SIMD3<Float>)?
+    @State private var converting = false   // a drag or twist on scanned furniture, waiting for its movable copy
     @State private var viewSize: CGSize = .zero
     @State private var lowWalls = false
     @State private var showHint = true
@@ -145,11 +146,11 @@ struct DesignerView: View {
                 .onChange(of: selected) { _, new in
                     if new != nil { undo = nil; selectedRoomObject = nil; showObjects = true }
                     if new != editing { editing = nil }   // the Size sheet edits one item; selecting another closes it
-                    highlight(new.flatMap { placed[$0] })
+                    highlightSelection()
                 }
                 .onChange(of: selectedRoomObject) { _, new in
                     if new != nil { undo = nil; selected = nil; showObjects = true }
-                    highlight(new.flatMap(roomObjectEntity))
+                    highlightSelection()
                 }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
                 .sheet(isPresented: $showAddChoice) { addChoiceSheet }
@@ -355,11 +356,24 @@ struct DesignerView: View {
                     e.scale = baseScale(id) * 1.04   // lifted while dragged
                     lifts += 1
                     objectHint = false
+                } else if let i = selectedRoomObject, movableRoomObject(i),
+                          hitRoomObject(at: location) != nil || hitPlacement(at: location) != nil,   // same rule as placements
+                          let start = floorPoint(at: location) {
+                    // Scanned furniture moves too: swap in its movable copy, then carry on with this same drag.
+                    converting = true
+                    Task {
+                        if let id = await makeMovable(i), let e = placed[id], converting {
+                            moving = (id, e.position - start)
+                            e.scale = baseScale(id) * 1.04
+                            lifts += 1
+                        }
+                        converting = false
+                    }
                 }
             case .changed:
                 if let moving, let e = placed[moving.id] {
                     if let p = floorPoint(at: location) { e.position = clamp(p + moving.offset, keeping: e) }
-                } else {
+                } else if !converting {
                     camera.orbit(by: delta)
                 }
             case .ended:
@@ -367,6 +381,8 @@ struct DesignerView: View {
                     placed[moving.id]?.scale = baseScale(moving.id)
                     self.moving = nil
                     commit()
+                } else if converting {
+                    converting = false   // let go before the copy was ready: it stays where it was
                 } else {
                     camera.endOrbit(velocity: velocity)
                 }
@@ -384,10 +400,19 @@ struct DesignerView: View {
             }
         }
         h.twist = { phase, delta in
-            if phase == .began { twistingObject = selected.map { !isLocked($0) } ?? false }
+            if phase == .began {
+                if let i = selectedRoomObject, movableRoomObject(i) {
+                    twistingObject = true   // scanned furniture: the twist turns its movable copy once it's in
+                    Task { await makeMovable(i) }
+                } else {
+                    twistingObject = selected.map { !isLocked($0) } ?? false
+                }
+            }
             if twistingObject, let selected, let e = placed[selected] {
                 if phase == .ended { commit() }
                 else { e.orientation = simd_quatf(angle: -Float(delta), axis: [0, 1, 0]) * e.orientation }
+            } else if twistingObject {
+                if phase == .ended { commit() }
             } else if phase != .ended {
                 camera.twist(by: delta)
             }
@@ -808,7 +833,10 @@ struct DesignerView: View {
                         }
                     } label: { ActionTileLabel(title: "Replace", icon: "arrow.triangle.2.circlepath") }
                         .accessibilityLabel("Replace")
-                    if !marked { ActionTile("Size", icon: "ruler") { Task { await editRoomObject(i, room: room) } } }
+                    if !marked {
+                        ActionTile("Rotate", icon: "arrow.clockwise") { Task { if let id = await makeMovable(i) { rotate(id) } } }
+                        ActionTile("Size", icon: "ruler") { Task { await editRoomObject(i, room: room) } }
+                    }
                     if Capabilities.canScanObject { ActionTile("Scan real", icon: "camera.viewfinder") { scanTarget = .roomObject(i) } }
                 }
             }
@@ -1168,10 +1196,23 @@ struct DesignerView: View {
         return p
     }
 
-    /// Edit = turn scanned furniture into an editable placement (same model, same box), then open the editor.
+    /// Edit = turn scanned furniture into an editable placement, then open the editor.
     private func editRoomObject(_ i: Int, room: RoomModel) async {
+        if let id = await makeMovable(i) { editing = id }
+    }
+
+    /// Scanned furniture (not a tap-marked box) can become a placement: it then moves, turns and resizes like one.
+    private func movableRoomObject(_ i: Int) -> Bool {
+        guard let project, let objects = store.room(for: project)?.objects, objects.indices.contains(i) else { return false }
+        return objects[i].label != RoomModel.markedLabel
+    }
+
+    /// Swaps scanned furniture for an editable placement with the same model, box, spot and facing, and selects it.
+    /// The original is removed for good (`removedRoomObjects`). Returns the new placement.
+    @discardableResult private func makeMovable(_ i: Int) async -> UUID? {
+        guard let project, let room = store.room(for: project), room.objects.indices.contains(i) else { return nil }
         await replaceRoomObject(i, catalog: standIn(i, room: room))
-        editing = selected   // replaceRoomObject selects the new placement
+        return selected   // replaceRoomObject selects the new placement
     }
 
     /// The catalog model Realistic Models shows for scanned furniture `i` (Custom Box when there's none).
@@ -1508,6 +1549,12 @@ struct DesignerView: View {
     private func flashHarmony() {
         inHarmony = true
         Task { try? await Task.sleep(for: .seconds(2)); inHarmony = false }
+    }
+
+    /// Marks whatever is selected now. Both selection handlers call this: swapping scanned furniture for its placement
+    /// clears one and sets the other in the same update, and the handler that runs last must not erase the marker.
+    private func highlightSelection() {
+        highlight(selected.flatMap { placed[$0] } ?? selectedRoomObject.flatMap(roomObjectEntity))
     }
 
     /// Selection marker: bright corner brackets around the object's box, a solid ring and a tinted disc on the floor.

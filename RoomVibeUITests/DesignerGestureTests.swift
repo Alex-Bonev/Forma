@@ -234,6 +234,51 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertGreaterThan(abs(x(canvas.value as? String) - x(before)), 0.3, "unlocked, the chair moves again")
     }
 
+    /// Real fingers rest before moving: a drag that starts after a short or long hold still moves the selection.
+    func testDragAfterHold() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        XCTAssertTrue(app.buttons["Lock"].waitForExistence(timeout: 5))
+        sleep(1)
+        var last = canvas.value as? String
+        var target = 0.75
+        for hold in [0.2, 0.5, 1.0] {
+            let at = canvas.value as? String
+            let from = canvas.coordinate(withNormalizedOffset: CGVector(dx: target == 0.75 ? 0.48 : 0.75, dy: 0.4))
+            from.press(forDuration: hold, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: target, dy: 0.4)))
+            sleep(1)
+            last = canvas.value as? String
+            XCTAssertNotEqual(last, at, "hold \(hold) s then drag should move the chair (\(at ?? "-") -> \(last ?? "-"))")
+            target = target == 0.75 ? 0.48 : 0.75
+        }
+    }
+
+    /// Scanned furniture moves like added items: the first drag swaps in its movable copy and carries it along.
+    func testDragScannedFurniture() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        sleep(2)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.58, dy: 0.45)).tap()   // scanned coffee table
+        XCTAssertTrue(app.buttons["Replace"].waitForExistence(timeout: 3))
+        sleep(1)
+        saveShot("scanned-selected")
+        let table = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.39))
+        table.press(forDuration: 0.1, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.42)))
+        sleep(2)
+        let value = canvas.value as? String ?? ""
+        saveShot("scanned-dragged")
+        XCTAssertTrue(value.contains(" at "), "the table became a movable item, still selected (\(value))")
+        XCTAssertGreaterThan(x(value), 0.3, "and moved right with the same drag (\(value))")
+    }
+
     /// Remove asks first; Undo brings it back.
     func testRemoveConfirms() {
         let app = XCUIApplication()

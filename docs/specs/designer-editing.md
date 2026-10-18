@@ -32,6 +32,10 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
     - Every change shows live in the room above.
   - No selection: the resizable list (peek, medium or large) with a lock badge on locked rows, and Add object.
   - Twist also rotates, unless the item is locked.
+- **Scanned furniture moves too:**
+  - Dragging it, twisting it or tapping Rotate swaps in its movable copy and keeps the same gesture going. The copy uses the same model, box, spot and facing.
+  - The copy is the same placement that Size already creates. The original is removed for good.
+  - Tap-marked boxes still use Replace or Use <suggestion>.
 - **Lock:** the lock icon on the card. A locked placement ignores one-finger drag and twist. Size and Remove still work. The floating Lock pill was removed.
 - **Undo:** Remove and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.
 - **Drag bounds:** the footprint stays inside the walls' rectangle, then inside `RoomModel.floorOutline` (`FloorClamp`).
