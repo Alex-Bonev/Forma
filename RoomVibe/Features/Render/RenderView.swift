@@ -169,6 +169,13 @@ final class RenderModel {
     /// LayoutDescription of the room, filled in by RenderView before the first run.
     private(set) var layout = ""
     private var room: (model: RoomModel, placements: [Placement], objects: [ScannedObject])?
+    private var standIns: Set<UUID> = []
+    private var finishes = ""
+    /// Shopped placements in the room (RenderInputs.scene); the first 3 with a photo become product 1, 2, 3.
+    private var shopped: [(id: UUID, product: ShopProduct)] = []
+    /// The numbered products. Fixed on the first run (after any downloads), like `structure`: the layout, the
+    /// map and the upload must agree on what product N is, so a photo that arrives later isn't added.
+    private var products: [(id: UUID, name: String, image: UIImage)]?
     /// Computed once on the first run; the same for both view modes.
     private var structure: StructureMap.Output?
     var view = View.cutaway
@@ -191,9 +198,35 @@ final class RenderModel {
     func setRoom(project: Project, room: RoomModel, objects: [ScannedObject]) {
         let s = RenderInputs.scene(project: project, room: room, objects: objects)
         self.room = (s.room, s.placements, s.objects)
-        layout = LayoutDescription.text(room: s.room, placements: s.placements, objects: s.objects,
-                                        finishes: RenderInputs.finishes(project), standIns: s.standIns)
+        standIns = s.standIns
+        finishes = RenderInputs.finishes(project)
+        shopped = s.shopped
+        products = nil
+        structure = nil   // drawn with the product colors
+        layout = describe(products: [])
         photos = RenderInputs.photos(projectID: project.id)
+    }
+
+    private func describe(products: [UUID]) -> String {
+        guard let room else { return "" }
+        return LayoutDescription.text(room: room.model, placements: room.placements, objects: room.objects,
+                                      finishes: finishes, standIns: standIns, products: products)
+    }
+
+    /// Product photos (ProductPhotos), fetching missing ones in parallel (≤ ~10 s), then numbers the first 3 that
+    /// loaded; the layout is rebuilt with those numbers.
+    private func loadProducts() async {
+        guard products == nil, let projectID else { return }
+        let shopped = shopped
+        await withTaskGroup(of: Void.self) { group in
+            for s in shopped { group.addTask { await ProductPhotos.cache(s.product, placement: s.id, project: projectID) } }
+        }
+        guard !Task.isCancelled else { return }
+        let loaded = shopped.compactMap { s in
+            ProductPhotos.load(placement: s.id, project: projectID).map { (s.id, String(s.product.title.prefix(60)), $0) }
+        }
+        products = Array(loaded.prefix(StructureMap.Kind.products.count))
+        layout = describe(products: products?.map(\.id) ?? [])
     }
 
     /// Real photos of the room from the scan (≤ 3), sent so the render matches how the room really looks.
@@ -251,10 +284,14 @@ final class RenderModel {
         let view = view, cacheURL = cacheURL, beforeURL = beforeURL
         phase = .loading
         do {
+            await loadProducts()   // before the structure map: it colors the products the layout numbers
+            try Task.checkCancellation()
+            let products = products ?? []
             if structure == nil, let camera, let room {
                 // ~0.1–2.5 s of ray casting; keep it off the main actor.
                 let job = Task.detached(priority: .userInitiated) {
-                    StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera)
+                    StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera,
+                                        products: products.map(\.id))
                 }
                 structure = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
             }
@@ -262,7 +299,7 @@ final class RenderModel {
             let fullLayout = [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
             let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: fullLayout, view: view.rawValue,
                                                         structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef,
-                                                        photos: photos)
+                                                        photos: photos, products: products.map { ($0.name, $0.image) })
             if let cacheURL, let beforeURL {
                 try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? image.jpegData(compressionQuality: 0.9)?.write(to: cacheURL, options: .atomic)

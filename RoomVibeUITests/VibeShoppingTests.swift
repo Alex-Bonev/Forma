@@ -14,9 +14,10 @@ final class VibeShoppingTests: XCTestCase {
         let openVibe = app.buttons["openVibe"]
         XCTAssertTrue(openVibe.waitForExistence(timeout: 10))
         let start = app.buttons["vibeStart"]
-        // The render sheet may still be animating in, which can swallow the first tap.
-        for _ in 0..<3 where !start.exists {
-            openVibe.tap()
+        // The render sheet may still be animating in, which can swallow the first tap, and the render's loading
+        // overlay can briefly take the toolbar away: only tap when the button is really there.
+        for _ in 0..<5 where !start.exists {
+            if openVibe.waitForExistence(timeout: 3), openVibe.isHittable { openVibe.tap() }
             _ = start.waitForExistence(timeout: 3)
         }
         XCTAssertTrue(start.exists)
@@ -60,6 +61,32 @@ final class VibeShoppingTests: XCTestCase {
             app.buttons["Remove"].tap()
         }
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.exists)
+    }
+
+    /// Plan -> place -> Make it real: a shopped product goes to /render with its photo (mock echoes the snapshot).
+    func testMakeItRealRendersWithAShoppedProduct() {
+        let app = startVibe("Cozy japandi nook")
+        let addButton = app.buttons["Add to room"].firstMatch
+        XCTAssertTrue(addButton.waitForExistence(timeout: 20))
+        if !addButton.isHittable { app.swipeUp() }
+        addButton.tap()
+        XCTAssertTrue(app.buttons["Added to room"].firstMatch.waitForExistence(timeout: 5))
+        sleep(3)   // the listing photo is cached in the background (ProductPhotos)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["Close"].tap()
+
+        let makeItReal = app.buttons["Make it real"].firstMatch
+        XCTAssertTrue(makeItReal.waitForExistence(timeout: 5))
+        makeItReal.tap()
+        XCTAssertTrue(app.buttons["Share…"].waitForExistence(timeout: 30), "the render should finish")
+        XCTAssertFalse(app.staticTexts["Couldn't render"].exists)
+        app.buttons["Close"].tap()
+
+        // The demo room persists across launches: remove the shopped sofa again.
+        if !app.buttons["Add object"].waitForExistence(timeout: 3) { app.buttons["Objects"].tap() }
+        app.staticTexts["Sofa"].firstMatch.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3))
+        app.buttons["Remove"].tap()
     }
 
     func testPromptStreamsProductsWithinBudget() {
