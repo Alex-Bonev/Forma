@@ -133,8 +133,10 @@ struct DesignerView: View {
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 12) { undoBar; hint.allowsHitTesting(false) }.padding(.bottom, 36)
                 }
-                .overlay(alignment: .bottomLeading) { lockMenu().padding(.leading, 16).padding(.bottom, 36) }
-                .animation(.spring(duration: 0.25, bounce: 0), value: lockMenuFor)
+                .overlay(alignment: .bottomLeading) {
+                    lockMenu().padding(.leading, 16).padding(.bottom, 36)
+                        .animation(.spring(duration: 0.25, bounce: 0), value: lockMenuFor)   // scoped: on the whole view it froze the Designer
+                }
                 .sensoryFeedback(.selection, trigger: selected)
         } else {
             ContentUnavailableView("Room not found", systemImage: "cube.transparent")
