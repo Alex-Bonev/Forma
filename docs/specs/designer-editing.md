@@ -19,15 +19,24 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
     - Sizes divide out the object's scale.
   - Selecting opens the item's row in the Objects panel.
   - Marked items are orange boxes created by tapping during a room scan.
-- **Selected row** (Objects panel): the item's name and size, then labeled actions. Hide is the eye on every row, not an action.
-  - Placements: **Rotate** (22.5°), **Remove**, **Size**, **Scan real** (LiDAR only).
-  - Scanned furniture: **Replace**, **Size**, **Scan real**.
-  - Marked items: **Use <suggestion>** (if Vision found one), **Replace**, **Scan real**.
-  - Twist also rotates, unless the item is locked. No Done buttons (tap empty space deselects).
-- **Lock pill** (fullscreen Designer only, not the Room detail card):
-  - Tapping a placement shows a small `Lock` / `Locked` pill at the bottom-left, clear of the room and of the Objects panel: with the sheet open it rides 12 pt above the sheet's top edge and follows it as the sheet resizes.
-  - Any other touch hides it: tapping empty space or another item, orbit, pan, zoom, or a drag. Selecting from the Objects panel or adding an item does not show it.
-  - Tapping the pill toggles the lock. A locked placement ignores one-finger drag and twist. Rotate, Size and Remove in the Objects panel still work.
+- **Selection card** (replaces the Objects list while something is selected; sized to its content so the room stays in view above it):
+  - Header: icon, name and size, then a **lock** icon (placements only), the **eye** (hide/show) and **✕** (deselect).
+  - One row of action tiles:
+    - Placements: **Rotate** (22.5°, disabled when locked), **Size**, **Scan real** (LiDAR only), **Remove**. Remove asks "Remove <name>?" and confirms with "Remove from room".
+    - Scanned furniture: **Replace**, **Size**, **Scan real**. Marked items also get **Use <suggestion>** when Vision found one.
+  - Shopped products also show their listing link and **Make it 3D**.
+  - **Size** opens inside the card, never as a sheet:
+    - Width, depth and height steppers.
+    - An "Above floor" slider.
+    - Reset Size, Put on Floor (when raised) and Done.
+    - Every change shows live in the room above.
+  - No selection: the resizable list (peek, medium or large) with a lock badge on locked rows, and Add object.
+  - Twist also rotates, unless the item is locked.
+- **Scanned furniture moves too:**
+  - Dragging it, twisting it or tapping Rotate swaps in its movable copy and keeps the same gesture going. The copy uses the same model, box, spot and facing.
+  - The copy is the same placement that Size already creates. The original is removed for good.
+  - Tap-marked boxes still use Replace or Use <suggestion>.
+- **Lock:** the lock icon on the card. A locked placement ignores one-finger drag and twist. Size and Remove still work. The floating Lock pill was removed.
 - **Undo:** Remove and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.
 - **Drag bounds:** the footprint stays inside the walls' rectangle, then inside `RoomModel.floorOutline` (`FloorClamp`).
 - **Size** opens a sheet with live changes:
