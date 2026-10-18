@@ -13,7 +13,8 @@ enum RoomBuilder {
     static let floorName = "floor"
     static let furniturePrefix = "furniture:"
 
-    static func build(_ room: RoomModel, wallScale: Float = 1) -> Built {
+    /// Axis-aligned extent of the walls (or objects when a scan has none). `y` of `lo` is the floor.
+    static func bounds(_ room: RoomModel) -> (lo: SIMD3<Float>, hi: SIMD3<Float>) {
         let boxes = room.walls.isEmpty ? room.objects : room.walls
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude), hi = -lo
         for b in boxes {
@@ -23,6 +24,11 @@ enum RoomBuilder {
             for p in [c + x, c - x] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
             lo.y = min(lo.y, c.y - b.dimensions.y / 2)
         }
+        return (lo, hi)
+    }
+
+    static func build(_ room: RoomModel, wallScale: Float = 1) -> Built {
+        let (lo, hi) = bounds(room)
         let center = SIMD3((lo.x + hi.x) / 2, lo.y, (lo.z + hi.z) / 2)
         let size = SIMD2(hi.x - lo.x, hi.z - lo.z)
 
