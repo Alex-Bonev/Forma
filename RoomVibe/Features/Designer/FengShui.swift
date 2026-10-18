@@ -1,7 +1,8 @@
 import Foundation
 import simd
 
-/// "Feng-shui-ify": a few seeded simulated-annealing agents race to rearrange the movable furniture; best layout wins.
+/// "Feng-shui-ify": a few seeded simulated-annealing agents race to rearrange the movable furniture; the seed picks one of
+/// the near-best layouts (never one with worse hard-ish terms than the best), so each press feels a little different.
 /// Pure x/z math on footprints (no RealityKit), so it runs off the main actor and is testable with plain `swiftc`.
 ///
 /// Conventions: room x/z in scene meters (room centered on origin). `yaw` is radians about +Y; at 0 the front faces +Z,
@@ -95,6 +96,8 @@ enum FengShui {
     /// Weighted penalty per heuristic for the layout as given (tests, tuning).
     static func breakdown(_ items: [Item], in room: Room) -> Terms { Ctx(items, room).terms(State(items)) }
 
+    /// Same seed, same result. Agents finishing within `tolerance` of the best (and no worse on hard-ish terms) are drawn
+    /// with softmax weights favoring the better ones.
     static func arrange(_ items: [Item], in room: Room, agents: Int = 6, iterations: Int = 2000, seed: UInt64 = 0) async -> Result {
         let ctx = Ctx(items, room)
         let start = State(items)
@@ -104,26 +107,36 @@ enum FengShui {
         let unchanged = Result(poses: original, before: before, after: before, note: "Already in harmony", improved: false)
         guard !ctx.movable.isEmpty, room.outline.count >= 3 else { return unchanged }
 
+        var mixer = SplitMix64(seed: seed)   // scramble first: seeds n and n+1 mustn't share agents
+        let base = mixer.next(), pickSeed = mixer.next()
         let runs = await withTaskGroup(of: (Int, State, Float).self) { group in
             for a in 0..<max(agents, 1) {
                 group.addTask {
-                    var rng = SplitMix64(seed: seed &+ UInt64(a))
+                    var rng = SplitMix64(seed: base &+ UInt64(a))
                     let initial = a == 0 ? start : ctx.randomized(start, &rng)
-                    let (s, p) = ctx.anneal(initial, iterations: iterations, &rng)
+                    let heat = 0.8 + 0.5 * rng.unit()   // each agent explores a little hotter or cooler
+                    let (s, p) = ctx.anneal(initial, iterations: iterations, heat: heat, &rng)
                     return (a, s, p)
                 }
             }
             var all: [(Int, State, Float)] = []
             for await r in group { all.append(r) }
-            return all
+            return all.sorted { ($0.2, $0.0) < ($1.2, $1.0) }   // completion order varies; sort so the seed alone decides
         }
-        // Completion order varies; ties go to the lowest agent so the same seed always gives the same room.
-        guard let best = runs.min(by: { ($0.2, $0.0) < ($1.2, $1.0) }), -best.2 > before + 0.05 else { return unchanged }
+        guard let best = runs.first else { return unchanged }
+        let bestHard = ctx.terms(best.1).hard
+        let tolerance = max(0.5, 0.15 * abs(best.2))
+        let pool = runs.filter { $0.2 - best.2 <= tolerance && ctx.terms($0.1).hard <= bestHard + 0.01 }
+        let weights = pool.map { exp(-($0.2 - best.2) / (tolerance / 3)) }
+        var pick = SplitMix64(seed: pickSeed), r = pick.unit() * weights.reduce(0, +)
+        var chosen = pool[pool.count - 1]
+        for (c, w) in zip(pool, weights) { r -= w; if r < 0 { chosen = c; break } }
+        guard -chosen.2 > before + 0.05 else { return unchanged }
 
         var poses: [UUID: Pose] = [:]
-        for i in ctx.movable { poses[items[i].id] = Pose(position: best.1.pos[i], yaw: best.1.yaw[i]) }
-        let afterTerms = ctx.terms(best.1)
-        return Result(poses: poses, before: before, after: -best.2, note: ctx.note(beforeTerms, afterTerms), improved: true)
+        for i in ctx.movable { poses[items[i].id] = Pose(position: chosen.1.pos[i], yaw: chosen.1.yaw[i]) }
+        let afterTerms = ctx.terms(chosen.1)
+        return Result(poses: poses, before: before, after: -chosen.2, note: ctx.note(beforeTerms, afterTerms), improved: true)
     }
 
     // MARK: - Internals
@@ -140,6 +153,8 @@ enum FengShui {
         var inside: Float = 0, overlap: Float = 0, door: Float = 0, clearance: Float = 0, circulation: Float = 0
         var command: Float = 0, chi: Float = 0, wall: Float = 0, window: Float = 0, view: Float = 0, facing: Float = 0
         var breathing: Float = 0, balance: Float = 0, rug: Float = 0, move: Float = 0
+        /// The terms that make a layout unusable rather than just less pleasing.
+        var hard: Float { inside + overlap + door + clearance + circulation }
         var total: Float {
             inside + overlap + door + clearance + circulation + command + chi + wall + window + view + facing + breathing + balance
                 + rug + move
@@ -533,10 +548,11 @@ enum FengShui {
             return s
         }
 
-        func anneal(_ start: State, iterations: Int, _ rng: inout SplitMix64) -> (State, Float) {
+        /// `heat` scales the starting temperature (seeded per agent, ~0.8...1.3).
+        func anneal(_ start: State, iterations: Int, heat: Float = 1, _ rng: inout SplitMix64) -> (State, Float) {
             var cur = start, curP = terms(cur).total
             var best = cur, bestP = curP
-            let t0: Float = 1.5, t1: Float = 0.003, steps = max(iterations, 1)
+            let t0: Float = 1.5 * heat, t1: Float = 0.003, steps = max(iterations, 1)
             for k in 0..<steps {
                 if k & 255 == 0, Task.isCancelled { break }
                 let temp = t0 * pow(t1 / t0, Float(k) / Float(steps))
