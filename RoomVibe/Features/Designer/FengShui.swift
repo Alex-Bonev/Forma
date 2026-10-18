@@ -476,7 +476,9 @@ enum FengShui {
             let g = (lo: grid.lo, nx: grid.nx, nz: grid.nz), cell = FengShui.cell
             var open = grid.open
             for j in items.indices where items[j].kind != .rug {
-                let lo = s.pos[j] - box[j] - FengShui.person, hi = s.pos[j] + box[j] + FengShui.person
+                // Typed once: `SIMD2 - Float` in two inits at once makes Xcode 26.2 pick the Float overload and fail.
+                let pad = SIMD2<Float>(repeating: FengShui.person)
+                let lo: SIMD2<Float> = s.pos[j] - box[j] - pad, hi: SIMD2<Float> = s.pos[j] + box[j] + pad
                 let x0 = max(Int(((lo.x - g.lo.x) / cell).rounded(.up)), 0), x1 = min(Int(((hi.x - g.lo.x) / cell).rounded(.down)), g.nx - 1)
                 let z0 = max(Int(((lo.y - g.lo.y) / cell).rounded(.up)), 0), z1 = min(Int(((hi.y - g.lo.y) / cell).rounded(.down)), g.nz - 1)
                 guard x0 <= x1, z0 <= z1 else { continue }
