@@ -96,12 +96,41 @@ final class DesignerGestureTests: XCTestCase {
         let edit = app.buttons["Size"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
-        let width = app.steppers["Width, 0.50 m"]
+        let width = app.steppers["Width, 50 cm"]
         XCTAssertTrue(width.waitForExistence(timeout: 3), "custom box starts 0.5 m wide")
         width.buttons["Increment"].tap()   // +5 cm
-        XCTAssertTrue(app.steppers["Width, 0.55 m"].waitForExistence(timeout: 2), "width should update live")
+        XCTAssertTrue(app.steppers["Width, 55 cm"].waitForExistence(timeout: 2), "width should update live")
         app.buttons["Done"].firstMatch.tap()
         XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
+    }
+
+    /// The panel's Lock disables Rotate; the Size sheet belongs to one item and closes when the selection changes.
+    func testPanelLockAndSizeSheetFollowsSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        let rotate = app.buttons["Rotate"]
+        XCTAssertTrue(rotate.waitForExistence(timeout: 5))
+        XCTAssertTrue(rotate.isEnabled)
+        app.buttons["Lock"].tap()
+        XCTAssertTrue(app.buttons["Unlock"].waitForExistence(timeout: 2))
+        XCTAssertFalse(rotate.isEnabled, "a locked item can't be rotated from the panel")
+        app.buttons["Unlock"].tap()
+        XCTAssertTrue(rotate.isEnabled)
+        XCUIScreen.main.screenshot().attach(named: "objects-panel", to: self)
+
+        app.buttons["Size"].tap()
+        let width = app.steppers.matching(NSPredicate(format: "label BEGINSWITH 'Width, '")).firstMatch
+        XCTAssertTrue(width.waitForExistence(timeout: 3))
+        XCTAssertTrue(width.label.hasSuffix(" cm"), "sizes read in cm, like the Objects panel")
+        XCUIScreen.main.screenshot().attach(named: "size-sheet", to: self)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.08)).tap()   // deselect through the half sheet
+        sleep(1)
+        XCTAssertFalse(width.exists, "deselecting closes the Size sheet instead of leaving it empty or stale")
     }
 
     /// Size on scanned furniture swaps in one fitted item; Reset Size returns to that fit, and the original is gone for good.
@@ -115,11 +144,11 @@ final class DesignerGestureTests: XCTestCase {
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.58, dy: 0.45)).tap()   // scanned coffee table
         XCTAssertTrue(app.buttons["Size"].waitForExistence(timeout: 3))
         app.buttons["Size"].tap()
-        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 5))
-        app.steppers["Width, 1.10 m"].buttons["Increment"].tap()
-        XCTAssertTrue(app.steppers["Width, 1.15 m"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.steppers["Width, 110 cm"].waitForExistence(timeout: 5))
+        app.steppers["Width, 110 cm"].buttons["Increment"].tap()
+        XCTAssertTrue(app.steppers["Width, 115 cm"].waitForExistence(timeout: 2))
         app.buttons["Reset Size"].tap()
-        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
+        XCTAssertTrue(app.steppers["Width, 110 cm"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
         app.buttons["Done"].firstMatch.tap()
         canvas.tap()   // deselect
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show'")).firstMatch.waitForExistence(timeout: 2),
