@@ -4,7 +4,7 @@ Status: **UI built; checkout not built**. Owner: Michelle (B) for the UI, David 
 
 ## What the cart is
 
-- The cart is **every shopped product that has been added to a room**: each `Placement` with a `product`. Nothing else is stored. Removing a product from the room removes it from the cart.
+- The cart is **every shopped product that has been added to a room**: each `Placement` with a `product`. Nothing else is stored except the room's budget (below). Removing a product from the room removes it from the cart.
 - Add comes from the shopping screen (`VibeView`) or the product detail page. Both use `RoomCart.add`.
 - A cart for one room, or a cart for all rooms (sectioned by room).
 
@@ -15,6 +15,15 @@ Status: **UI built; checkout not built**. Owner: Michelle (B) for the UI, David 
 - **Product detail, while shopping (PD1)**: image, store and host, title, price, details the app has (size, category, store, listing host), "Add to room" (becomes "Added to room"; hidden when no room is known), "Go to original listing". Reached from "Open" on a product card: Open opens this page, not the retailer. Footnote: "Details come from the store's listing. Check the original listing before you buy."
 - **Product detail, in your room (PD2)**: the same page, an "In <room>" chip, "Go to original listing", "Remove from room". Reached from a cart row.
 - The page shows only fields the backend sends. Richer scraped details (description, material, color, stock, returns) need backend fields.
+
+## Budget
+
+- The room's budget is `Project.budgetUSD` (USD, nil = no limit). Shop a vibe saves it when a run with a budget finishes (never for the demo run). It is per room, not per vibe.
+- The one-room cart (not the all-rooms cart) shows a budget card above the list when the room has a budget and the cart is not empty: spent "of $B", "Change", a segment bar, and "$X left. Prices exclude shipping and tax." or, when over, "Over budget by $X."
+- Each row shows a dot and "N% of budget" when the budget and the price are known.
+- Under the rows, while money is left, a note says "Adding anything over $X goes past your $B budget." Adding is never blocked.
+- "Change" opens the budget sheet ("Your cart total stays the same. Only the budget changes.", "Update budget"). It writes `Project.budgetUSD` only and does not re-pick products.
+- Paper: BG1 to BG5 on "forma — v2".
 
 ## Entry points
 
