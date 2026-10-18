@@ -108,8 +108,10 @@ struct ShopStatus: Decodable {
         var query: String
         var status: Status
         var products: [ShopProduct]
+        /// The item's share of the budget; absent on older servers.
+        var capUsd: Double?
 
-        enum CodingKeys: String, CodingKey { case category, query, status, products }
+        enum CodingKeys: String, CodingKey { case category, query, status, products, capUsd }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -117,6 +119,7 @@ struct ShopStatus: Decodable {
             query = try c.decode(String.self, forKey: .query)
             status = (try? c.decode(Status.self, forKey: .status)) ?? .failed
             products = try c.decode([Lossy<ShopProduct>].self, forKey: .products).compactMap(\.value)
+            capUsd = try? c.decode(Double.self, forKey: .capUsd)
         }
     }
 }
@@ -247,8 +250,17 @@ final class APIClient {
         return try await send(req, as: ShopJob.self)
     }
 
-    func pollShopping(_ job: ShopJob) async throws -> ShopStatus {
-        try await send(request("vibe/shop/\(job.job)"), as: ShopStatus.self)
+    /// `budget` / `noLimit` make the server re-pick the set from the products it already found.
+    func pollShopping(_ job: ShopJob, budget: Double? = nil, noLimit: Bool = false) async throws -> ShopStatus {
+        var req = request("vibe/shop/\(job.job)")
+        var query: [URLQueryItem] = []
+        if let budget { query.append(.init(name: "budget_usd", value: String(budget))) }
+        if noLimit { query.append(.init(name: "no_limit", value: "true")) }
+        if !query.isEmpty, let url = req.url, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            comps.queryItems = query
+            req.url = comps.url
+        }
+        return try await send(req, as: ShopStatus.self)
     }
 
     /// Starts SAM 3D on a product photo (/vibe/model3d). Poll the returned id with `pollModel3D`.

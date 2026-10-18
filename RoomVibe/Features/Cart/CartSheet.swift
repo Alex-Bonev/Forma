@@ -6,18 +6,29 @@ struct CartSheet: View {
     let projectID: UUID?
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @State private var editingBudget = false
 
     private var items: [CartItem] { RoomCart.items(in: store.projects, room: projectID) }
+    private var budget: Double? { projectID.flatMap { id in store.projects.first { $0.id == id }?.budgetUSD } }
     private var roomName: String? { projectID.flatMap { id in store.projects.first { $0.id == id }?.name } }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 header
+                if projectID != nil, let budget, !items.isEmpty { budgetCard(budget) }
                 if items.isEmpty { empty } else { list; footer }
             }
             .background(Theme.ground)
             .toolbar(.hidden, for: .navigationBar)
+        }
+        .sheet(isPresented: $editingBudget) {
+            BudgetSheet(current: budget, picksTotal: RoomCart.subtotal(items).total,
+                        note: "Your cart total stays the same. Only the budget changes.", applyTitle: "Update budget") { new in
+                guard let id = projectID, var project = store.projects.first(where: { $0.id == id }) else { return }
+                project.budgetUSD = new
+                store.update(project)
+            }
         }
         .presentationDetents([.large])
         .presentationBackground(Theme.ground)
@@ -53,6 +64,7 @@ struct CartSheet: View {
                     }
                 } else {
                     rows(items).padding(.top, 8)
+                    if let budget, let left = Optional(budget - RoomCart.subtotal(items).total), left > 0 { warning(left: left, budget: budget) }
                 }
             }
             .padding(.horizontal, 24).padding(.bottom, 16)
@@ -106,7 +118,15 @@ struct CartSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.product.title).font(.forma(13, bold: true)).foregroundStyle(Theme.ink).lineLimit(2)
                 Text(item.product.retailer).font(.forma(11)).foregroundStyle(Theme.muted).lineLimit(1)
-                Text(item.product.price).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                HStack(spacing: 8) {
+                    Text(item.product.price).font(.forma(13, bold: true)).foregroundStyle(Theme.ink)
+                    if let budget, budget > 0, let price = item.product.priceUSD {
+                        HStack(spacing: 4) {
+                            Circle().fill(Theme.sage.opacity(price / budget >= 0.5 ? 1 : 0.55)).frame(width: 8, height: 8)
+                            Text("\(Int((price / budget * 100).rounded()))% of budget").font(.forma(10)).foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.wood)
@@ -116,6 +136,51 @@ struct CartSheet: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.product.title), \(item.product.retailer), \(item.product.price)")
         .accessibilityHint("Opens product details")
+    }
+
+    private func budgetCard(_ budget: Double) -> some View {
+        let spent = RoomCart.subtotal(items).total
+        let left = budget - spent
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(usd(spent)).font(.forma(20, bold: true)).foregroundStyle(Theme.ink)
+                    Text("of \(usd(budget))").font(.forma(12)).foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                Button { editingBudget = true } label: {
+                    HStack(spacing: 4) {
+                        Text("Change").font(.forma(12))
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.wood).frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .padding(.vertical, -14)
+                .accessibilityIdentifier("changeBudget")
+            }
+            BudgetBar(budget: budget, segments: items.map { .init(id: "\($0.id)", label: $0.product.title, amount: $0.product.priceUSD ?? 0) })
+            if left < 0 {
+                Text("Over budget by \(usd(-left)).").font(.forma(11)).foregroundStyle(Theme.terracotta)
+            } else {
+                Text("\(usd(left)) left. Prices exclude shipping and tax.").font(.forma(11)).foregroundStyle(Theme.muted)
+            }
+        }
+        .padding(.vertical, 14).padding(.horizontal, 16)
+        .background(Theme.sand, in: RoundedRectangle(cornerRadius: 20))
+        .padding(.horizontal, 24).padding(.top, 16)
+    }
+
+    private func warning(left: Double, budget: Double) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 14)).foregroundStyle(Theme.terracotta)
+            Text("Adding anything over \(usd(left)) goes past your \(usd(budget)) budget.")
+                .font(.forma(11)).foregroundStyle(Theme.ink)
+        }
+        .padding(.vertical, 10).padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(hex: 0xF3E1D5), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.top, 16)
+        .accessibilityElement(children: .combine)
     }
 
     private var footer: some View {
