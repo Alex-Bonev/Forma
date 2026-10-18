@@ -8,11 +8,15 @@ final class VibeShoppingTests: XCTestCase {
         app.launchArguments = ["-demo"]
         app.launch()
 
-        let makeItReal = app.buttons["Make it real"]
+        let makeItReal = app.buttons["Make it real"].firstMatch
         XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
-        makeItReal.firstMatch.tap()
         let openVibe = app.buttons["openVibe"]
-        XCTAssertTrue(openVibe.waitForExistence(timeout: 10))
+        // Right after launch the Designer can swallow the first tap: tap again until the render sheet is up.
+        for _ in 0..<3 where !openVibe.exists {
+            if makeItReal.isHittable { makeItReal.tap() }
+            _ = openVibe.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(openVibe.exists)
         let start = app.buttons["vibeStart"]
         // The render sheet may still be animating in, which can swallow the first tap, and the render's loading
         // overlay can briefly take the toolbar away: only tap when the button is really there.
