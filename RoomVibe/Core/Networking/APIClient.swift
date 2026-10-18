@@ -117,6 +117,24 @@ struct ShopStatus: Decodable {
     }
 }
 
+/// One poll of /vibe/model3d/{id}. `usdz` arrives with `.done`; the model is not to real scale.
+struct Model3DStatus: Decodable {
+    enum Status: String, Decodable { case running, done, failed }
+    var status: Status
+    var usdz: Data?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey { case status, usdzBase64, error }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = (try? c.decode(Status.self, forKey: .status)) ?? .failed
+        usdz = try c.decodeIfPresent(String.self, forKey: .usdzBase64).flatMap { Data(base64Encoded: $0) }
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        if status == .done && usdz == nil { status = .failed }   // done without a readable model is no model
+    }
+}
+
 /// Decodes an element or nil, so one bad item doesn't fail the whole list.
 private struct Lossy<T: Decodable>: Decodable {
     var value: T?
@@ -211,6 +229,21 @@ final class APIClient {
 
     func pollShopping(_ job: ShopJob) async throws -> ShopStatus {
         try await send(request("vibe/shop/\(job.job)"), as: ShopStatus.self)
+    }
+
+    /// Starts SAM 3D on a product photo (/vibe/model3d). Poll the returned id with `pollModel3D`.
+    func startModel3D(imageURL: URL, category: String) async throws -> String {
+        struct Body: Encodable { var imageUrl: String; var category: String }
+        struct Started: Decodable { var requestId: String }
+        var req = request("vibe/model3d")
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try Self.encoder.encode(Body(imageUrl: imageURL.absoluteString, category: category))
+        return try await send(req, as: Started.self).requestId
+    }
+
+    func pollModel3D(_ id: String) async throws -> Model3DStatus {
+        try await send(request("vibe/model3d/\(id)"), as: Model3DStatus.self)
     }
 
     // MARK: Plumbing

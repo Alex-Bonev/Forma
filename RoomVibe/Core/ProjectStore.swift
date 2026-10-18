@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import RealityKit
 
 /// Single source of truth. Index lives in library.json; heavy files in per-item folders:
 ///   Application Support/Projects/<id>/room.json (+ captured.json, room.usdz)
@@ -72,6 +73,32 @@ final class ProjectStore {
     func addObject(_ object: ScannedObject) throws {
         objects.insert(object, at: 0)
         try persist()
+    }
+
+    /// Saves a downloaded model (SAM 3D, via /vibe/model3d) to Objects/<id>/ and measures it, without adding it to the
+    /// library. Pass the result to `addObject` once it is used, or to `discardModel`. Leaves no files behind on failure.
+    @MainActor
+    func saveModel(usdz: Data, name: String) async throws -> ScannedObject {
+        let id = UUID()
+        let dir = Self.objectDir(id)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appending(path: ObjectScanModel.modelName)
+            try usdz.write(to: url)
+            // Loaded directly: RoomBuilder.placedEntity falls back to the demo chair on a bad file. The extents are
+            // axis-aligned in the file's frame; the backend writes Y-up USDZ, like RealityKit.
+            let size = try await Entity(contentsOf: url).visualBounds(relativeTo: nil).extents
+            guard size.min() > 0 else { throw CocoaError(.fileReadCorruptFile) }
+            return ScannedObject(id: id, name: name, modelFile: ObjectScanModel.modelName, boundingBox: size)
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
+    }
+
+    /// Deletes the files of a `saveModel` result that never made it into the library.
+    func discardModel(_ object: ScannedObject) {
+        try? FileManager.default.removeItem(at: Self.objectDir(object.id))
     }
 
     func update(_ project: Project) {

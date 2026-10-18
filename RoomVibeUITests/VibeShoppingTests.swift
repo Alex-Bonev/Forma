@@ -47,11 +47,36 @@ final class VibeShoppingTests: XCTestCase {
         // The shopped sofa is listed first (placements before scanned furniture) and links to its product.
         app.staticTexts["Sofa"].firstMatch.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open product'")).firstMatch.waitForExistence(timeout: 3))
+
+        // SAM 3D (mock): the catalog stand-in becomes a model named after the product, still selected.
+        let make3D = app.buttons["Make it 3D (beta)"]
+        XCTAssertTrue(make3D.waitForExistence(timeout: 3))
+        make3D.tap()
+        // Installed = the catalog "Sofa" row is renamed after the product, leaving only the demo room's scanned Sofa.
+        // (The label flips to "Making 3D…" first, so waiting for the button to go away is not enough.)
+        let installed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.staticTexts.matching(identifier: "Sofa").count == 1 || app.buttons["3D failed, try again"].exists
+        }, object: nil)
+        wait(for: [installed], timeout: 20)
+        XCTAssertFalse(app.buttons["3D failed, try again"].exists, "the mock model should load")
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Sofa").count, 1)
+        XCTAssertGreaterThanOrEqual(app.staticTexts.matching(identifier: "Linen Low Sofa 1").count, 1)
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         shot.name = "vibe-shopping"
         shot.lifetime = .keepAlways
         add(shot)
         app.buttons["Remove"].tap()   // the demo room persists across launches; leave it as other tests expect
         XCTAssertEqual(app.staticTexts.matching(identifier: "Sofa").count, 1)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Linen Low Sofa 1").count, 0)
+
+        // The 3D model also went into the object library: delete it there (Home, long-press, Delete).
+        app.buttons["Close fullscreen"].tap()
+        let tile = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Linen Low Sofa 1")).firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        tile.press(forDuration: 1.0)
+        app.buttons["Delete"].tap()
+        let deleted = NSPredicate(format: "exists == false")
+        expectation(for: deleted, evaluatedWith: tile)
+        waitForExpectations(timeout: 5)
     }
 }

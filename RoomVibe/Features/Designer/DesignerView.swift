@@ -36,6 +36,8 @@ struct DesignerView: View {
     @State private var scanTarget: ScanTarget?
     @State private var undo: (title: String, snapshot: Project)?   // last Delete / Hide, offered for a few seconds
     @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
+    @State private var making3D: (id: UUID, task: Task<Void, Never>)?   // "Make it 3D" job for a shopped product
+    @State private var failed3D: Set<UUID> = []
 
     /// What a new Object Capture scan should replace.
     enum ScanTarget: Identifiable {
@@ -94,6 +96,7 @@ struct DesignerView: View {
         stack.sheet(item: $renderShot) { shot in
             RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera)
         }
+        .onDisappear { making3D?.task.cancel() }
     }
 
     @ViewBuilder private var stack: some View {
@@ -593,6 +596,12 @@ struct DesignerView: View {
                     .foregroundStyle(Theme.ink)
                 }
                 .accessibilityLabel("Open product \(product.title)")
+                if product.imageURL != nil, project.placements.first(where: { $0.id == id })?.catalogItem != nil {
+                    let busy = making3D?.id == id
+                    PanelAction(busy ? "Making 3D…" : failed3D.contains(id) ? "3D failed, try again" : "Make it 3D (beta)",
+                                icon: busy ? "hourglass" : "cube.transparent") { makeIt3D(id) }
+                        .disabled(making3D != nil)
+                }
             }
             HStack(spacing: 8) {
                 PanelAction("Rotate", icon: "arrow.clockwise") { rotate(id) }
@@ -810,6 +819,57 @@ struct DesignerView: View {
             }
             store.update(project)
         }
+    }
+
+    /// SAM 3D (/vibe/model3d) turns the product photo into a model that replaces its catalog stand-in, fitted to the
+    /// stand-in's current size (SAM 3D output has no real-world scale).
+    private func makeIt3D(_ id: UUID) {
+        guard making3D == nil, let p = project?.placements.first(where: { $0.id == id }), let product = p.product,
+              let image = product.imageURL else { return }
+        failed3D.remove(id)
+        let task = Task {
+            do {
+                let job = try await APIClient.shared.startModel3D(imageURL: image, category: product.category ?? p.catalogItem ?? "")
+                let deadline = ContinuousClock.now + .seconds(240)
+                while true {
+                    try Task.checkCancellation()
+                    let status = try await APIClient.shared.pollModel3D(job)
+                    if status.status == .done, let usdz = status.usdz { try await install3D(usdz, for: id, name: product.title); break }
+                    if status.status == .failed || ContinuousClock.now > deadline { throw APIError.badResponse }
+                    try await Task.sleep(for: .seconds(3))
+                }
+            } catch is CancellationError {
+            } catch {
+                print("RoomVibe: Make it 3D failed: \(error)")
+                failed3D.insert(id)
+            }
+            making3D = nil
+        }
+        making3D = (id, task)
+    }
+
+    private func install3D(_ usdz: Data, for id: UUID, name: String) async throws {
+        guard let stand = placed[id], let p = project?.placements.first(where: { $0.id == id }) else { return }
+        let target = (naturalSize[id] ?? stand.visualBounds(relativeTo: stand).extents) * (p.scale ?? .one)
+        try Task.checkCancellation()
+        let object = try await store.saveModel(usdz: usdz, name: name)
+        // Not in the library yet: drop the files if the job was cancelled or the box removed meanwhile.
+        guard !Task.isCancelled, project?.placements.contains(where: { $0.id == id }) == true else {
+            store.discardModel(object)
+            try Task.checkCancellation()
+            return
+        }
+        do { try store.addObject(object) } catch { store.delete(object); throw error }
+        let wasSelected = selected
+        await applyScan(object, to: .placement(id))
+        selected = wasSelected   // applyScan selects the swapped item; keep the user's current selection instead
+        // Fit it to the box it replaces (SAM 3D output has no real-world scale); Reset Size returns here.
+        guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
+        let fit = target / object.boundingBox
+        project.placements[k].scale = fit
+        project.placements[k].fitScale = fit
+        store.update(project)
+        placed[id]?.scale = fit
     }
 
     private func baseScale(_ id: UUID) -> SIMD3<Float> {
