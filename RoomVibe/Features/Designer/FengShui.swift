@@ -236,7 +236,10 @@ enum FengShui {
             for i in movable {
                 // Inside: rotated corners within the outline (inset by the wall), and no outline vertex poking into the box.
                 let h = items[i].half, p = s.pos[i], r = SIMD2(f[i].y, -f[i].x)
-                for c in [p + r * h.x + f[i] * h.y, p - r * h.x + f[i] * h.y, p + r * h.x - f[i] * h.y, p - r * h.x - f[i] * h.y] {
+                // Split from one literal: the type checker times out on the four-term expression in a single array.
+                let (rx, fy) = (r * h.x, f[i] * h.y)
+                let corners: [SIMD2<Float>] = [p + rx + fy, p - rx + fy, p + rx - fy, p - rx - fy]
+                for c in corners {
                     let d = nearestWall(c).d
                     t.inside += FloorClamp.contains(c, outline) ? max(0, FengShui.wall - d) : 1 + d
                 }
