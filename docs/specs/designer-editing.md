@@ -15,22 +15,25 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
   - Scanned furniture: **Replace**, **Size**, **Scan real**.
   - Marked items: **Use <suggestion>** (if Vision found one), **Replace**, **Scan real**.
   - Twist also rotates. No Done buttons (tap empty space deselects).
+- **Undo:** Remove and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.
+- **Drag bounds:** the footprint stays inside the walls' rectangle, then inside `RoomModel.floorOutline` (`FloorClamp`).
 - **Size** opens a sheet with live changes:
-  - Width / height / depth in 5 cm steps (`Placement.scale`).
+  - Width / height / depth in 5 cm steps (`Placement.scale`). "Reset Size" returns to `Placement.fitScale` (the size it was fitted to from a scanned box), else the model's natural size.
   - Height above floor, 0–2.4 m (`Placement.position.y`), for wall-mounted items. "Put on Floor" resets it.
-  - Scanned furniture: Edit converts it into a placement with the same model fitted to RoomPlan's box. The original is hidden through `Project.hiddenRoomObjects`.
+  - Scanned furniture: Edit converts it into a placement with the same model fitted to RoomPlan's box. The original is removed through `Project.removedRoomObjects` (never restored by the eye toggle).
 - **Create:** Objects panel > "Add object" → "Your scans" or the catalog ("Custom Box" first), then size it.
 - **Replace:**
   - Catalog items stretch to RoomPlan's measured box. Library scans keep real scale.
   - Mounting height is preserved: the bottom of RoomPlan's box above the floor.
 - **Scan to replace** (camera icon, LiDAR only):
   - Opens Object Capture.
-  - The saved scan replaces the selected placeholder at the same spot, facing and height.
+  - The saved scan replaces the selected placeholder at the same spot, facing and height. The placeholder is removed, not hidden.
   - Marked items face away from the nearest wall.
 - **Wall-mounted objects:**
   - Object Capture in this SDK has no capture mode that skips an object's back.
   - Scan one pass without flipping (≥10 photos); the back is guessed but sits against the wall.
   - Then use scan-to-replace on the item's box.
+- **Rename room:** tap the title in the Designer > Rename (also long-press or swipe in Home).
 - **View controls:** Reset view, Room Photos (if the scan has photos), Finishes (wall and floor presets, Matched Paint, Realistic Models toggle), Cutaway walls. No top-view toggle (removed at Alex's request).
 
 ## Data (all additive and optional; old saves decode)
@@ -38,9 +41,9 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
 - `Placement.scale`
 - `Placement.position.y` = mounting height
 - `Placement.catalogItem`
-- `Project.hiddenRoomObjects`, `wallFinish` (preset id or `paint:#RRGGBB`), `floorFinish`
+- `Project.hiddenRoomObjects` (user Hide only), `removedRoomObjects` (replaced), `Placement.fitScale`, `wallFinish` (preset id or `paint:#RRGGBB`), `floorFinish`
 - `RoomModel.Box.attributes`
 
 ## Tests
 
-`RoomVibeUITests`: drag/orbit/pinch, catalog + select/hide/show/replace through the Objects panel, Custom Box editor, rename from the Home library. Uninstall the app before running so saved state doesn't leak between tests.
+`RoomVibeUITests`: drag/orbit/pinch, catalog + select/hide/show/replace through the Objects panel, Custom Box editor, Reset Size, delete undo, rename object and room. `scripts/clamp_check`. Uninstall the app before running so saved state doesn't leak between tests.

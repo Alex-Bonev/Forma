@@ -8,5 +8,6 @@ __pycache__/
 .venv/
 .env
 .vercel
+RoomVibe/Core/Networking/APIConfig.json
 build-device/
 .claude/

@@ -32,24 +32,27 @@ Hackathon demo, ~3 minutes, live. Optimize for a reliable demo, not production r
 | Stretch order | 1) Photoreal render, 2) Vibe mode, 3) AR view. |
 | Timeline | 48h. Feature freeze at **H40**. |
 
-## 3. What exists today (`main` + `a/realism`, verified on the iPhone 17 Pro unless noted)
+## 3. What exists today (`main`, plus `a/polish` in review)
 
 - **Home:** room list and object library, rename and delete (swipe or long-press), Scan Room and Scan Object
   (disabled without LiDAR), "Load Demo Data".
 - **Room scan:** RoomPlan, with a review step before saving.
-  - Saves are aligned so the longest wall runs along X.
-  - Saves the floor outline and RoomPlan's furniture attributes (sofa shape, table type…).
+  - Saves are aligned so the longest wall runs along X; floor outline and RoomPlan attributes are kept.
+  - Tap-to-mark items RoomPlan misses; Apple Vision suggests what they are.
+  - ~40 photos captured during the scan (gallery, Matched Paint wall colour, Brick/Oak detection).
 - **Object scan:** Object Capture with passes and flip, then on-device reconstruction to `model.usdz` + `thumb.jpg`.
-  - A real chair scanned and placed at real scale (0.67 × 1.10 × 0.67 m).
-- **Designer navigation:** own orbit camera plus a UIKit touch layer.
-  - One finger moves an object or orbits (with momentum), two fingers pan, pinch zooms, twist rotates, tap selects.
-  - Walls between the camera and the room fade out. Reset / Top view / cutaway controls.
-- **Realistic furniture:** RoomPlan boxes are swapped for Kenney CC0 models chosen by category and attributes,
-  stretched to RoomPlan's box. The boxes remain as the fallback.
-- **Add Item catalog:** 21 generic items at real sizes, for things RoomPlan misses.
-- **Scanned furniture:** tap it to Replace (with a scan or catalog item) or Hide (false detections), then restore.
-- **Tests:** UI tests in `RoomVibeUITests` (real gestures in the Simulator), `scripts/align_check`, `backend/test_main.py`.
-- **Backend** (David, `c/backend-ai`): real providers, APIClient, Render and Vibe screens. Not merged yet.
+  Scan Real replaces a selected placeholder in place.
+- **Designer:**
+  - Own orbit camera + UIKit touch layer: drag objects or orbit, two-finger pan, pinch, twist, tap select.
+  - Walls between the camera and the room fade out. Reset / Room Photos / Finishes / Cutaway controls. Tap the title to rename the room.
+  - Selection: blue corner brackets + floor disc, one card with ≤4 labeled actions. Undo for Delete / Hide.
+  - Drags stay inside the scanned floor outline.
+- **Furniture:** Poly Haven photoreal models (toggle) → rounded procedural models → Kenney, fitted to RoomPlan's boxes.
+  22-item catalog incl. Custom Box. Replace / Size (incl. mounting height) / Hide scanned furniture.
+- **Finishes:** 12 wall presets + Matched Paint, 10 floors (CC0 Poly Haven).
+- **Tests:** 8 UI tests in `RoomVibeUITests`, self-checks in `scripts/*_check`, `backend/test_main.py`.
+- **Backend** (David, `c/backend-ai`): real providers, APIClient, Render and Vibe screens. Not merged yet, and no
+  button opens them yet (B's "Make it real" button, §4 touch points).
 
 **Specs for in-flight and recent work** (agents build against these; update them whenever scope changes):
 - [`docs/specs/designer-editing.md`](specs/designer-editing.md): select / edit size + mounting height / Custom Box / replace / scan-to-replace (built).
@@ -144,6 +147,13 @@ Fallbacks: bundled demo data if a scan fails; cached render if Wi-Fi fails; scre
 | 6 | Judging criteria / required sponsor tech that should be visible in the demo | Alex | H2 |
 | 7 | App name/branding final? ("RoomVibe" assumed) | Team | H20 |
 | 8 | Venue Wi-Fi reliability — decides how much we lean on cached AI results | Alex | H34 |
+
+C's proposals (not yet confirmed by the team):
+
+- **#3:** Gemini image editing (Interactions API), `IMAGE_MODEL=gemini-nano-banana-2.1` (~$0.034/image at 1K, no free tier).
+  Check current pricing on the provider page before relying on it.
+- **#4:** Claude (`claude-opus-5-5`, structured output) for vibe analysis, SerpAPI Google Shopping for products.
+- **#5:** still open. C deploys from `backend/`; provider keys live only in Vercel env vars.
 
 ## 9. Rules for Claude Code sessions (all three of us)
 

@@ -1,6 +1,6 @@
 # RoomVibe — Status, open work, and handoff (Alex's track)
 
-Last updated: 2026-10-17, branch `a/realism` (PR #3, open). `main` has PRs #1 and #2 merged.
+Last updated: 2026-10-17, branch `a/polish` (off `main`; PRs #1–#3 merged).
 
 ## Done (on `a/realism` unless noted)
 
@@ -42,16 +42,18 @@ Last updated: 2026-10-17, branch `a/realism` (PR #3, open). `main` has PRs #1 an
 - Self-checks: `scripts/align_check`, `scripts/photo_check`, `scripts/scene_check`.
 - `backend/test_main.py`.
 
-## Open issues (from Alex's device test, Oct 17)
+## Open issues
 
-1. ~~**Toilet model:**~~ **Fixed.** Rebuilt from overlapping rounded solids: the tank joins the base and the seat sits flush.
-2. ~~**Selection UI is cluttered and confusing.**~~ **Fixed:** one card per selection, with a name, a hint and ≤4 labeled actions; no rotate or Done buttons. The buttons are unlabeled and hard to hit. Simplify:
-   - Drop the rotate buttons (twist does it).
-   - Drop the "Done" buttons (tap empty space deselects).
-   - Remaining actions get short text labels.
-   - At most about 3–4 actions per selection.
-3. ~~**Edit on a scanned sink turns it into a grey box.**~~ **Fixed:** the catalog now covers every rounded model, including Wall Sink, and a floating sink edits as a wall sink. `editRoomObject` only maps furniture keys that have a catalog item, and wall-mounted sinks (`wallBasin`) have none. Every furniture key, and the wall basin, needs an editable equivalent.
-4. ~~**More wall and floor textures:**~~ **Done:** walls now have 12 presets + Matched Paint and floors have 10. See `docs/specs/finishes-assets.md`.
+Round 2 (Alex, Oct 17), all fixed on `a/polish`:
+1. **Selection not obvious:** blue corner brackets around the bounds plus the floor disc.
+2. **Scan Real only hid the marked item:** Replace / Size / Scan Real now put the RoomPlan object in
+   `Project.removedRoomObjects`, so "Show hidden" can no longer bring back a duplicate. Hide stays restorable.
+3. **"Reset to Natural Size" made duplicates:** not reproducible in the Simulator. Root-cause candidates fixed:
+   the replaced original came back via "Show hidden" (see 2); Reset jumped to the catalog default size (now
+   "Reset Size" returns to `Placement.fitScale`); `spawn` is now idempotent per placement id.
+4. **Rename a room:** tap the Designer title → Rename (Home long-press/swipe still works).
+
+Also added: undo for Delete / Hide (5 s bar), drags clamped to the scanned floor outline (`FloorClamp`, `scripts/clamp_check`).
 
 ## Unverified on device (needs Alex's phone)
 
@@ -60,17 +62,20 @@ Last updated: 2026-10-17, branch `a/realism` (PR #3, open). `main` has PRs #1 an
 - **Vision during scanning:** the marked-item crop and the brick/wood vote.
 - **Tap-to-mark:** where the markers land.
 - **Scan-to-replace:** the Object Capture path end to end.
+- **Floor-outline clamp:** on a real (non-rectangular) scan. If items jump oddly while dragging, the outline frame is off.
 
 ## Future work (A)
 
 - Bundle the final demo room and chair (`scripts/pull_demo_assets.py`), then rehearse with `docs/DEMO.md`.
-- Clamp drags to the real floor outline (`RoomModel.floorOutline`) instead of the bounding rectangle.
-- Undo for delete and hide.
-- Merge PR #3 after Alex verifies on device. Coordinate with Michelle (her room visuals) and David (`c/backend-ai`; review comment posted on commit 6082487).
+- **Demo gap:** "Make it real" button is built on `a/make-it-real` (draft PR #6, stacked on #4 + #5). Merge #4 and #5 first.
+  It works against the mock backend in the Simulator. On device it needs David's Vercel deploy + `APIConfig.json`.
+  Michelle has no branch pushed yet.
+- Render the floor from `floorOutline` instead of the walls' bounding box (B's room visuals).
+- Coordinate with Michelle (her room visuals) and David (`c/backend-ai`; review comment posted on commit 6082487).
 
 ## Handoff prompt (paste into a fresh session)
 
-> You are continuing Alex's track on RoomVibe (iOS 18 SwiftUI + RoomPlan + Object Capture + RealityKit) in `~/Desktop/CodeProjects/RoomVibe`, branch `a/realism` (PR #3).
+> You are continuing Alex's track on RoomVibe (iOS 18 SwiftUI + RoomPlan + Object Capture + RealityKit) in `~/Desktop/CodeProjects/RoomVibe`, branch `a/polish`.
 > 1. Read `docs/STATUS.md`, `docs/PLAN.md` and every file in `docs/specs/` first.
 > 2. Talk caveman-terse, write lazy-but-correct code (ponytail), and use the apple-design skill for UI.
 > 3. Fix the "Open issues" in STATUS.md, in order.

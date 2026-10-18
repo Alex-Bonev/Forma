@@ -1,3 +1,6 @@
-fastapi
-python-multipart
-httpx
+fastapi[standard]==0.143.3
+python-multipart==0.0.32
+httpx==0.28.1
+anthropic==1.15.0
+google-genai==2.31.0
+pillow==13.0.0

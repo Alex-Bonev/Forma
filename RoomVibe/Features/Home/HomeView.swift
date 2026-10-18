@@ -67,6 +67,9 @@ struct HomeView: View {
                 // Launch with `-demo` (Scheme > Run > Arguments) to jump straight into the demo room.
                 guard ProcessInfo.processInfo.arguments.contains("-demo"), !openedDemo else { return }
                 openedDemo = true   // .task reruns whenever Home reappears; jump in only once
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-fresh") { store.projects.forEach(store.delete) }   // UI tests
+                #endif
                 if store.projects.isEmpty { try? store.loadDemoData() }
                 if let first = store.projects.first { router.path = [.designer(first.id)] }
             }

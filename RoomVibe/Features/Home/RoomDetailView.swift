@@ -79,7 +79,7 @@ struct RoomDetailView: View {
                     .onTapGesture { router.path.append(.designer(projectID)) }
             }
             ForEach(Array(room.objects.enumerated()), id: \.offset) { i, box in
-                if !(project.hiddenRoomObjects?.contains(i) ?? false) {
+                if !(project.hiddenRoomObjects?.contains(i) ?? false) && !(project.removedRoomObjects?.contains(i) ?? false) {
                     ItemRow(name: box.label == RoomModel.markedLabel ? "Marked item" : box.label.capitalized,
                             symbol: "cube.transparent", size: box.dimensions, isNew: false)
                         .onTapGesture { router.path.append(.designer(projectID)) }

@@ -92,6 +92,67 @@ final class DesignerGestureTests: XCTestCase {
         XCUIScreen.main.screenshot().attach(named: "after-edit", to: self)
     }
 
+    /// Size on scanned furniture swaps in one fitted item; Reset Size returns to that fit, and the original is gone for good.
+    func testResetSizeKeepsOneItem() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        sleep(2)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.58, dy: 0.45)).tap()   // scanned coffee table
+        XCTAssertTrue(app.buttons["Size"].waitForExistence(timeout: 3))
+        app.buttons["Size"].tap()
+        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 5))
+        app.steppers["Width, 1.10 m"].buttons["Increment"].tap()
+        XCTAssertTrue(app.steppers["Width, 1.15 m"].waitForExistence(timeout: 2))
+        app.buttons["Reset Size"].tap()
+        XCTAssertTrue(app.steppers["Width, 1.10 m"].waitForExistence(timeout: 2), "reset returns to the scanned fit")
+        app.buttons["Done"].firstMatch.tap()
+        canvas.tap()   // deselect
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show'")).firstMatch.waitForExistence(timeout: 2),
+                       "a replaced scanned object is removed, not hidden")
+        XCUIScreen.main.screenshot().attach(named: "after-reset", to: self)
+    }
+
+    func testDeleteUndo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let canvas = app.otherElements["designer-canvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        openCatalog(app)
+        app.buttons["Demo Chair"].tap()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))
+        app.buttons["Remove"].tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 2))
+        app.buttons["Undo"].tap()
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)).tap()   // the chair dropped at the view center
+        XCTAssertTrue((canvas.value as? String)?.hasPrefix("Demo Chair at") == true, "undo brings the chair back")
+    }
+
+    /// Rooms are renamed from the Name field on Room detail.
+    func testRenameRoom() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        app.buttons["Close fullscreen"].tap()   // -demo opens the Designer straight from Home
+        func row(_ name: String) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        }
+        XCTAssertTrue(row("Demo Living Room").waitForExistence(timeout: 5))
+        row("Demo Living Room").tap()
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.clearAndType("Den\n")
+        app.buttons["Back to Rooms"].tap()
+        XCTAssertTrue(row("Den").waitForExistence(timeout: 3), "Home lists the new name")
+        XCUIScreen.main.screenshot().attach(named: "renamed", to: self)
+        row("Den").tap()
+        app.textFields.firstMatch.clearAndType("Demo Living Room\n")
+    }
+
     /// Demo room has a marked item with a Vision suggestion (decorative_plant -> Plant).
     func testMarkedItemSuggestion() {
         let app = XCUIApplication()

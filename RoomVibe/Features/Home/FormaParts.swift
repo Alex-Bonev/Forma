@@ -155,5 +155,5 @@ func roomSummary(_ project: Project, store: ProjectStore) -> String? {
 }
 
 func roomItemCount(_ project: Project, room: RoomModel) -> Int {
-    project.placements.count + room.objects.count - (project.hiddenRoomObjects?.count ?? 0)
+    project.placements.count + room.objects.indices.filter { !(project.hiddenRoomObjects?.contains($0) ?? false) && !(project.removedRoomObjects?.contains($0) ?? false) }.count
 }
