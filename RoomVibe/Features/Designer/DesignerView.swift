@@ -23,6 +23,7 @@ struct DesignerView: View {
     @State private var editing = false
     @State private var showPhotos = false
     @State private var scanTarget: ScanTarget?
+    @State private var render: RenderRequest?   // "Make it real" sheet input
     @State private var undo: (title: String, snapshot: Project)?   // last Delete / Hide, offered for a few seconds
     @State private var naturalSize: [UUID: SIMD3<Float>] = [:]   // placement id -> unscaled model size (m)
 
@@ -62,6 +63,12 @@ struct DesignerView: View {
                     if new != nil { undo = nil; selected = nil }
                     highlight(new.flatMap(roomObjectEntity))
                 }
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Make it real", systemImage: "sparkles") { Task { await makeItReal() } }
+                    }
+                }
+                .sheet(item: $render) { r in RenderView(snapshot: r.snapshot, projectID: projectID, camera: r.camera) }
                 .sheet(isPresented: $showCatalog) { catalogSheet }
                 .sheet(isPresented: $showPhotos) { RoomPhotosView(projectID: projectID) }
                 .sheet(isPresented: $editing) { if let selected { editor(selected) } }
@@ -671,6 +678,20 @@ struct DesignerView: View {
         project.placements.removeAll { $0.id == id }
         store.update(project)
         selected = nil
+    }
+
+    struct RenderRequest: Identifiable { let id = UUID(); let snapshot: UIImage; let camera: RenderCamera }
+
+    /// Snapshot the 3D view (selection markers cleared first) and open David's RenderView.
+    private func makeItReal() async {
+        selected = nil
+        selectedRoomObject = nil
+        try? await Task.sleep(for: .milliseconds(150))   // let RealityKit draw a frame without the brackets
+        guard let snap = captureDesignerSnapshot() else { return }
+        let cam = RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
+                               verticalFOV: camera.entity.camera.fieldOfViewInDegrees,
+                               viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
+        render = RenderRequest(snapshot: snap, camera: cam)
     }
 
     private func offerUndo(_ title: String, _ snapshot: Project) {
