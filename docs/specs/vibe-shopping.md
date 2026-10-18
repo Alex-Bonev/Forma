@@ -26,7 +26,7 @@ Check field names against the provider docs on the day you build. These were rea
 - `backend/main.py`:
   - `Style`, `Product`, `/vibe/analyze` (image only, Claude structured output), `/vibe/products` (SerpAPI).
   - `MOCK=1` canned responses, `check_secret`, `require(key, name)`.
-  - Upload cap is 4 MB; Vercel caps bodies at 4.5 MB.
+  - Upload and response caps come from `MAX_UPLOAD_MB` (10) and `MAX_RESPONSE_MB` (20) in `backend/.env`. The backend runs locally for the demo (`scripts/run_local.sh`).
 - `backend/test_main.py`: mock-transport tests.
 - `RoomVibe/Core/Networking/APIClient.swift`: `analyzeVibe(_:)`, `products(for:)`, multipart `addField`/`addImage`.
 - `RoomVibe/Features/Vibe/VibeView.swift`: `VibeView` and `VibeModel`. It already does photo pick → analyze → render + products, with a `ProductCard` that has an Open link.
@@ -130,15 +130,15 @@ Check field names against the provider docs on the day you build. These were rea
   - Converts the GLB in a worker thread.
   - Non-JSON or non-object 2xx bodies from fal return 502. A bad key returns 502.
 - `MOCK=1`: the POST returns `mock-model`, and the GET returns `done` with a USDZ converted from a generated box.
-- trimesh, numpy and the converter are imported only inside these handlers, so the other endpoints' cold start is unchanged.
+- trimesh, numpy and the converter are imported only inside these handlers, so the other endpoints start fast.
 - **GLB → USDZ: decided, backend converter (`backend/usdz.py`).** RealityKit loads USDZ, not GLB.
   - trimesh reads the GLB. We write the USDA layer as text (UsdPreviewSurface with a UsdUVTexture) and pack it into a USDZ: an uncompressed zip, layer first, each file 64-byte aligned.
   - Passes `usdchecker --arkit`. Loads in RealityKit with correct extents and a textured PBR material.
   - trimesh flips glTF's top-left V origin to bottom-left on load, which is what USD `st` expects.
-  - Output is bounded so its base64 fits Vercel's 4.5 MB response cap:
-    - Meshes are decimated to ≤ 40,000 faces with `fast_simplification`. UVs are carried through the collapse map.
+  - Output is bounded so the base64 response stays small enough to send to the phone over Wi-Fi:
+    - Meshes are decimated to ≤ `USDZ_MAX_FACES` (80,000) faces with `fast_simplification`. UVs are carried through the collapse map.
     - Textures go to ≤ 1024 px JPEG.
-    - The face budget halves until the USDZ is ≤ 3.2 MB.
+    - The face budget halves until the USDZ is ≤ `USDZ_MAX_MB` (8 MB), which must also fit `MAX_RESPONSE_MB` as base64.
     - Inputs over 1M faces are refused, counting each instanced node, before any geometry is copied.
     - These are refused too:
       - Draco and meshopt-compressed GLBs.
@@ -152,10 +152,10 @@ Check field names against the provider docs on the day you build. These were rea
     - Without decimation, 327,680 faces gives an 18.7 MB USDZ in 424 s (per-element formatting). Unusable.
     - Decimated to 40k: 2.17 MB in 6.6 s.
     - Decimation plus array-level formatting plus numpy normals: 327,680 faces (7.2 MB GLB, 2048² texture) gives a 2.67 MB USDZ in 0.5 s. It passes `usdchecker --arkit` and loads textured in RealityKit.
-  - Rejected: `usd-core` (201 MB unzipped, against Vercel's 250 MB function limit).
+  - Rejected: `usd-core` (201 MB unzipped). It was chosen against when the plan was a Vercel deploy (250 MB function limit); the hand-written converter works and stays.
   - Rejected: an iOS GLTF package (new SPM dependency through xcodegen, unclear RealityKit support).
   - New dependencies: numpy (16.5 MB wheel), trimesh, fast_simplification (1.7 MB wheel).
-  - **Vercel duration:** the repo has no `vercel.json` and no `maxDuration`, so the plan's default limit applies. The poll that finishes a job downloads up to 40 MB from fal's CDN and then converts it (about 0.5 s measured), so it needs roughly 10–30 s on a slow link. Set `maxDuration` to at least 60 for `main.py` before relying on it.
+  - **Duration:** local runs have no function timeout. The poll that finishes a job downloads up to 40 MB from fal's CDN and converts it (about 0.5 s measured), so it can take 10–30 s on a slow link. The app's request timeout (100 s) covers that.
 - App flow, from the "Add to room" placement's panel, with "Make it 3D (beta)":
   1. Poll the job.
   2. Download the model and store it as `Objects/<id>/model.usdz`.

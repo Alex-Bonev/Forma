@@ -58,7 +58,7 @@ RoomVibe/
   Features/ObjectScan/     Object Capture -> PhotogrammetrySession -> model.usdz
   Features/Designer/       RealityView dollhouse, RoomBuilder, drag/rotate/delete placements
   Resources/DemoData/      sample_room.json (hand-made room for no-LiDAR devices)
-backend/                   FastAPI: /health, /render, /vibe/analyze, /vibe/products (MOCK=1 by default)
+backend/                   FastAPI: /health, /render, /vibe/* (MOCK=1 by default), run locally with scripts/run_local.sh
 project.yml                XcodeGen spec (optional, see below)
 ```
 
@@ -68,33 +68,54 @@ up with no `.pbxproj` change. Only regenerate with `xcodegen generate` if you ch
 Storage: `Application Support/library.json` is the index; room and object files live in
 `Application Support/Projects/<id>/` and `Application Support/Objects/<id>/`.
 
-## Backend
+## Backend (run locally)
+
+The demo runs the backend on your Mac. Nothing is deployed. Run every command below from the repo root.
 
 ```sh
-cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                      # self-check
-MOCK=1 .venv/bin/fastapi dev main.py     # local server on :8000
+python3 -m venv backend/.venv && backend/.venv/bin/pip install -r backend/requirements.txt pytest
+(cd backend && .venv/bin/pytest -q)          # self-check
+cp backend/.env.example backend/.env         # gitignored; read automatically on start
+openssl rand -hex 32                         # paste as APP_SHARED_SECRET in backend/.env
 ```
 
-Deploy: `vercel` from `backend/` (preview), `vercel --prod` (live). Copy the variables from `.env.example` into Vercel,
-then set `MOCK=0`, the real provider keys, and a fresh `APP_SHARED_SECRET` (`openssl rand -hex 32`).
-With `MOCK=0` the backend refuses every request until `APP_SHARED_SECRET` is set.
-Vercel caps request and response bodies at 4.5 MB: send JPEG snapshots, never USDZ files.
-Providers: Gemini image editing (`/render`, Interactions API), Claude (`/vibe/analyze`), SerpAPI Google Shopping (`/vibe/products`).
-With `MOCK=0`, an endpoint whose key is missing returns 501. Provider keys live only in Vercel env vars, never in the app.
+Config lives in `backend/.env`. It is parsed with python-dotenv (quotes and inline comments handled, no interpolation), never executed, and only known keys are read:
+- `MOCK` (default `1`): canned responses, no keys needed. Set `MOCK=0` for real providers.
+- `APP_SHARED_SECRET`: generate with `openssl rand -hex 32`. Set a fixed one: without it, each LAN run makes a new
+  session secret, and you must rebuild the app after every run. With `MOCK=0` the backend refuses every request without a secret.
+- Provider keys: `LLM_API_KEY` (+ `LLM_MODEL`), `IMAGE_API_KEY` (+ `IMAGE_MODEL`, `IMAGE_SIZE`), `SHOPPING_API_KEY`,
+  `BROWSER_USE_API_KEY` (+ `BROWSER_USE_MODEL`, `BROWSER_USE_MAX_COST`), `FAL_KEY`.
+- Limits: `MAX_UPLOAD_MB=10`, `MAX_RESPONSE_MB=20`, `USDZ_MAX_MB=8`, `USDZ_MAX_FACES=80000`.
+
+Start it from the repo root:
+
+```sh
+scripts/run_local.sh               # iPhone on the same Wi-Fi: Mac's LAN IP, binds 0.0.0.0
+scripts/run_local.sh --sim         # Simulator only: 127.0.0.1, binds 127.0.0.1
+scripts/run_local.sh --port 9000   # any mode, another port (default 8000)
+```
+
+The script writes the gitignored `RoomVibe/Core/Networking/APIConfig.json` (base URL + secret, file mode 0600), then
+serves on `0.0.0.0:<port>` (LAN) or `127.0.0.1:<port>` (`--sim`). The config is bundled into the app, so rebuild and
+reinstall the app after it changes. The secret ends up in the app build, which is fine for a local demo.
+`--sim` rewrites the config to 127.0.0.1: before a device build, run the script again without `--sim` and rebuild.
+Check the server: `curl http://<ip>:<port>/health`.
+
+On a physical iPhone:
+- The iPhone and the Mac must be on the same Wi-Fi.
+- On first launch iOS asks for Local Network permission. Allow it, or every request fails.
+  If it was denied: Settings > Privacy & Security > Local Network > RoomVibe on, then relaunch the app.
+- If macOS asks "Allow incoming connections" for Python, allow it. Otherwise the phone gets no answer.
+- The app allows plain `http` on the local network only (`NSAllowsLocalNetworking`).
+
+Providers: Gemini image editing (`/render`, Interactions API), Claude (`/vibe/analyze`), SerpAPI Google Shopping
+(`/vibe/products`), Browser Use agents (`/vibe/shop`), fal SAM 3D Objects (`/vibe/model3d`).
+With `MOCK=0`, an endpoint whose key is missing returns 501. Provider keys live only in `backend/.env`, never in the app.
 The app holds `APP_SHARED_SECRET`, which anyone with the build can read: it is an access gate, not a secret. Rotate it after the demo.
 
-App side: without config the app calls `http://127.0.0.1:8000` (works from the Simulator against a local backend).
-To use the deployed backend, create the gitignored `RoomVibe/Core/Networking/APIConfig.json`:
-
-```json
-{"baseURL": "https://<project>.vercel.app", "secret": "<APP_SHARED_SECRET>"}
-```
-
-If the app still calls 127.0.0.1, the file did not decode: check it is valid JSON (the Xcode console logs the error).
-
-Before going on stage: open `https://<project>.vercel.app/health` once to wake the function.
+Without `APIConfig.json` the app calls `http://127.0.0.1:8000`, which works only from the Simulator.
+If the app still calls 127.0.0.1 after running the script, the file did not decode: check it is valid JSON (the Xcode
+console logs the error), then rebuild.
 
 ## Work split
 

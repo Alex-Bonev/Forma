@@ -9,14 +9,20 @@ Target: 3 minutes, live, on Alex's iPhone 17 Pro. Backup device: Michelle's LiDA
 - [ ] Also keep the real scanned room in the app (not just the demo copy), with the chair already placed next to the sofa.
 - [ ] Screen-record one complete run (Control Center > Screen Recording) and AirDrop it to a laptop. This is the last-resort video.
 - [ ] AI render for the demo room and camera angle is generated and cached (David), so step 5 works offline.
-- [ ] Vercel env vars set: `APP_SHARED_SECRET`, `LLM_API_KEY` (vibe analysis), `IMAGE_API_KEY` (render), `SHOPPING_API_KEY` (quick search), `BROWSER_USE_API_KEY` (shopping agents) and `FAL_KEY` (Make it 3D), with `MOCK=0`. Never commit them.
-- [ ] Offline Vibe result is current (`RoomVibe/Resources/DemoData/vibe_demo.json` + `vibe_demo_*.jpg`). To re-record from real agents:
-  `RV_BASE_URL=https://<project>.vercel.app RV_SECRET=<secret> backend/.venv/bin/python scripts/record_vibe_demo.py`
-  (URL and secret from your shell only; `--placeholders` records from a local `MOCK=1` backend instead). Rebuild after.
+- [ ] Keys in `backend/.env` (gitignored, copied from `backend/.env.example`): `APP_SHARED_SECRET`, `LLM_API_KEY` (vibe analysis), `IMAGE_API_KEY` (render), `SHOPPING_API_KEY` (quick search), `BROWSER_USE_API_KEY` (shopping agents) and `FAL_KEY` (Make it 3D), with `MOCK=0`. Never commit them.
+- [ ] `APP_SHARED_SECRET` in `backend/.env` is fixed (`openssl rand -hex 32`). Without it every run makes a new secret and needs a rebuild.
+- [ ] From the repo root, run `scripts/run_local.sh` (no `--sim`) on the demo Mac, then rebuild and install the app on both phones. The script writes `APIConfig.json` with the Mac's LAN IP, and the app bundles it. If you last ran `--sim`, the config points at 127.0.0.1: rerun without `--sim` and rebuild.
+- [ ] On each phone, allow Local Network access on first launch. If it was denied: Settings > Privacy & Security > Local Network > RoomVibe on, then relaunch.
+- [ ] If macOS asks "Allow incoming connections" for Python, allow it. Otherwise the phone gets no answer.
+- [ ] Offline Vibe result is current (`RoomVibe/Resources/DemoData/vibe_demo.json` + `vibe_demo_*.jpg`). To re-record from real agents, with the local backend running:
+  `RV_BASE_URL=http://127.0.0.1:8000 RV_SECRET=<secret> backend/.venv/bin/python scripts/record_vibe_demo.py`
+  (secret from your shell only; `--placeholders` records from a `MOCK=1` backend instead). Rebuild after.
 
 ## 15 minutes before
 - [ ] Phone at 80%+ battery, Do Not Disturb on, brightness up, Auto-Lock off (Settings > Display & Brightness).
-- [ ] Hit the backend `/health` URL from the phone's Safari to warm the server (David has the URL). It must say `"mock": false`.
+- [ ] Mac awake and plugged in, `scripts/run_local.sh` (no `--sim`) running from the repo root, phone on the same Wi-Fi as the Mac.
+- [ ] `curl http://<mac-ip>:8000/health` (or open it in the phone's Safari) must say `"mock": false`. The script prints the IP.
+- [ ] Venue Wi-Fi often blocks device-to-device traffic. If the phone can't reach `/health`, put the Mac and phone on a hotspot (Mac Internet Sharing or the phone's Personal Hotspot), rerun the script (the IP changes, and so does the secret unless it's fixed in `backend/.env`), and rebuild. If that fails too, use the bundled demo result.
 - [ ] Open the app to the Home screen. Close every other app (memory for reconstruction and RoomPlan).
 - [ ] If doing the live room scan: check the stage area has visible walls and decent light. Skip the scan if it's chaotic.
 

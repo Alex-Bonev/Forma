@@ -2,8 +2,8 @@
 """Record one Vibe shopping run and bundle it as the app's offline demo result.
 
   backend/.venv/bin/python scripts/record_vibe_demo.py --placeholders            # local MOCK=1 backend on :8000
-  RV_BASE_URL=https://<project>.vercel.app RV_SECRET=<APP_SHARED_SECRET> \\
-      backend/.venv/bin/python scripts/record_vibe_demo.py                       # real agents (takes minutes)
+  RV_BASE_URL=http://127.0.0.1:8000 RV_SECRET=<APP_SHARED_SECRET> \\
+      backend/.venv/bin/python scripts/record_vibe_demo.py                       # local MOCK=0 backend, real agents (minutes)
 
 Calls /vibe/analyze, /vibe/shop, then polls until every agent is done. Writes
 RoomVibe/Resources/DemoData/vibe_demo.json (prompt, style, final status) and vibe_demo_<n>.jpg product images,
