@@ -111,6 +111,9 @@ final class ProjectStore {
         var project = try addRoom(name: Self.dormName, model: model) { dir in
             let photos = dir.appending(path: "photos")
             try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
+            if let thumb = Bundle.main.url(forResource: "dorm_thumb", withExtension: "jpg") {
+                try FileManager.default.copyItem(at: thumb, to: dir.appending(path: "thumb.jpg"))   // until first open
+            }
             if let index = Bundle.main.url(forResource: "dorm_photos", withExtension: "json") {
                 try FileManager.default.copyItem(at: index, to: photos.appending(path: "photos.json"))
             }
@@ -129,7 +132,11 @@ final class ProjectStore {
         try addBundledDorm()
         guard let url = Bundle.main.url(forResource: "sample_room", withExtension: "json") else { return }
         let model = try JSONDecoder().decode(RoomModel.self, from: Data(contentsOf: url))
-        try addRoom(name: "Demo Living Room", model: model)
+        try addRoom(name: "Demo Living Room", model: model) { dir in
+            if let thumb = Bundle.main.url(forResource: "sample_room_thumb", withExtension: "jpg") {
+                try FileManager.default.copyItem(at: thumb, to: dir.appending(path: "thumb.jpg"))
+            }
+        }
         let bundled = Bundle.main.url(forResource: "sample_chair", withExtension: "usdz")
         if let old = objects.first(where: { $0.name == "Demo Chair" }) {
             // Keep it, unless it's the procedural stand-in and a real scan is now bundled.

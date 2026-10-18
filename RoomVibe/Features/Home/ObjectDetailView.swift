@@ -241,7 +241,7 @@ private struct SheetRoomRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RoomGlyph().frame(width: 44, height: 44).clipShape(RoundedRectangle(cornerRadius: 12))
+            RoomThumb(projectID: project.id).frame(width: 44, height: 44).clipShape(RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name).font(.forma(14, bold: true)).foregroundStyle(Theme.ink)
                 Text(summary).font(.forma(11)).foregroundStyle(Theme.muted)
