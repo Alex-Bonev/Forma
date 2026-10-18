@@ -2,7 +2,7 @@
 
 Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/forma-ui`, Michelle). Owner: A (Alex). This records the target behavior so later work stays consistent.
 
-> **Update:** Michelle decided the Paper design fully replaces the old Designer UI. The bottom selection card, bottom library buttons and "Show hidden" button are gone. All selection actions now live on the selected row of the **Objects panel** (top bar > Objects, opens automatically on selection). The panel is a **bottom sheet** (Paper E2, E2a, E2b, E3): drag its grabber to resize; it snaps to peek (180 pt), medium (440 pt) or large (screen height minus 120 pt). The room recenters above it, and the vibe pill and view controls stay where they are. Behavior below is otherwise unchanged.
+> **Update:** Michelle decided the Paper design fully replaces the old Designer UI. The bottom selection card, bottom library buttons and "Show hidden" button are gone. All selection actions now live on the selected row of the **Objects panel** (top bar > Objects, opens automatically on selection). The panel is a **bottom sheet** (Paper E2, E2a, E2b, E3): drag its grabber to resize; it snaps to peek (180 pt), medium (440 pt) or large (screen height minus 120 pt). The room recenters above it, and the vibe pill stays where it is. The view controls fade out while the sheet is open and return when it closes. Behavior below is otherwise unchanged.
 
 ## Behavior
 
@@ -20,10 +20,11 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
   - Selecting opens the item's row in the Objects panel.
   - Marked items are orange boxes created by tapping during a room scan.
 - **Selection card** (replaces the Objects list while something is selected; sized to its content so the room stays in view above it):
-  - Header: icon, name and size, then a **lock** icon (placements only), the **eye** (hide/show) and **✕** (deselect).
+  - Header: icon, name and size, then a **lock** icon (placements only), the **eye** (hide/show) and **✕** (deselect), grouped at the trailing edge with 44 pt hit areas.
+  - The card is capped at 60% of the view height (at least 220 pt) and scrolls when it does not fit.
   - One row of action tiles:
     - Placements: **Rotate** (22.5°, disabled when locked), **Size**, **Scan real** (LiDAR only), **Remove**. Remove asks "Remove <name>?" and confirms with "Remove from room".
-    - Scanned furniture: **Replace**, **Size**, **Scan real**. Marked items also get **Use <suggestion>** when Vision found one.
+    - Scanned furniture: **Replace**, **Size**, **Scan real**, **Remove**. Remove hides the object (it writes `hiddenRoomObjects`) and shows the 5 s Undo bar; the eye toggle can show it again. Marked items also get **Use <suggestion>** when Vision found one.
   - Shopped products also show their listing link and **Make it 3D**.
   - **Size** opens inside the card, never as a sheet:
     - Width, depth and height steppers.
@@ -37,7 +38,7 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
   - The copy is the same placement that Size already creates. The original is removed for good.
   - Tap-marked boxes still use Replace or Use <suggestion>.
 - **Lock:** the lock icon on the card. A locked placement ignores one-finger drag and twist. Size and Remove still work. The floating Lock pill was removed.
-- **Undo:** Remove and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.
+- **Undo:** Remove (placements and scanned furniture) and Replace show a 5 s "Undo" bar that restores the project snapshot. Selecting anything dismisses it.
 - **Drag bounds:** the footprint stays inside the walls' rectangle, then inside `RoomModel.floorOutline` (`FloorClamp`).
 - **Size** opens a sheet with live changes:
   - Width / height / depth in 5 cm steps (`Placement.scale`). "Reset Size" returns to `Placement.fitScale` (the size it was fitted to from a scanned box), else the model's natural size.
@@ -65,7 +66,7 @@ Status: **built** (`a/realism`), UI replaced by the Paper "forma" design (`b/for
 - `Placement.position.y` = mounting height
 - `Placement.catalogItem`
 - `Placement.locked` (nil = unlocked)
-- `Project.hiddenRoomObjects` (user Hide only), `removedRoomObjects` (replaced), `Placement.fitScale`, `wallFinish` (preset id or `paint:#RRGGBB`), `floorFinish`
+- `Project.hiddenRoomObjects` (Hide, and Remove on scanned furniture), `removedRoomObjects` (replaced), `Placement.fitScale`, `wallFinish` (preset id or `paint:#RRGGBB`), `floorFinish`
 - `RoomModel.Box.attributes`
 
 ## Tests

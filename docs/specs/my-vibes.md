@@ -51,13 +51,15 @@ All vibe screens use the app's Space Mono type (no system serif). Keep labels si
   - The same `DetailBar` as rooms ("‹ Vibes", Delete), then the collage and `VibeFields`.
   - Edits autosave after 0.6 s and on leaving. There is no Save button.
   - Delete asks once ("Delete this vibe?").
-- **Room detail row and Designer pill** (the pill sits at the bottom left, on one row with Feng-shui-ify on the right, just above Make it real; its menu opens upward):
-  - With no saved vibes, they open New vibe directly.
-  - Otherwise a list of vibes, "New vibe", and "Remove" (only when one is applied).
+- **Room detail row and Designer pill** (the pill sits at the bottom left, on one row with Feng-shui-ify on the right, just above Make it real):
+  - The menu is an anchored card (`VibeDropdownMenu`, `Features/Vibe/VibeDropdown.swift`), 280 pt wide, solid background, opening above the pill and rotating the chevron. It does not move the layout, and a tap outside closes it.
+  - Header "VIBE FOR <ROOM>". With no saved vibes, they open New vibe directly.
+  - Otherwise a list of vibes (the applied one has a check), "New vibe from photos", and "Remove vibe from room" (only when one is applied).
   - The Paper E4 sheet was removed.
 - **Shop a vibe:**
   - When the room has a vibe, that vibe is the input: its first photo is the style reference, and `getRoomVibeBrief` is the prompt. What the user types goes first so a budget survives the 1000-character cap.
   - The x sets the vibe aside to use a one-off photo or words instead.
+  - Tapping the vibe header opens the same card inline, headed "SHOP FROM". Picking a vibe uses it for this run only and does not change the room's vibe; the caption reads "Picked for this run". The card has no New vibe row. "Describe a different look" (only when a vibe is active) sets the vibe aside, like the x.
   - Way in: the Make it real sheet has an outlined "Shop <vibe name>" (or "Shop a vibe") pill above Compare/Image. It also shows after a failed render.
   - Make it real stays faithful and ignores the vibe.
 - **Saved run:** each room has one run (`VibeModel.forRoom`), and it outlives the screen.

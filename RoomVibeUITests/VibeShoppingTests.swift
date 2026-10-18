@@ -195,7 +195,7 @@ final class VibeShoppingTests: XCTestCase {
         let pill = app.buttons["roomVibe"]
         XCTAssertTrue(pill.waitForExistence(timeout: 10))
         pill.tap()
-        app.buttons["vibeOption"].firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'vibeOption'")).firstMatch.tap()
         XCTAssertTrue(pill.label.hasPrefix("Vibe: "))
 
         generate(app)
