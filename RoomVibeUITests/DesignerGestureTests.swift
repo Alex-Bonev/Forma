@@ -132,6 +132,17 @@ final class DesignerGestureTests: XCTestCase {
     }
 
     /// Rooms are renamed from the Name field on Room detail.
+    /// Opens the render sheet. Shows a result only with a backend running (`MOCK=1 uvicorn main:app`).
+    func testMakeItRealOpens() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        XCTAssertTrue(app.otherElements["designer-canvas"].waitForExistence(timeout: 10))
+        sleep(2)
+        app.buttons["Make it real"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Make it real"].waitForExistence(timeout: 5))
+    }
+
     func testRenameRoom() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
