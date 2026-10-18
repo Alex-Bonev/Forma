@@ -1256,7 +1256,7 @@ struct DesignerView: View {
 
     private func setElevation(_ id: UUID, _ y: Float) {
         guard var project, let k = project.placements.firstIndex(where: { $0.id == id }) else { return }
-        undo = nil   // restore() wouldn't move the live entity back down
+        undo = nil   // undo snapshots cover one action; a later edit ends the window
         project.placements[k].position.y = y
         store.update(project)
         placed[id]?.position.y = y
@@ -1300,15 +1300,16 @@ struct DesignerView: View {
         selected = nil
     }
 
-    private func offerUndo(_ title: String, _ snapshot: Project) {
+    private func offerUndo(_ title: String, _ snapshot: Project, for duration: Duration = .seconds(5)) {
         undo = (title, snapshot)
         Task {
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: duration)
             if undo?.snapshot == snapshot { undo = nil }
         }
     }
 
-    /// Put the project back as it was before the last Delete / Hide: placements respawn, room objects re-show.
+    /// Put the project back as it was before the last Delete / Hide / move: placements respawn or glide back,
+    /// room objects re-show.
     private func restore(_ snapshot: Project) {
         undo = nil
         store.update(snapshot)
@@ -1321,6 +1322,12 @@ struct DesignerView: View {
         let gone = Set((snapshot.hiddenRoomObjects ?? []) + (snapshot.removedRoomObjects ?? []))
         for i in (store.room(for: snapshot)?.objects.indices ?? 0..<0) { roomObjectEntity(i)?.isEnabled = !gone.contains(i) }
         for p in snapshot.placements where placed[p.id] == nil { Task { await spawn(p) } }
+        for p in snapshot.placements {   // still-live entities glide back to where the snapshot had them
+            guard let e = placed[p.id] else { continue }
+            let to = Transform(scale: p.scale ?? .one, rotation: simd_quatf(angle: p.yRotation, axis: [0, 1, 0]), translation: p.position)
+            guard e.transform != to else { continue }
+            e.move(to: to, relativeTo: scene, duration: 0.45, timingFunction: .easeInOut)
+        }
     }
 
     /// Selection marker: bright corner brackets around the object's box, a solid ring and a tinted disc on the floor.
