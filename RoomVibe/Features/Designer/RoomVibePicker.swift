@@ -10,6 +10,8 @@ struct RoomVibeControl<Leading: View>: View {
     var compact = false
     var fill = Theme.sand
     var ink = Theme.ink
+    /// The dropdown opens above the pill (for a pill near the bottom of the screen).
+    var opensUp = false
     @ViewBuilder var leading: Leading
     @State private var showMenu = false
 
@@ -22,7 +24,14 @@ struct RoomVibeControl<Leading: View>: View {
                 leading
                 pill
             }
-            if showMenu { menu.transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading))) }
+            .overlay(alignment: .bottomLeading) {
+                // Floats above the pill without widening the row it sits in.
+                if opensUp && showMenu {
+                    menu.fixedSize().offset(y: -52)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomLeading)))
+                }
+            }
+            if !opensUp && showMenu { menu.transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading))) }
         }
         .animation(.spring(duration: 0.25, bounce: 0), value: showMenu)
         .onChange(of: compact) { showMenu = false }
@@ -37,7 +46,7 @@ struct RoomVibeControl<Leading: View>: View {
                     SwatchDots(colors: Array(applied.colors.prefix(3)), size: 12)
                     if !compact {
                         Text(applied.name).font(.forma(12, bold: true)).foregroundStyle(ink).lineLimit(1)
-                        Image(systemName: showMenu ? "chevron.up" : "chevron.down")
+                        Image(systemName: showMenu != opensUp ? "chevron.up" : "chevron.down")
                             .font(.system(size: 11, weight: .bold)).foregroundStyle(ink)
                     }
                 } else {
@@ -46,7 +55,7 @@ struct RoomVibeControl<Leading: View>: View {
                     if !compact {
                         Text("Vibe").font(.forma(12, bold: true)).foregroundStyle(ink)
                         if !library.vibes.isEmpty {
-                            Image(systemName: showMenu ? "chevron.up" : "chevron.down")
+                            Image(systemName: showMenu != opensUp ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 11, weight: .bold)).foregroundStyle(ink)
                         }
                     }

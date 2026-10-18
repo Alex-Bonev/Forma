@@ -51,7 +51,7 @@ All vibe screens use the app's Space Mono type (no system serif). Keep labels si
   - The same `DetailBar` as rooms ("‹ Vibes", Delete), then the collage and `VibeFields`.
   - Edits autosave after 0.6 s and on leaving. There is no Save button.
   - Delete asks once ("Delete this vibe?").
-- **Room detail row and Designer pill:**
+- **Room detail row and Designer pill** (the pill sits at the bottom left, on one row with Feng-shui-ify on the right, just above Make it real; its menu opens upward):
   - With no saved vibes, they open New vibe directly.
   - Otherwise a list of vibes, "New vibe", and "Remove" (only when one is applied).
   - The Paper E4 sheet was removed.

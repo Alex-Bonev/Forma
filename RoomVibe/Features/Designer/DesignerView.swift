@@ -165,12 +165,6 @@ struct DesignerView: View {
                     ObjectScanView { object in Task { await applyScan(object, to: target) } }
                 }
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
-                .overlay(alignment: .topLeading) {
-                    // Under the back button (Paper E): the room's vibe. Make it real is the wide bar at the bottom.
-                    RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                    ink: lightBackdrop ? Theme.ground : Theme.ink) { EmptyView() }
-                    .padding(.leading, 16).padding(.top, 8 + 44 + 12)
-                }
                 .overlay(alignment: .bottom) {
                     if showObjects { objectsPanel(project).transition(.move(edge: .bottom).combined(with: .opacity)) }
                 }
@@ -186,6 +180,17 @@ struct DesignerView: View {
                             HintPill("Already in harmony ✨", fill: chrome.fill, ink: chrome.ink).transition(.opacity)
                         }
                         hint.allowsHitTesting(false)
+                        if !showObjects {
+                            // One row for the room's look: its vibe on the left, Feng-shui-ify on the right.
+                            HStack(alignment: .bottom) {
+                                RoomVibeControl(projectID: projectID, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                                ink: lightBackdrop ? Theme.ground : Theme.ink, opensUp: true) { EmptyView() }
+                                Spacer(minLength: 8)
+                                if balancing != nil || canFengShui { fengShuiButton.transition(.opacity) }
+                            }
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                         // Renders exactly what's on screen: frame it by dragging, then tap.
                         if !showObjects {
                             HStack(spacing: 10) {
@@ -247,11 +252,7 @@ struct DesignerView: View {
         }
         .overlay(alignment: .topTrailing) {
             if style == .full {
-                VStack(alignment: .trailing, spacing: 12) {
-                    viewControls
-                    if !showObjects && (balancing != nil || canFengShui) { fengShuiButton.transition(.opacity) }
-                }
-                .padding(.horizontal, 16).padding(.top, 64)
+                viewControls.padding(.horizontal, 16).padding(.top, 64)
             }
         }
         .animation(.easeOut(duration: 0.3), value: showHint)
@@ -1409,16 +1410,17 @@ struct DesignerView: View {
 
     private var canFengShui: Bool { fengShuiItems().items.contains(where: \.movable) }
 
-    /// Capsule under the view controls; a spinner while the solver agents think.
+    /// Capsule on the bottom row, across from the vibe pill; a spinner while the solver agents think.
     private var fengShuiButton: some View {
         Button(action: fengShuiify) {
             HStack(spacing: 8) {
                 if balancing != nil { ProgressView().controlSize(.small).tint(chrome.ink) }
                 else { Image(systemName: "circle.lefthalf.filled") }
-                Text(balancing != nil ? "Balancing chi…" : "Feng-shui-ify").font(.forma(13, bold: true))
+                Text(balancing != nil ? "Balancing chi…" : "Feng-shui-ify").font(.forma(13, bold: true)).lineLimit(1).fixedSize()
             }
-            .foregroundStyle(chrome.ink)
-            .padding(.horizontal, 14).frame(height: 44).background(chrome.fill, in: Capsule())
+            .foregroundStyle(lightBackdrop ? Theme.ground : Theme.ink)
+            .padding(.horizontal, 16).frame(height: 44)
+            .background(lightBackdrop ? Theme.wood : Theme.sand, in: Capsule())
         }
         .disabled(balancing != nil)
         .accessibilityLabel("Feng-shui-ify")
