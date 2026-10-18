@@ -227,9 +227,13 @@ final class DesignerGestureTests: XCTestCase {
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         sleep(2)
         app.buttons["Objects"].tap()
-        app.staticTexts["Marked item"].firstMatch.tap()
         let use = app.buttons["Use Plant"]
-        XCTAssertTrue(use.waitForExistence(timeout: 3), "marked item should offer its Vision suggestion")
+        for _ in 0..<3 where !use.exists {   // the panel may still be sliding in and swallow the row tap
+            let row = app.staticTexts["Marked item"].firstMatch
+            if row.waitForExistence(timeout: 3), row.isHittable { row.tap() }
+            _ = use.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(use.exists, "marked item should offer its Vision suggestion")
         XCUIScreen.main.screenshot().attach(named: "after-suggestion", to: self)
         use.tap()
         XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 5))

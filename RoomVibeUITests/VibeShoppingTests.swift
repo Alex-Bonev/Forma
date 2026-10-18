@@ -85,4 +85,35 @@ final class VibeShoppingTests: XCTestCase {
         expectation(for: deleted, evaluatedWith: tile)
         waitForExpectations(timeout: 5)
     }
+
+    /// Make it real keeps the room's latest render: reopening shows it at once. Two tabs: Compare and Image.
+    func testMakeItRealKeepsLatestRender() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "-fresh"]
+        app.launch()
+        let makeItReal = app.buttons["Make it real"].firstMatch
+        XCTAssertTrue(makeItReal.waitForExistence(timeout: 10))
+        let image = app.buttons["Image"]
+        for _ in 0..<3 where !image.exists {
+            makeItReal.tap()
+            _ = image.waitForExistence(timeout: 8)
+        }
+        XCTAssertTrue(app.staticTexts["Drag the divider to compare"].exists)
+        add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("compare"))
+        image.tap()
+        XCTAssertTrue(app.images["Render"].waitForExistence(timeout: 2))
+        add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("image"))
+        XCTAssertFalse(app.staticTexts["Drag the divider to compare"].exists, "Image tab is the render alone")
+        app.buttons["Close"].firstMatch.tap()
+        XCTAssertTrue(makeItReal.waitForExistence(timeout: 5))
+        sleep(1)
+        makeItReal.tap()
+        let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
+        add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("reopened"))
+    }
+}
+
+private extension XCTAttachment {
+    func named(_ n: String) -> XCTAttachment { name = n; lifetime = .keepAlways; return self }
 }
