@@ -133,7 +133,7 @@ struct RoomScanView: View {
         // Photos are in the raw ARSession world frame, so match against walls before axisAligned().
         // VERIFY on device: CapturedRoom transforms share the ARSession world frame (no re-anchoring after processing).
         let photos = scanner?.photos
-        let paint = photos.flatMap { RoomPhotos.wallColor(walls: model.walls, photos: $0.shots) }
+        let paint = photos.flatMap { RoomPhotos.wallColor(walls: model.walls, objects: model.objects, photos: $0.shots) }
         let walls = model.walls, shots = photos?.shots.map { ($0.photo, $0.jpeg) } ?? []
         model = model.axisAligned()
         // RoomBuilder needs walls to find the floor and room bounds.

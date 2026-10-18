@@ -203,8 +203,7 @@ private struct ObjectTile: View {
     let tint: Color
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: "chair.lounge.fill")
-                .font(.system(size: 30)).foregroundStyle(Theme.wood)
+            ObjectThumb(object: object)
                 .frame(maxWidth: .infinity).frame(height: 96)
                 .background(tint, in: RoundedRectangle(cornerRadius: 20))
             Text(object.name).font(.forma(12, bold: true)).foregroundStyle(Theme.ink).lineLimit(1)

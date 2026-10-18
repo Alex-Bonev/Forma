@@ -74,27 +74,39 @@ RENDER_VIEWS = {
     "cutaway": (
         "Image 1 is a screenshot of a simple 3D dollhouse model of a real room, seen from above at an angle "
         "with some walls cut away. Turn it into a photorealistic architectural visualization of the same "
-        "cutaway: same camera angle and framing, cut walls shown as clean cut sections, warm natural light, "
-        "realistic materials and soft shadows."
+        "cutaway: same camera angle and framing, cut walls shown as clean cut sections, realistic materials "
+        "and soft shadows, lit like the real room."
     ),
     # Snapshot from a low camera: make it read like a real interior photo.
     "interior": (
         "Image 1 is a screenshot of a simple 3D model of a real room. Turn it into a photorealistic interior "
-        "photograph taken from exactly this camera position: natural daylight, realistic materials and shadows, "
-        "shot on a full-frame camera."
+        "photograph taken from exactly this camera position, lit like the real room, realistic materials and "
+        "shadows, shot on a full-frame camera."
     ),
 }
 RENDER_RULES = (
-    "Keep the room shape and every wall, window and door exactly where it is. The colored blocks are "
-    "placeholders: replace each block with a realistic piece of furniture of its type that fills the same "
-    "footprint and height, facing the same way. Keep empty floor empty and do not add large furniture; small "
-    "decor such as plants, rugs and lamps is fine. Remove all text labels. No people, no text, no watermark."
+    "Be faithful, not creative: this is a check of how a real room looks, not a redesign. Keep the room shape "
+    "and every wall, window and door exactly where it is. Furniture in image 1 is a simplified stand-in: keep "
+    "each piece's type, footprint, height, position and facing, and make it look like a real piece of that type. "
+    "Add nothing that is not in image 1: no extra furniture, plants, rugs, art, lamps, curtains or decor, and "
+    "keep empty floor and bare walls empty. Everything outside the walls, including any notch or corner cut out "
+    "of the floor, stays plain background: never extend the room or add rooms, halls or doors there. Keep the wall and floor finishes described below. Remove all text "
+    "labels. No people, no text, no watermark."
 )
+# Vibe mode restyles on purpose (style words and/or an inspiration image): the faithful rules would fight it.
+RESTYLE_RULES = (
+    "Keep the room shape and every wall, window and door exactly where it is. Furniture in image 1 is a "
+    "simplified stand-in: keep each piece's type, footprint, height, position and facing, restyled to the style "
+    "below. Keep empty floor mostly empty; small decor that fits the style is fine. Remove all text labels. "
+    "No people, no text, no watermark."
+)
+MAX_PHOTOS = 3
 MAX_LAYOUT = 2000
 
 
-def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_style_ref: bool) -> str:
-    parts = [RENDER_VIEWS[view], RENDER_RULES]
+def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_style_ref: bool, photos: int = 0) -> str:
+    restyle = bool(style) or has_style_ref
+    parts = [RENDER_VIEWS[view], RESTYLE_RULES if restyle else RENDER_RULES]
     if layout:
         parts.append(f"Room layout, from the room scan: {layout[:MAX_LAYOUT]}")
     n = 2
@@ -105,6 +117,15 @@ def render_prompt(view: str, layout: str, style: str, has_structure: bool, has_s
         n += 1
     if has_style_ref:
         parts.append(f"Image {n} is only a style reference for materials, colors and decor.")
+        n += 1
+    if photos:
+        which = f"Image {n} is a real photo" if photos == 1 else f"Images {n} to {n + photos - 1} are real photos"
+        parts.append(f"{which} of this same room, taken during the scan from other angles. They are the ground "
+                     "truth for how the room looks: wall color and texture, flooring, the real furniture's materials "
+                     "and colors, and the light. Give each stand-in the look of the matching real piece in the photos. Image 1 is the ground truth for the camera, the layout and where each "
+                     "piece stands. Where they disagree on looks, follow the photos; on positions, follow image 1. "
+                     "Ignore clutter, people and anything moved since in the photos, and never add a photo's objects "
+                     "that image 1 does not show.")
     if style:
         parts.append(f"Style: {style}")
     return " ".join(parts)
@@ -207,12 +228,15 @@ async def render(
     view: Literal["cutaway", "interior"] = Form("cutaway"),
     structure: UploadFile | None = File(None),
     style_ref: UploadFile | None = File(None),
+    photos: list[UploadFile] | None = File(None),
 ):
     """image: Designer snapshot. layout: text description of the room. structure: optional color-coded map of
-    the same view. prompt: optional style words. style_ref: optional inspiration photo."""
+    the same view. prompt: optional style words. style_ref: optional inspiration photo. photos: up to 3 real
+    photos of the room from the scan, sent as ground truth for its look."""
     data = await read_image(image)
+    photos = (photos or [])[:MAX_PHOTOS]
     images, total = [], 0
-    for f in (image, structure, style_ref):
+    for f in (image, structure, style_ref, *photos):
         if f is None:
             continue
         raw = data if f is image else await read_image(f)
@@ -224,7 +248,7 @@ async def render(
     if MOCK:
         return {"image_base64": base64.b64encode(data).decode()}  # echo input as the "render"
     require(IMAGE_API_KEY, "IMAGE_API_KEY")
-    full_prompt = render_prompt(view, layout, prompt, structure is not None, style_ref is not None)
+    full_prompt = render_prompt(view, layout, prompt, structure is not None, style_ref is not None, len(photos))
     client = gemini()  # keep a reference: a Client that gets garbage-collected mid-request closes its HTTP pool
     try:
         interaction = await client.aio.interactions.create(
