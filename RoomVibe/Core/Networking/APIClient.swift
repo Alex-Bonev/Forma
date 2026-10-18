@@ -103,7 +103,7 @@ struct ShopStatus: Decodable {
     var totalUsd: Double?
 
     struct Item: Decodable {
-        enum Status: String, Decodable { case running, done, failed }
+        enum Status: String, Codable { case running, done, failed }
         var category: String
         var query: String
         var status: Status

@@ -60,6 +60,16 @@ All vibe screens use the app's Space Mono type (no system serif). Keep labels si
   - The x sets the vibe aside to use a one-off photo or words instead.
   - Way in: the Make it real sheet has an outlined "Shop <vibe name>" (or "Shop a vibe") pill above Compare/Image. It also shows after a failed render.
   - Make it real stays faithful and ignores the vibe.
+- **Saved run:** each room has one run (`VibeModel.forRoom`), and it outlives the screen.
+  - Leaving Shop a vibe doesn't stop the restyle or the agents.
+  - The run is saved to `Projects/<id>/vibe-latest.json`, plus `vibe-latest.jpg` (the restyle) and `.before.jpg`. It holds the style, rows, picks, budget and the agents' job token.
+  - Reopening shows the run at once ("Last run · 5 min ago").
+  - After a relaunch, polling resumes from the job token (it is stateless on the backend). A missing restyle is redone.
+  - "Try again" replaces the run. Retry after a failed poll resumes the same job instead of paying for new agents.
+- **Grounded restyle:**
+  - The restyle sends the same inputs as Make it real (`RenderModel.grounding`): the layout text, the structure map from the Designer camera, the view mode (cutaway or interior, from the camera angle) and product photos.
+  - Backend `RESTYLE_RULES` fixes the geometry: same camera, size and walls; no new walls, floors or rooms; the area outside the walls stays background; no added furniture.
+  - The style reference may be used only for looks, never for its room.
 
 ## Known gaps
 

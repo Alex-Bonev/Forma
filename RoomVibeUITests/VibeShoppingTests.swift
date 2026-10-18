@@ -156,6 +156,39 @@ final class VibeShoppingTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
+    /// A room's run outlives the screen and the app: leaving and reopening shows it as is, and after a relaunch the
+    /// saved restyle and picks come back without running again.
+    func testShopRunPersists() {
+        let app = startVibe("Cozy japandi nook")
+        let addAll = app.buttons["addAllPicks"]
+        XCTAssertTrue(addAll.waitForExistence(timeout: 40), "agents finish")
+
+        app.navigationBars.buttons.element(boundBy: 0).tap()   // back to Make it real
+        reopenShop(app)
+        XCTAssertTrue(addAll.waitForExistence(timeout: 3), "same run, still there")
+
+        app.terminate()
+        app.launchArguments = ["-demo"]   // keep the room
+        app.launch()
+        generate(app)
+        reopenShop(app)
+        let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last run'")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 5), "saved run is shown after a relaunch")
+        XCTAssertTrue(addAll.exists, "with its picks")
+        XCTAssertTrue(app.staticTexts["Before"].exists, "and its restyle")
+        saveShot("shop-restored")
+    }
+
+    private func reopenShop(_ app: XCUIApplication) {
+        let openVibe = app.buttons["openVibe"]
+        wait(for: [expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: openVibe)], timeout: 10)
+        let start = app.buttons["vibeStart"]
+        for _ in 0..<3 where !start.exists {
+            if openVibe.isHittable { openVibe.tap() }
+            _ = start.waitForExistence(timeout: 3)
+        }
+    }
+
     /// End to end: a saved vibe applied to the room is Shop a vibe's input, no typing needed.
     func testShopStartsFromRoomVibe() {
         let app = XCUIApplication()

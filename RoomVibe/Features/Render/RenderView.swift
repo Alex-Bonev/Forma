@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// Inputs that tie a render to the scanned room and the Designer camera (`RenderModel.grounding`).
+struct RenderGrounding {
+    var layout: String
+    var view: String
+    var structure: UIImage?
+    var products: [(name: String, image: UIImage)]
+}
+
 /// "Make it real": sends a Designer snapshot to /render and shows a before/after slider.
 /// Presented as a sheet by `DesignerView.makeItReal()`, which captures the snapshot and camera before presenting.
 /// Vibe mode reuses its BeforeAfterSlider and calls APIClient.render directly.
@@ -25,7 +33,7 @@ struct RenderView: View {
     private var shopLink: some View {
         let vibe = store.projects.first { $0.id == model.projectID }?.vibeID.flatMap(library.vibe)
         return NavigationLink {
-            VibeView(snapshot: model.snapshot, projectID: model.projectID)
+            VibeView(snapshot: model.snapshot, projectID: model.projectID, grounding: { [model] in await model.grounding() })
         } label: {
             Label(vibe.map { "Shop \($0.name)" } ?? "Shop a vibe", systemImage: "sparkles").lineLimit(1)
         }
@@ -272,6 +280,25 @@ final class RenderModel {
     }
 
 
+    /// What keeps a render of this view on the scan: the layout text (with product numbers and the map's legend),
+    /// the structure map from the Designer camera, the view mode and the product photos. Built once, then reused by
+    /// Make it real and by the vibe restyle of the same view.
+    func grounding(view: View? = nil) async -> RenderGrounding {
+        await loadProducts()   // before the structure map: it colors the products the layout numbers
+        let products = products ?? []
+        if structure == nil, let camera, let room, !Task.isCancelled {
+            // ~0.1–2.5 s of ray casting; keep it off the main actor.
+            let job = Task.detached(priority: .userInitiated) {
+                StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera,
+                                    products: products.map(\.id))
+            }
+            structure = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
+        }
+        return RenderGrounding(layout: [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " "),
+                               view: (view ?? self.view).rawValue, structure: structure?.image.croppedToRenderAspect(),
+                               products: products.map { ($0.name, $0.image) })
+    }
+
     var isLoading: Bool { if case .loading = phase { true } else { false } }
 
     /// A failed run or a cached (stale) render: worth retrying once the network is back.
@@ -318,22 +345,10 @@ final class RenderModel {
         let view = view, cacheURL = cacheURL, beforeURL = beforeURL
         phase = .loading
         do {
-            await loadProducts()   // before the structure map: it colors the products the layout numbers
+            let g = await grounding(view: view)
             try Task.checkCancellation()
-            let products = products ?? []
-            if structure == nil, let camera, let room {
-                // ~0.1–2.5 s of ray casting; keep it off the main actor.
-                let job = Task.detached(priority: .userInitiated) {
-                    StructureMap.render(room: room.model, placements: room.placements, objects: room.objects, camera: camera,
-                                        products: products.map(\.id))
-                }
-                structure = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
-            }
-            try Task.checkCancellation()
-            let fullLayout = [layout, structure?.legend ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
-            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: fullLayout, view: view.rawValue,
-                                                        structure: structure?.image.croppedToRenderAspect(), styleRef: styleRef,
-                                                        products: products.map { ($0.name, $0.image) })
+            let image = try await APIClient.shared.render(snapshot, prompt: prompt, layout: g.layout, view: g.view,
+                                                        structure: g.structure, styleRef: styleRef, products: g.products)
             if let cacheURL, let beforeURL {
                 let dir = cacheURL.deletingLastPathComponent()
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

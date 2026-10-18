@@ -34,8 +34,10 @@ struct VibeView: View {
     }
 
     /// `inspiration`: optional preset photo (e.g. a bundled demo image) that starts the flow immediately.
-    init(snapshot: UIImage, projectID: UUID? = nil, inspiration: UIImage? = nil) {
-        _model = State(initialValue: VibeModel(snapshot: snapshot, projectID: projectID))
+    /// `grounding`: Make it real's layout, structure map and view for this snapshot, so the restyle keeps the room.
+    init(snapshot: UIImage, projectID: UUID? = nil, inspiration: UIImage? = nil,
+         grounding: (() async -> RenderGrounding)? = nil) {
+        _model = State(initialValue: VibeModel.forRoom(projectID, snapshot: snapshot, grounding: grounding))
         preset = inspiration
     }
 
@@ -82,7 +84,7 @@ struct VibeView: View {
                 model.begin(with: preset, prompt: "")
             }
         }
-        .onDisappear { model.cancel() }
+        .onDisappear { if model.projectID == nil { model.cancel() } }   // a room's run keeps going
         .onChange(of: pick) {
             guard let item = pick else { return }
             pick = nil   // so picking the same photo again still fires
@@ -222,6 +224,9 @@ struct VibeView: View {
                     }
                     if model.isDemo {
                         Text("Saved demo result").font(.forma(10)).foregroundStyle(Theme.muted)
+                    } else if let at = model.savedAt {
+                        Text("Last run · \(at.formatted(.relative(presentation: .named))) · Try again to redo")
+                            .font(.forma(10)).foregroundStyle(Theme.muted)
                     }
                 }
                 HStack(spacing: 8) {
@@ -256,7 +261,7 @@ struct VibeView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Your room, restyled").font(.forma(13, bold: true)).foregroundStyle(Theme.ink).padding(.horizontal, 24)
             if model.isDemo {   // no live render for the saved result: show the room as it is
-                Image(uiImage: model.snapshot).resizable().scaledToFit()
+                Image(uiImage: model.before ?? model.snapshot).resizable().scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .padding(.horizontal, 24)
             } else {
@@ -268,11 +273,11 @@ struct VibeView: View {
     @ViewBuilder private var liveRenderSection: some View {
         switch model.render {
         case .some(.success(let image)):
-            BeforeAfterSlider(before: model.snapshot, after: image).padding(.horizontal, 8)   // + its own 16
+            BeforeAfterSlider(before: model.before ?? model.snapshot, after: image).padding(.horizontal, 8)   // + its own 16
         case .some(.failure(let error)):
             errorCard(error.localizedDescription) { await model.rerender() }
         case nil:
-            Image(uiImage: model.snapshot).resizable().scaledToFit().blur(radius: 6).opacity(0.6)
+            Image(uiImage: model.before ?? model.snapshot).resizable().scaledToFit().blur(radius: 6).opacity(0.6)
                 .overlay {
                     HStack(spacing: 10) {
                         ProgressView().tint(Theme.sage)
@@ -581,8 +586,13 @@ private struct ProductCard: View {
 @Observable
 @MainActor
 final class VibeModel {
-    let snapshot: UIImage
+    /// The Designer view a new run restyles. A reopened room run gets the latest view here.
+    private(set) var snapshot: UIImage
+    /// The view the current restyle was made from (shown as "Before").
+    private(set) var before: UIImage?
     let projectID: UUID?
+    /// When a restored run was saved; nil for a run made in this session.
+    private(set) var savedAt: Date?
     private(set) var inspiration: UIImage?
     private(set) var prompt = ""
     private(set) var started = false
@@ -619,6 +629,36 @@ final class VibeModel {
 
     /// The current pick's run. A newer pick cancels it so its results can't land under the new photo.
     private var run: Task<Void, Never>?
+    /// The shopping agents' job token (stateless on the backend), kept so polling can resume after a relaunch.
+    private var job: String?
+    private var shopDone = false
+    private var poller: Task<Void, Never>?
+    /// The current restyle is already on disk.
+    private var renderWritten = false
+    /// Layout, structure map and view for `snapshot` (set with it), so the restyle can't invent walls or floors.
+    @ObservationIgnored private var grounding: (() async -> RenderGrounding)?
+
+    /// One model per room for the app's lifetime, so leaving Shop a vibe doesn't stop the restyle or the agents.
+    /// A room seen for the first time this launch starts from its saved run, if any.
+    private static var rooms: [UUID: VibeModel] = [:]
+
+    static func forRoom(_ projectID: UUID?, snapshot: UIImage, grounding: (() async -> RenderGrounding)? = nil) -> VibeModel {
+        guard let projectID else {
+            let model = VibeModel(snapshot: snapshot, projectID: nil)
+            model.grounding = grounding
+            return model
+        }
+        if let model = rooms[projectID] {
+            model.snapshot = snapshot.croppedToRenderAspect()
+            model.grounding = grounding
+            return model
+        }
+        let model = VibeModel(snapshot: snapshot, projectID: projectID)
+        model.grounding = grounding
+        model.restore()
+        rooms[projectID] = model
+        return model
+    }
     /// Retries and quick searches started from buttons, cancelled with `run` when the screen goes away.
     private var side: [Task<Void, Never>] = []
 
@@ -638,6 +678,7 @@ final class VibeModel {
 
     func cancel() {
         run?.cancel()
+        poller?.cancel()
         side.forEach { $0.cancel() }
         side.removeAll()
     }
@@ -647,7 +688,15 @@ final class VibeModel {
         side.append(Task { await work() })
     }
 
-    func retryProducts() { background { await self.reloadProducts() } }
+    /// Resumes an unfinished agent job instead of paying for new agents; otherwise searches again.
+    func retryProducts() {
+        if let job, let style, !shopDone {
+            shopError = nil
+            resume(job, style)
+        } else {
+            background { await self.reloadProducts() }
+        }
+    }
 
     func fail(_ message: String) { error = message }
 
@@ -686,12 +735,14 @@ final class VibeModel {
         self.prompt = prompt
         started = true
         isDemo = false
+        savedAt = nil
         style = nil; render = nil; error = nil
         resetShopping()
         do {
             let analyzed = try await APIClient.shared.analyzeVibe(image, prompt: prompt)
             guard !Task.isCancelled else { return }
             style = analyzed
+            save()
         } catch {
             if !Task.isCancelled && !(error is CancellationError) && !fallBackToDemo(after: error) {
                 self.error = error.localizedDescription
@@ -706,13 +757,21 @@ final class VibeModel {
     func rerender() async {
         guard let style else { return }
         render = nil
+        renderWritten = false
+        before = snapshot
         let result: Result<UIImage, Error>
         do {
-            result = .success(try await APIClient.shared.render(snapshot, prompt: style.renderPrompt, styleRef: inspiration))
+            let g = await grounding?()
+            result = .success(try await APIClient.shared.render(snapshot, prompt: style.renderPrompt, layout: g?.layout ?? "",
+                                                                view: g?.view ?? "cutaway", structure: g?.structure,
+                                                                styleRef: inspiration, products: g?.products ?? []))
         } catch {
             result = .failure(error)
         }
-        if !Task.isCancelled, style == self.style { render = result }
+        if !Task.isCancelled, style == self.style {
+            render = result
+            save()
+        }
     }
 
     func reloadProducts() async {
@@ -728,7 +787,9 @@ final class VibeModel {
     }
 
     private func resetShopping() {
+        poller?.cancel()
         products = nil; shopRows = nil; shopError = nil; chosen = []; budgetUSD = nil; totalUSD = nil
+        job = nil; shopDone = false
     }
 
     /// Starts the agents, then polls until every item has finished. Rows fill in as their agent finishes.
@@ -738,14 +799,33 @@ final class VibeModel {
                                                                           query: $0.element.query) }
         budgetUSD = style.budgetUsd
         do {
-            let job = try await APIClient.shared.startShopping(style)
+            let started = try await APIClient.shared.startShopping(style)
+            guard !Task.isCancelled, style == self.style else { return }
+            job = started.job
+            save()
+        } catch {
+            shopFailed(error, style)
+            return
+        }
+        resume(job!, style)
+        await poller?.value
+    }
+
+    /// Polls `job` in its own task, so it outlives the screen and can restart after a relaunch.
+    private func resume(_ job: String, _ style: VibeStyle) {
+        poller?.cancel()
+        poller = Task { await poll(job, style) }
+    }
+
+    private func poll(_ job: String, _ style: VibeStyle) async {
+        do {
             var failures = 0
             let deadline = ContinuousClock.now + Self.shopDeadline
             while !Task.isCancelled, style == self.style {
                 if ContinuousClock.now > deadline { throw APIError.timeout }
                 let status: ShopStatus
                 do {
-                    status = try await APIClient.shared.pollShopping(job)
+                    status = try await APIClient.shared.pollShopping(ShopJob(job: job, items: []))
                     failures = 0
                 } catch let error as APIError {
                     // A dropped poll is fine; the agents keep running server side. Give up after a few in a row.
@@ -756,19 +836,98 @@ final class VibeModel {
                 }
                 guard !Task.isCancelled, style == self.style else { return }
                 apply(status)
+                shopDone = status.done
+                save()
                 if status.done { return }
                 try await Task.sleep(for: Self.pollInterval)
             }
         } catch {
-            if !Task.isCancelled && !(error is CancellationError), style == self.style, !isDemo,
-               !fallBackToDemo(after: error) {
-                shopError = error
-                if var rows = shopRows {   // no spinners left behind the error
-                    for i in rows.indices where rows[i].status == .running { rows[i].status = .failed }
-                    shopRows = rows
-                }
+            shopFailed(error, style)
+        }
+    }
+
+    private func shopFailed(_ error: Error, _ style: VibeStyle) {
+        guard !Task.isCancelled, !(error is CancellationError), style == self.style, !isDemo,
+              !fallBackToDemo(after: error) else { return }
+        shopError = error
+        if var rows = shopRows {   // no spinners left behind the error
+            for i in rows.indices where rows[i].status == .running { rows[i].status = .failed }
+            shopRows = rows
+        }
+    }
+
+    // MARK: Saved run (Projects/<id>/vibe-latest.*): one per room, replaced by the next run
+
+    private struct Saved: Codable {
+        var prompt: String
+        var style: VibeStyle
+        var job: String?
+        var done: Bool
+        var rows: [Row]
+        var chosen: [URL]
+        var budgetUSD: Double?
+        var totalUSD: Double?
+        struct Row: Codable {
+            var category: String
+            var query: String
+            var status: ShopStatus.Item.Status
+            var products: [ShopProduct]
+        }
+    }
+
+    private func file(_ ext: String) -> URL? {
+        projectID.map { ProjectStore.projectDir($0).appending(path: "vibe-latest.\(ext)") }
+    }
+
+    private func save() {
+        guard !isDemo, let style, let json = file("json"), let image = file("jpg"), let beforeURL = file("before.jpg") else { return }
+        let saved = Saved(prompt: prompt, style: style, job: job, done: shopDone,
+                          rows: (shopRows ?? []).map { .init(category: $0.category, query: $0.query, status: $0.status,
+                                                             products: $0.products) },
+                          chosen: Array(chosen), budgetUSD: budgetUSD, totalUSD: totalUSD)
+        try? FileManager.default.createDirectory(at: json.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(saved).write(to: json, options: .atomic)
+        if case .success(let rendered) = render {
+            if !renderWritten {
+                try? rendered.jpegData(compressionQuality: 0.9)?.write(to: image, options: .atomic)
+                try? before?.jpegData(compressionQuality: 0.8)?.write(to: beforeURL, options: .atomic)
+                renderWritten = true
+            }
+        } else {   // a new run: the old restyle no longer matches
+            try? FileManager.default.removeItem(at: image)
+            try? FileManager.default.removeItem(at: beforeURL)
+        }
+    }
+
+    /// Shows the room's last run and picks up whatever it hadn't finished: the restyle, or the agents' polling.
+    private func restore() {
+        guard let json = file("json"), let data = try? Data(contentsOf: json),
+              let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return }
+        prompt = saved.prompt
+        style = saved.style
+        started = true
+        savedAt = (try? FileManager.default.attributesOfItem(atPath: json.path(percentEncoded: false)))?[.modificationDate] as? Date
+        if let image = file("jpg").flatMap({ try? Data(contentsOf: $0) }).flatMap(UIImage.init(data:)) {
+            render = .success(image)
+            renderWritten = true
+            before = file("before.jpg").flatMap { try? Data(contentsOf: $0) }.flatMap(UIImage.init(data:))
+        } else {
+            background { await self.rerender() }
+        }
+        budgetUSD = saved.budgetUSD
+        totalUSD = saved.totalUSD
+        chosen = Set(saved.chosen)
+        job = saved.job
+        shopDone = saved.done
+        if saved.rows.isEmpty {
+            if saved.job == nil { background { await self.reloadProducts() } }
+        } else {
+            shopRows = saved.rows.enumerated().map {
+                ShopRow(id: $0.offset, category: $0.element.category, query: $0.element.query, status: $0.element.status,
+                        products: $0.element.products)
             }
         }
+        if let job, !shopDone { resume(job, saved.style) }
     }
 
     private func apply(_ status: ShopStatus) {
