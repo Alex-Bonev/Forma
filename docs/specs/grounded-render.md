@@ -49,7 +49,7 @@ Renders were more elaborate than the real room. Causes:
   - "Furniture, exactly N pieces and nothing else".
 - **Prompt:** keep image 1's framing, size and proportions.
 - **Snapshot:** picks the Metal view closest to the Designer's measured size (on a tie, the innermost). Before, fullscreen fell back to the window and sent the app's buttons to the model.
-- **Latest render:** one per room (`render-latest.jpg`), kept as the offline fallback only.
+- **Latest render:** one per room (`render-latest.jpg` and its before snapshot). Make it real opens on it ("Last render · 5 min ago"); ↻ renders the current view and replaces it. It's also the offline fallback.
 
 ## Checks
 

@@ -85,7 +85,7 @@ final class VibeShoppingTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
-    /// Make it real result has two tabs: Compare (slider) and Image (the render alone).
+    /// Make it real result has two tabs (Compare, Image) and reopens on the room's latest render.
     func testMakeItRealTabs() {
         let app = XCUIApplication()
         app.launchArguments = ["-demo", "-fresh"]
@@ -101,6 +101,12 @@ final class VibeShoppingTests: XCTestCase {
         XCTAssertTrue(app.images["Render"].waitForExistence(timeout: 2))
         add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()).named("image"))
         XCTAssertFalse(app.staticTexts["Drag the divider to compare"].exists, "Image tab is the render alone")
+        // The room keeps its latest render: Make it real again shows it at once.
+        app.buttons["Close"].firstMatch.tap()
+        sleep(1)
+        generate(app)
+        let last = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Last render'")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 3), "reopening shows the saved render without waiting")
     }
 }
 
