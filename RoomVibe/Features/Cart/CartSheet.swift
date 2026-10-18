@@ -64,7 +64,7 @@ struct CartSheet: View {
                     }
                 } else {
                     rows(items).padding(.top, 8)
-                    if let budget, let left = Optional(budget - RoomCart.subtotal(items).total), left > 0 { warning(left: left, budget: budget) }
+                    if let budget, let left = Optional(budget - RoomCart.subtotal(items).total), left > 0, left <= budget * 0.2 { warning(left: left, budget: budget) }
                 }
             }
             .padding(.horizontal, 24).padding(.bottom, 16)

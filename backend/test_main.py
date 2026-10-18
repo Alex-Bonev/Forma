@@ -283,6 +283,21 @@ def test_shop_budget_override(monkeypatch):
         assert get(budget_usd=bad).status_code == 422
 
 
+def test_shop_override_rescales_caps():
+    shares = [400, 200, 100, 100]  # the model split a parsed $800
+    items = [it.model_copy(update={"max_price_usd": s}) for it, s in zip(main.MOCK_STYLE.shopping_list, shares)]
+    style = main.MOCK_STYLE.model_copy(update={"budget_usd": 800, "shopping_list": items}).model_dump()
+
+    def caps(budget):
+        job = c.post("/vibe/shop", headers=H, json={"style": style, "budget_usd": budget}).json()["job"]
+        return [it["cap_usd"] for it in c.get(f"/vibe/shop/{job}", headers=H).json()["items"]]
+
+    assert caps(None) == caps(800) == shares
+    big = caps(2000)
+    assert 1999.9 <= sum(big) <= 2000 and big == [1000, 500, 250, 250]
+    assert caps(400) == [200, 100, 50, 50]
+
+
 def test_shop_bad_job():
     assert c.get("/vibe/shop/not-a-job", headers=H).status_code == 400
     job = c.post("/vibe/shop", headers=H, json=shop_request()).json()["job"]
