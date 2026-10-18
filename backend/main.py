@@ -475,20 +475,27 @@ def parse_budget(text: str) -> float | None:
     return float(m.group(1).replace(",", "")) * (1000 if m.group(2) else 1)
 
 
-def clean_style(style: Style) -> Style:
-    """Keeps the model's shopping list usable: known categories, at most 6 items, shares within the budget."""
+def valid_budget(x: float | None) -> float | None:
+    return x if x and math.isfinite(x) and x > 0 else None
+
+
+def clean_style(style: Style, budget_usd: float | None = None) -> Style:
+    """Keeps the model's shopping list usable: known categories, at most 6 items, shares within the budget.
+    `budget_usd` overrides the style's budget; the model's shares scale to it, keeping their split."""
     items = [it.model_copy() for it in style.shopping_list[:MAX_SHOPPING_ITEMS]]
     if not items:  # the model left the list out: shop for its search queries instead
         items = [ShoppingItem(category="decor", query=q) for q in style.search_queries[:MAX_SHOPPING_ITEMS]]
     for it in items:
         if it.category not in CATEGORIES:
             it.category = "decor"
-    budget = style.budget_usd if style.budget_usd and math.isfinite(style.budget_usd) and style.budget_usd > 0 else None
+    parsed = valid_budget(style.budget_usd)
+    budget = valid_budget(budget_usd) if budget_usd is not None else parsed
     if budget is None:
         for it in items:
             it.max_price_usd = None
     elif items:
-        shares = [it.max_price_usd if it.max_price_usd and it.max_price_usd > 0 else 0.0 for it in items]
+        scale = budget / parsed if parsed else 1.0  # shares were split for the parsed budget
+        shares = [it.max_price_usd * scale if it.max_price_usd and it.max_price_usd > 0 else 0.0 for it in items]
         total, unset = sum(shares), shares.count(0.0)
         if total > budget or (unset and total >= budget):  # overspent, or nothing left for unset items
             shares = [budget / len(items)] * len(items)
@@ -835,8 +842,7 @@ async def read_run(client: httpx.AsyncClient, run_id: str) -> dict | None:
 @app.post("/vibe/shop")
 async def vibe_shop(req: ShopRequest):
     """Starts one browser agent per shopping-list item and returns at once. Poll GET /vibe/shop/{job}."""
-    budget = req.budget_usd if req.budget_usd is not None else req.style.budget_usd
-    style = clean_style(req.style.model_copy(update={"budget_usd": budget}))
+    style = clean_style(req.style, req.budget_usd)
     if not style.shopping_list:
         raise HTTPException(400, "style has nothing to shop for")
     items = [{"category": it.category, "query": it.query, "cap": it.max_price_usd} for it in style.shopping_list]

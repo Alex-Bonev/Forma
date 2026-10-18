@@ -52,6 +52,7 @@ Check field names against the provider docs on the day you build. These were rea
 
 - `POST /vibe/shop` with JSON `{style, budget_usd?}`:
   - Starts one Browser Use run per `shopping_list` item (max 6).
+  - `budget_usd` overrides `style.budget_usd`. When it differs, the model's per-item `max_price_usd` shares scale to the new budget and keep their split.
   - Returns `{job: "<token>", items: [{category, query}]}` right away (< 5 s).
   - The token is the run ids, base64url-joined. No DB: the backend stays stateless.
 - `GET /vibe/shop/{job}`:
