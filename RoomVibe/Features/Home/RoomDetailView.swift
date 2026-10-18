@@ -33,9 +33,7 @@ struct RoomDetailView: View {
                     StageCard {
                         // Fixed space from the first frame: an empty card collapsed, then pushed the list down.
                         Color.clear.overlay { if showStage {
-                            DesignerView(projectID: projectID, style: .card,
-                                         onExpand: { router.path.append(.designer(projectID)) },
-                                         onMakeItReal: { router.path.append(.designer(projectID, framing: true)) })
+                            DesignerView(projectID: projectID, style: .card) { router.path.append(.designer(projectID)) }
                                 .transition(.opacity)
                         } }
                     }

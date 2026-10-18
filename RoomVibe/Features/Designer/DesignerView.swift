@@ -15,15 +15,6 @@ struct DesignerView: View {
     var onExpand: (() -> Void)? = nil
     /// Full only: open the Add Item catalog as soon as the editor appears (Room detail's "+ Add object").
     var opensCatalog = false
-    /// Full only: open straight into choosing the "Make it real" angle (the card's Make it real button).
-    var opensFraming = false
-    /// Card only: Make it real hands off to the full editor, where the angle is chosen.
-    var onMakeItReal: (() -> Void)? = nil
-    @State private var framing = false          // choosing the camera angle for Make it real
-    @State private var angle = OrbitCamera.Angle.overview
-    @State private var side = 0
-    @State private var hasLastRender = false
-    @AppStorage(RenderInputs.usePhotosKey) private var usePhotos = false
     @Environment(ProjectStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var showObjects = false
@@ -78,44 +69,9 @@ struct DesignerView: View {
         let id = UUID()
         let image: UIImage
         let camera: RenderCamera
-        var fresh = true   // false: open on the room's last render
     }
     @State private var renderShot: RenderShot?
     @State private var lockMenuFor: UUID?   // placement whose Lock pill is showing
-
-    /// Make it real, step 1: pick the angle (presets or free orbit), then Generate.
-    private func beginFraming() {
-        selected = nil
-        selectedRoomObject = nil
-        showObjects = false
-        touched = true
-        checkLastRender()
-        withAnimation(.spring(duration: 0.35, bounce: 0)) { framing = true }
-    }
-
-    private func frame(_ a: OrbitCamera.Angle, turn: Bool = false) {
-        if turn { side = (side + 1) % 4 } else if a != angle { side = 0 }
-        angle = a
-        let offset = roomEntity?.children.first?.position ?? .zero   // RoomBuilder's content offset (-center)
-        let poly = outline?.map { SIMD2($0.x + offset.x, $0.z + offset.z) }
-        // Eye level stands on open floor: inside the outline, 30 cm clear of every visible piece.
-        var pieces: [Entity] = Array(placed.values)
-        if let content = roomEntity?.children.first {
-            for e in content.children where e.name.hasPrefix(RoomBuilder.furniturePrefix) && e.isEnabled { pieces.append(e) }
-        }
-        let footprints: [BoundingBox] = pieces.map { $0.visualBounds(relativeTo: scene) }
-        func onFloor(_ p: SIMD2<Float>) -> Bool { poly.map { FloorClamp.contains(p, $0) } ?? true }
-        func clear(_ p: SIMD2<Float>) -> Bool {
-            !footprints.contains { b in abs(p.x - b.center.x) < b.extents.x / 2 + 0.3 && abs(p.y - b.center.z) < b.extents.z / 2 + 0.3 }
-        }
-        camera.show(a, side: side, floor: onFloor, clear: clear)
-    }
-
-    /// Opens the room's last render without generating (it pairs with its own saved "before").
-    private func showLastRender() {
-        guard renderShot == nil, let image = captureDesignerSnapshot(size: viewSize) else { return }
-        renderShot = RenderShot(image: image, camera: renderCamera(), fresh: false)
-    }
 
     private func renderCamera() -> RenderCamera {
         RenderCamera(transform: camera.entity.transformMatrix(relativeTo: nil),
@@ -123,53 +79,7 @@ struct DesignerView: View {
                      viewSize: viewSize, wallScale: lowWalls ? 0.3 : 1)
     }
 
-    /// Refreshed when the angle bar opens and when the render sheet closes (a new render may have been saved).
-    private func checkLastRender() {
-        hasLastRender = FileManager.default.fileExists(
-            atPath: ProjectStore.projectDir(projectID).appending(path: "render-latest.jpg").path(percentEncoded: false))
-    }
-
-    /// Bottom bar while choosing the angle: presets, a quarter turn, Generate, last render, cancel.
-    private var framingBar: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("Pick the angle · drag to fine-tune").font(.forma(12)).foregroundStyle(Theme.muted)
-                Spacer()
-                if !RoomPhotos.photoURLs(projectDir: ProjectStore.projectDir(projectID)).isEmpty {
-                    Toggle("Real-photo look", isOn: $usePhotos).font(.forma(11)).toggleStyle(.button)
-                        .tint(Theme.sage).foregroundStyle(Theme.ink)
-                        .accessibilityHint("Uses scan photos for materials. Less exact: may add things the model doesn't have.")
-                }
-            }
-            HStack(spacing: 8) {
-                ForEach(OrbitCamera.Angle.allCases, id: \.self) { a in
-                    Button(a.rawValue) { frame(a) }
-                        .buttonStyle(PillButtonStyle(filled: a == angle))
-                }
-                Button { frame(angle, turn: true) } label: { Image(systemName: "arrow.trianglehead.clockwise.rotate.90") }
-                    .buttonStyle(PillButtonStyle(filled: false))
-                    .accessibilityLabel("Turn")
-                    .frame(width: 64)
-            }
-            HStack(spacing: 8) {
-                Button { withAnimation { framing = false }; camera.useNormalLens(); camera.reset() } label: { Image(systemName: "xmark") }
-                    .buttonStyle(PillButtonStyle(filled: false)).frame(width: 64)
-                    .accessibilityLabel("Cancel")
-                if hasLastRender {
-                    Button("Last render") { showLastRender() }.buttonStyle(PillButtonStyle(filled: false))
-                }
-                Button { makeItReal() } label: { Label("Generate", systemImage: "sparkles") }
-                    .buttonStyle(PillButtonStyle())
-            }
-        }
-        .padding(16)
-        .background(Theme.ground.opacity(0.92), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .padding(.horizontal, 12)
-        .sensoryFeedback(.selection, trigger: angle)
-        .sensoryFeedback(.selection, trigger: side)
-    }
-
-    /// Make it real, step 2 (Generate). Capture before presenting: the snapshot and the camera must describe the
+    /// Make it real from exactly this view. Capture before presenting: the snapshot and the camera must describe the
     /// same frame. Selection markers are cleared first so the image model doesn't render them as objects.
     private func makeItReal() {
         guard renderShot == nil else { return }   // a second tap would replace the sheet mid-presentation
@@ -189,9 +99,8 @@ struct DesignerView: View {
 
     var body: some View {
         stack.sheet(item: $renderShot) { shot in
-            RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera, fresh: shot.fresh)
+            RenderView(snapshot: shot.image, projectID: projectID, camera: shot.camera)
         }
-        .onChange(of: renderShot == nil) { _, closed in if closed { checkLastRender() } }
         .onDisappear { making3D?.task.cancel() }
     }
 
@@ -200,7 +109,6 @@ struct DesignerView: View {
             realityView(project: project, room: room)
                 .overlay(alignment: .topTrailing) {
                     HStack(spacing: 8) {
-                        MakeItRealButton(action: onMakeItReal ?? makeItReal)
                         Button { onExpand?() } label: {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -219,7 +127,6 @@ struct DesignerView: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .onAppear {
                     if opensCatalog { showCatalog = true }
-                    if opensFraming { beginFraming() }
                 }
                 .onChange(of: lowWalls) { rebuildRoom(room) }
                 .onChange(of: realisticFurniture) { rebuildRoom(room) }
@@ -242,13 +149,9 @@ struct DesignerView: View {
                 }
                 .overlay(alignment: .top) { topChrome(project).padding(.horizontal, 16).padding(.top, 8) }
                 .overlay(alignment: .topLeading) {
-                    // Under the back button (Paper E); icon-only while the Objects panel is open (E2/E3).
+                    // Under the back button (Paper E): the room's vibe. Make it real is the wide bar at the bottom.
                     RoomVibeControl(projectID: projectID, compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                    ink: lightBackdrop ? Theme.ground : Theme.ink) {
-                        MakeItRealButton(compact: showObjects, fill: lightBackdrop ? Theme.wood : Theme.sand,
-                                         ink: lightBackdrop ? Theme.ground : Theme.ink,
-                                         sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: beginFraming)
-                    }
+                                    ink: lightBackdrop ? Theme.ground : Theme.ink) { EmptyView() }
                     .padding(.leading, 16).padding(.top, 8 + 44 + 12)
                 }
                 .overlay(alignment: .trailing) {
@@ -257,12 +160,20 @@ struct DesignerView: View {
                 .animation(.spring(duration: 0.35, bounce: 0), value: showObjects)
                 .animation(.spring(duration: 0.3, bounce: 0), value: undo?.title)
                 .overlay(alignment: .bottom) {
-                    if framing {
-                        framingBar.padding(.bottom, 24).transition(.move(edge: .bottom).combined(with: .opacity))
-                    } else {
+                    VStack(spacing: 12) {
                         // With the Objects panel open, Undo lives in the panel instead of under it.
-                        VStack(spacing: 12) { if !showObjects { undoBar }; hint.allowsHitTesting(false) }.padding(.bottom, 36)
+                        if !showObjects { undoBar }
+                        hint.allowsHitTesting(false)
+                        // Renders exactly what's on screen: frame it by dragging, then tap.
+                        if !showObjects {
+                            MakeItRealButton(wide: true, fill: lightBackdrop ? Theme.wood : Theme.sand,
+                                             ink: lightBackdrop ? Theme.ground : Theme.ink,
+                                             sparkle: lightBackdrop ? Theme.sage : Theme.sageDeep, action: makeItReal)
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
+                    .padding(.bottom, 24)
                 }
                 .overlay(alignment: .bottomLeading) {
                     lockMenu().padding(.leading, 16).padding(.bottom, 36)
