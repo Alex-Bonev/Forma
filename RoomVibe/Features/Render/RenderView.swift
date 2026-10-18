@@ -43,6 +43,22 @@ struct RenderView: View {
                 }
         }
         .environment(\.colorScheme, .dark)
+        .overlay {
+            // The app's loading screen (sage square sliding around the ring, Paper colors) instead of a spinner.
+            if model.isLoading {
+                LoadingView(status: "Making it real… about 30 seconds")
+                    .overlay(alignment: .topLeading) {
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink)
+                                .frame(width: 40, height: 40).background(Theme.tiles[0], in: Circle())
+                        }
+                        .accessibilityLabel("Close")
+                        .padding(.leading, 16).padding(.top, 8)
+                    }
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: model.isLoading)
         .onChange(of: model.view) { model.start() }
         .onAppear {
             guard model.result == nil, !model.isRunning else { return }
@@ -57,15 +73,7 @@ struct RenderView: View {
     @ViewBuilder private var content: some View {
         switch model.phase {
         case .loading:
-            Image(uiImage: model.snapshot)
-                .resizable().scaledToFit()
-                .blur(radius: 6).opacity(0.6)
-                .overlay {
-                    VStack(spacing: 12) {
-                        ProgressView().controlSize(.large).tint(.white)
-                        Text("Making it real… about 30 seconds").font(.headline).foregroundStyle(.white)
-                    }
-                }
+            Color.clear   // covered by the loading screen overlay in `body`
         case .done(let after, let isStale):
             VStack(spacing: 10) {
                 BeforeAfterSlider(before: isStale ? model.staleBefore ?? model.snapshot : model.snapshot, after: after)
